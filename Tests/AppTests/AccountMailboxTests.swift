@@ -31,6 +31,47 @@ import Testing
         #expect(try await cache.read { try $0.pendingActions(accountID: account.id).isEmpty } == false)
     }
 
+    @Test func localStartShowsSavedMailAndLeavesTheEngineForTheNetworkStart() async throws {
+        let account = AccountRecord(id: "split-\(UUID().uuidString)", email: "me@example.invalid", displayName: nil,
+            grantedScopes: GoogleScopes.base, addedAt: .now)
+        let accounts = try AccountStore.inMemory()
+        try await accounts.save(account)
+        let cache = try MailCache.inMemory()
+        let label = LabelRecord(accountID: account.id, id: "Label_1", name: "Work", isSystem: false)
+        let temporaryID = LabelRules.temporaryID()
+        try await cache.write { tx in
+            try tx.replaceLabels([label], accountID: account.id)
+            _ = try tx.recordCreatedLabel(temporaryID: temporaryID, realID: label.id, accountID: account.id)
+            try tx.saveCursor(historyID: 1, accountID: account.id, fullSyncAt: .now)
+        }
+        // The icon is saved under the temporary ID. It follows the label
+        // only if the aliases are read before an engine start clears them.
+        LabelAppearance.shared.setIcon("briefcase", labelID: temporaryID, accountID: account.id)
+        let transport = MailboxIntegrationTransport()
+        let mailbox = AccountMailbox(account: account, cache: cache,
+            gmail: GmailClient(tokens: MailboxIntegrationTokens(), transport: transport, retryDelays: []),
+            outgoingDirectory: FileManager.default.temporaryDirectory.appending(path: UUID().uuidString),
+            snoozeStore: accounts)
+
+        // Opening a mailbox reads this before the window shows it, so an
+        // empty list doesn't say it is downloading mail.
+        await mailbox.restoreSyncState()
+        #expect(mailbox.hasSyncedOnce)
+
+        await mailbox.startLocal()
+        try await eventually { mailbox.labels.map(\.id) == [label.id] }
+        #expect(LabelAppearance.shared.icon(for: label) == "briefcase")
+        try await Task.sleep(for: .milliseconds(150))
+        #expect(try await cache.read { try $0.resolvedLabelID(temporaryID, accountID: account.id) } == label.id,
+                "An engine start clears label aliases, and the local start must not run one.")
+        #expect(await transport.requests.isEmpty)
+
+        await mailbox.startNetwork()
+        #expect(try await cache.read { try $0.resolvedLabelID(temporaryID, accountID: account.id) } == temporaryID)
+        try await eventually { await !transport.requests.isEmpty }
+        await mailbox.stop()
+    }
+
     @Test func identityAndContactSyncUseTheAccountStoreAndGmailSession() async throws {
         let account = AccountRecord(
             id: "a", email: "me@example.invalid", displayName: "Me",
@@ -93,6 +134,12 @@ import Testing
         #expect(await transport.requests.count == 4)
         await mailbox.stop()
     }
+}
+
+@MainActor private func eventually(_ condition: () async -> Bool) async throws {
+    let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+    while !(await condition()), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(20)) }
+    #expect(await condition(), "The mailbox did not reach the expected state")
 }
 
 private struct MailboxIntegrationTokens: AccessTokenProvider {

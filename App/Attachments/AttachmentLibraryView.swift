@@ -11,35 +11,59 @@ struct AttachmentLibraryView: View {
     var focusSearch: () -> Void = {}
     @State private var showsFilters = false
     @State private var showsCoverage = false
+    @State private var pane = PaneSize()
 
-    private var filterCount: Int { AttachmentFilterChip.values(for: model).filter { $0.id != "search" }.count }
-    private var hasFilters: Bool { !AttachmentFilterChip.values(for: model).isEmpty }
-    /// An empty library shows the first pass's progress in place of the list,
-    /// and the status bar leaves out its count until results arrive.
-    private var showsIndexProgress: Bool {
-        model.items.isEmpty && !model.isLoading && !hasFilters && model.isBuildingIndex
+    /// The library's height, which caps the Filters popover. Only the popover reads it,
+    /// and only when it opens, so it is kept outside the view's state: resizing the
+    /// window then does not run `body` again for every new height.
+    @MainActor private final class PaneSize { var height: CGFloat? }
+
+    /// The page for the current query hasn't arrived. This also covers the
+    /// update before the load starts, when `isLoading` is still false.
+    private var isAwaitingPage: Bool {
+        model.isLoading || (!model.isPageReady && model.errorMessage == nil)
     }
 
     var body: some View {
+        // The chips are built once per update. The filter bar, the empty state and
+        // the footer all read them, and the footer makes every selection change an update.
+        let chips = AttachmentFilterChip.values(for: model)
+        let hasFilters = !chips.isEmpty
+        // An empty library shows the first pass's progress in place of the list,
+        // and the status bar leaves out its count until results arrive.
+        let showsIndexProgress = model.items.isEmpty && !isAwaitingPage && !hasFilters && model.isBuildingIndex
         VStack(spacing: 0) {
-            filterBar
+            filterBar(chips)
             Divider()
-            if let error = model.errorMessage {
-                errorBanner(error)
-                    .ternTransition(.disclosure)
-            }
-            GeometryReader { geometry in
-                if model.items.isEmpty { emptyState }
-                else {
-                    AttachmentLibraryCollection(model: model, viewMode: viewMode,
-                        availableWidth: geometry.size.width)
+            VStack(spacing: 0) {
+                if let error = model.errorMessage {
+                    errorBanner(error)
+                        .ternTransition(.disclosure)
+                }
+                GeometryReader { geometry in
+                    Group {
+                        if model.presentedItems.isEmpty {
+                            emptyState(hasFilters: hasFilters, showsIndexProgress: showsIndexProgress)
+                                .ternTransition(.fade)
+                        } else {
+                            // Rows from the previous query stay up while the next page loads.
+                            // They ignore clicks until then, because commands act on `items`.
+                            AttachmentLibraryCollection(model: model, viewMode: viewMode,
+                                availableWidth: geometry.size.width)
+                                .allowsHitTesting(!model.isPresentingEarlierPage)
+                                .ternTransition(.fade)
+                        }
+                    }
+                    .ternAnimation(value: model.presentedItems.isEmpty, duration: Tokens.Motion.fast)
                 }
             }
+            // Only the banner and the list it pushes down animate with the error.
+            .ternAnimation(value: model.errorMessage != nil)
             Divider()
-            footer
+            footer(showsIndexProgress: showsIndexProgress)
         }
-        .ternAnimation(value: model.errorMessage != nil)
         .background(Tokens.Surface.canvas)
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { pane.height = $0 }
         .quickLookPreview($model.previewURL, in: model.previewURLs)
         .protectAttachmentPreview(model.previewURL)
         .task(id: model.coverageKey) { await model.start() }
@@ -48,21 +72,23 @@ struct AttachmentLibraryView: View {
 
     /// Category shortcuts and the Filters popover. Search, the layout and the
     /// sort order are in the window's toolbar.
-    private var filterBar: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+    private func filterBar(_ chips: [AttachmentFilterChip]) -> some View {
+        // Search and category already have visible, editable controls above.
+        let listed = chips.filter { $0.id != "search" && $0.id != "category" }
+        return VStack(alignment: .leading, spacing: Tokens.Space.s2) {
             HStack(spacing: Tokens.Space.s3) {
                 AttachmentCategoryShortcuts(model: model)
                 Spacer(minLength: 0)
-                filtersButton
+                filtersButton(filterCount: chips.count(where: { $0.id != "search" }))
             }
-            AttachmentActiveFilters(model: model)
+            AttachmentActiveFilters(model: model, chips: listed)
         }
         .padding(.horizontal, Tokens.Space.s5).padding(.vertical, Tokens.Space.s3)
         .background(Tokens.Surface.primary)
-        .ternAnimation(value: AttachmentFilterChip.values(for: model).filter { $0.id != "search" && $0.id != "category" }.map(\.id))
+        .ternAnimation(value: listed.map(\.id))
     }
 
-    private var filtersButton: some View {
+    private func filtersButton(filterCount: Int) -> some View {
         Button { showsFilters.toggle() } label: {
             HStack(spacing: Tokens.Space.s2) {
                 Image(systemName: "line.3.horizontal.decrease")
@@ -78,13 +104,17 @@ struct AttachmentLibraryView: View {
         }
         .fixedSize()
         .accessibilityLabel(filterCount == 0 ? "Filters" : "Filters, \(filterCount) active")
-        .popover(isPresented: $showsFilters, arrowEdge: .bottom) { AttachmentLibraryFilters(model: model) }
+        // No taller than the library, so in a short window the form scrolls.
+        .popover(isPresented: $showsFilters, arrowEdge: .bottom) {
+            AttachmentLibraryFilters(model: model, maxHeight: pane.height)
+        }
     }
 
-    @ViewBuilder private var emptyState: some View {
-        if model.isLoading {
+    @ViewBuilder private func emptyState(hasFilters: Bool, showsIndexProgress: Bool) -> some View {
+        if isAwaitingPage {
             TernEmptyState(title: "Finding Your Files", systemImage: "doc.text.magnifyingglass",
                 message: "Loading attachments from your mail library.")
+                .ternDelayedLoading()
         } else if hasFilters {
             VStack(spacing: 0) {
                 TernEmptyState(title: "No Matching Attachments", systemImage: "doc.text.magnifyingglass",
@@ -120,8 +150,9 @@ struct AttachmentLibraryView: View {
         .padding(.horizontal, Tokens.Space.s5).padding(.vertical, Tokens.Space.s3)
     }
 
-    private var footer: some View {
-        VStack(spacing: Tokens.Space.s3) {
+    private func footer(showsIndexProgress: Bool) -> some View {
+        let controls = pageControls(showsIndexProgress: showsIndexProgress)
+        return VStack(spacing: Tokens.Space.s3) {
             if !model.selection.isEmpty {
                 VStack(spacing: Tokens.Space.s3) {
                     AttachmentSelectionActions(model: model)
@@ -130,8 +161,8 @@ struct AttachmentLibraryView: View {
                 .ternTransition(.disclosure)
             }
             ViewThatFits(in: .horizontal) {
-                HStack(spacing: Tokens.Space.s3) { pageControls; Spacer(minLength: Tokens.Space.s3); coverageButton }
-                VStack(alignment: .leading, spacing: Tokens.Space.s2) { pageControls; coverageButton }
+                HStack(spacing: Tokens.Space.s3) { controls; Spacer(minLength: Tokens.Space.s3); coverageButton }
+                VStack(alignment: .leading, spacing: Tokens.Space.s2) { controls; coverageButton }
             }
             .font(.caption).foregroundStyle(.secondary)
         }
@@ -140,11 +171,16 @@ struct AttachmentLibraryView: View {
         .background(Tokens.Surface.primary)
     }
 
-    private var pageControls: some View {
-        HStack(spacing: Tokens.Space.s2) {
+    private func pageControls(showsIndexProgress: Bool) -> some View {
+        // Rows of the earlier page stay up while the next one loads. Their count and
+        // page buttons stay with them, and a spinner shows that the list is changing.
+        let isUpdating = isAwaitingPage && model.isPresentingEarlierPage
+        return HStack(spacing: Tokens.Space.s2) {
             if model.isWorking { ProgressView().controlSize(.mini); Text("Preparing files…") }
-            else if !showsIndexProgress { Text(model.isLoading ? "Loading…" : model.rangeSummary).monospacedDigit() }
-            if model.hasPreviousPage || model.hasMore {
+            else if !showsIndexProgress {
+                Text(isAwaitingPage && !isUpdating ? "Loading…" : model.rangeSummary).monospacedDigit()
+            }
+            if model.hasPreviousPage || model.isPresentingPartialPage {
                 Button { model.previousPage() } label: { Image(systemName: "chevron.left") }
                     .disabled(!model.hasPreviousPage || model.isLoading)
                     .help("Previous page").accessibilityLabel("Previous page")
@@ -152,6 +188,9 @@ struct AttachmentLibraryView: View {
                     .disabled(!model.hasMore || model.isLoading)
                     .help("Next page").accessibilityLabel("Next page")
             }
+            ProgressView().controlSize(.mini)
+                .accessibilityLabel("Updating the list")
+                .ternDelayedLoading(isUpdating && !model.isWorking)
         }
         .fixedSize()
     }

@@ -22,46 +22,72 @@ struct UnsubscribeView: View {
         }
     }
 
+    /// Before the first `configure` the model has no accounts to report on, so the page is loading.
+    private var isLoading: Bool { model.isLoading || !model.isConfigured }
+
+    private var showsLoading: Bool { isLoading || (model.isScanning && model.subscriptions.isEmpty) }
+
+    private var needsSignIn: Bool { !model.accounts.isEmpty && !canScan }
+
+    /// What fills the list area. A change fades from one to the next.
+    private enum ListContent { case loading, empty, rows }
+
+    private var listContent: ListContent {
+        if !model.visibleSubscriptions.isEmpty { return .rows }
+        return showsLoading ? .loading : .empty
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             header
             Divider()
-            if let error = model.errorMessage {
-                notice(error, isError: true) { model.errorMessage = nil }
-            } else if let message = model.notice {
-                notice(message, isError: false) { model.notice = nil }
-            }
-            if !model.accounts.isEmpty && !canScan {
-                Label("Sign in again in Settings to manage newsletters for this account.",
-                    systemImage: "person.crop.circle.badge.exclamationmark")
-                    .font(.callout).foregroundStyle(.secondary)
-                    .padding(.horizontal, Tokens.Space.s6).padding(.vertical, Tokens.Space.s3)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            listHeader
-            Divider()
-            GeometryReader { geometry in
-                if model.visibleSubscriptions.isEmpty {
-                    emptyState
-                        .multilineTextAlignment(.center)
-                        .padding(Tokens.Space.s6)
-                        .frame(width: geometry.size.width, height: geometry.size.height)
+            VStack(spacing: 0) {
+                if let error = model.errorMessage {
+                    notice(error, isError: true) { model.errorMessage = nil }
+                        .ternTransition(.disclosure)
+                } else if let message = model.notice {
+                    notice(message, isError: false) { model.notice = nil }
+                        .ternTransition(.disclosure)
                 }
-                else {
-                    ScrollView {
-                        LazyVStack(spacing: 0) {
-                            ForEach(model.visibleSubscriptions) { subscription in
-                                UnsubscribeRow(subscription: subscription, model: model,
-                                    isCompact: geometry.size.width < Tokens.Layout.readableWidth)
-                                Divider()
-                                    .padding(.leading, Tokens.Space.s6 * 2 + Tokens.Space.s3 * 2 + Tokens.Control.avatarLarge)
-                                    .padding(.trailing, Tokens.Space.s6)
+                if needsSignIn {
+                    Label("Sign in again in Settings to manage newsletters for this account.",
+                        systemImage: "person.crop.circle.badge.exclamationmark")
+                        .font(.callout).foregroundStyle(.secondary)
+                        .padding(.horizontal, Tokens.Space.s6).padding(.vertical, Tokens.Space.s3)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .ternTransition(.disclosure)
+                }
+                listHeader
+                Divider()
+                GeometryReader { geometry in
+                    if model.visibleSubscriptions.isEmpty {
+                        emptyState
+                            .multilineTextAlignment(.center)
+                            .padding(Tokens.Space.s6)
+                            .frame(width: geometry.size.width, height: geometry.size.height)
+                            .ternTransition(.fade)
+                    }
+                    else {
+                        ScrollView {
+                            LazyVStack(spacing: 0) {
+                                ForEach(model.visibleSubscriptions) { subscription in
+                                    UnsubscribeRow(subscription: subscription, model: model,
+                                        isCompact: geometry.size.width < Tokens.Layout.readableWidth)
+                                    Divider()
+                                        .padding(.leading, Tokens.Space.s6 * 2 + Tokens.Space.s3 * 2 + Tokens.Control.avatarLarge)
+                                        .padding(.trailing, Tokens.Space.s6)
+                                }
                             }
                         }
+                        .accessibilityIdentifier("unsubscribe.list")
+                        .ternTransition(.fade)
                     }
-                    .accessibilityIdentifier("unsubscribe.list")
                 }
+                .ternAnimation(value: listContent, duration: Tokens.Motion.fast)
             }
+            // The list header and the list move with a banner as it opens and closes.
+            .ternAnimation(value: model.errorMessage ?? model.notice)
+            .ternAnimation(value: needsSignIn)
             Divider()
             footer
         }
@@ -196,29 +222,34 @@ struct UnsubscribeView: View {
     }
 
     private var listHeader: some View {
-        HStack(spacing: Tokens.Space.s3) {
+        let selectedCount = model.selectedCount
+        return HStack(spacing: Tokens.Space.s3) {
             UnsubscribeCheckbox(isOn: model.allVisibleSelected, isMixed: model.someVisibleSelected,
                 isEnabled: model.canSelectAll && !model.isWorking,
                 label: "Select all newsletters available for batch unsubscribe",
                 identifier: "unsubscribe.selectAll",
                 help: "Selects the visible newsletters that support direct unsubscribe.", action: model.toggleAll)
-            if model.selectedCount > 0 {
-                Text("\(model.selectedCount) selected").fontWeight(.medium).monospacedDigit()
+            if selectedCount > 0 {
+                Text("\(selectedCount) selected").fontWeight(.medium).monospacedDigit()
+                    .ternTransition(.fade)
                 UnsubscribeIconButton(symbol: "xmark.circle", title: "Clear selection") { model.clearSelection() }
                     .accessibilityIdentifier("unsubscribe.clearSelection")
+                    .ternTransition(.fade)
             } else {
                 Text("\(model.filter.title) · \(model.visibleSubscriptions.count == 1 ? "1 newsletter" : "\(model.visibleSubscriptions.count) newsletters")")
                     .foregroundStyle(.secondary)
+                    .ternTransition(.fade)
             }
             Spacer(minLength: Tokens.Space.s3)
-            if model.selectedCount > 0 {
+            if selectedCount > 0 {
                 Button(action: model.proposeSelection) {
-                    Label("Unsubscribe (\(model.selectedCount))", systemImage: "minus.circle")
+                    Label("Unsubscribe (\(selectedCount))", systemImage: "minus.circle")
                 }
                     .buttonStyle(.borderedProminent)
                     .disabled(model.isWorking)
                     .help("Review the selected newsletters before sending unsubscribe requests")
                     .accessibilityIdentifier("unsubscribe.batch")
+                    .ternTransition(.fade)
             } else {
                 Menu {
                     Picker("Sort newsletters", selection: $model.sort) {
@@ -234,24 +265,29 @@ struct UnsubscribeView: View {
                 .help("Sort: \(model.sort.title)")
                 .accessibilityLabel("Sort newsletters")
                 .accessibilityIdentifier("unsubscribe.sort")
+                .ternTransition(.fade)
             }
         }
         .font(.callout)
         .padding(.horizontal, Tokens.Space.s6)
         .padding(.vertical, Tokens.Space.s2)
         .frame(minHeight: Tokens.Space.s10)
-        .background(model.selectedCount > 0 ? Color.accentColor.opacity(Tokens.Opacity.wash) : Tokens.Surface.primary)
+        .background(selectedCount > 0 ? Color.accentColor.opacity(Tokens.Opacity.wash) : Tokens.Surface.primary)
+        .ternAnimation(value: selectedCount > 0, duration: Tokens.Motion.fast)
     }
 
     @ViewBuilder private var emptyState: some View {
-        if model.isLoading || (model.isScanning && model.subscriptions.isEmpty) {
+        if showsLoading {
             VStack(spacing: Tokens.Space.s3) {
                 ProgressView()
-                Text(model.isLoading ? "Loading newsletters…" : "Finding your newsletters…").font(.headline)
+                Text(isLoading ? "Loading newsletters…" : "Finding your newsletters…").font(.headline)
                 Text("Subscriptions appear as your mail is checked.")
                     .font(.callout).foregroundStyle(.secondary)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // A load that ends within the delay goes straight to its result.
+            .ternDelayedLoading()
+            .ternTransition(.fade)
         } else if model.accounts.isEmpty {
             ContentUnavailableView("No mail accounts", systemImage: "person.crop.circle.badge.plus",
                 description: Text("Connect a mail account to find its newsletters."))
@@ -303,7 +339,7 @@ struct UnsubscribeView: View {
                 Text("Updating subscription…")
                 Spacer(minLength: 0)
             } else {
-                if model.isScanning || model.isLoading { ProgressView().controlSize(.mini) }
+                if model.isScanning || isLoading { ProgressView().controlSize(.mini) }
                 else { Image(systemName: model.hasMoreToScan ? "pause.circle" : "checkmark.circle").accessibilityHidden(true) }
                 Text(coverageTitle).lineLimit(1).monospacedDigit().help(model.scanSummary)
                 Spacer(minLength: Tokens.Space.s3)
@@ -341,7 +377,7 @@ struct UnsubscribeView: View {
             model.selectedAccountID.isEmpty || $0.id == model.selectedAccountID
         }.compactMap { model.snapshots[$0.id] }
         let count = snapshots.reduce(0) { $0 + $1.scannedMessageCount }.formatted()
-        if model.isLoading { return "Loading newsletters…" }
+        if isLoading { return "Loading newsletters…" }
         if model.isScanning {
             return snapshots.contains(where: \.isRefreshing) ? "Refreshing · \(count) checked" : "Checking mail · \(count) checked"
         }

@@ -1,5 +1,6 @@
 import MailStore
 import SwiftUI
+import Synchronization
 
 struct FollowUpRow: View {
     let entry: CommitmentEntry
@@ -210,30 +211,45 @@ enum FollowUpSchedule {
     /// instant. Reminder dates remain instants. Convert only at picker/display
     /// boundaries so changing time zones never changes the saved deadline day.
     static func canonicalDeadline(_ date: Date, calendar: Calendar = .current) -> Date {
-        let local = deadlineCalendar(timeZone: calendar.timeZone)
+        let local = localDeadlineCalendar(timeZone: calendar.timeZone)
         let components = local.dateComponents([.year, .month, .day], from: date)
-        let utc = deadlineCalendar(timeZone: .gmt)
-        return utc.date(from: components) ?? utc.startOfDay(for: date)
+        return utcDeadlineCalendar.date(from: components) ?? utcDeadlineCalendar.startOfDay(for: date)
     }
 
     static func pickerDate(from canonical: Date, calendar: Calendar = .current) -> Date {
-        let utc = deadlineCalendar(timeZone: .gmt)
-        let components = utc.dateComponents([.year, .month, .day], from: canonical)
-        let local = deadlineCalendar(timeZone: calendar.timeZone)
+        let components = utcDeadlineCalendar.dateComponents([.year, .month, .day], from: canonical)
+        let local = localDeadlineCalendar(timeZone: calendar.timeZone)
         return local.date(from: components) ?? local.startOfDay(for: canonical)
     }
 
     static func deadlineText(_ canonical: Date, locale: Locale = .current) -> String {
         canonical.formatted(Date.FormatStyle(date: .abbreviated, time: .omitted, locale: locale,
-            calendar: deadlineCalendar(timeZone: .gmt), timeZone: .gmt))
+            calendar: utcDeadlineCalendar, timeZone: .gmt))
     }
 
     static func isOverdue(_ dueAt: Date, now: Date, calendar: Calendar = .current) -> Bool {
-        deadlineCalendar(timeZone: .gmt).startOfDay(for: dueAt) < canonicalDeadline(now, calendar: calendar)
+        utcDeadlineCalendar.startOfDay(for: dueAt) < canonicalDeadline(now, calendar: calendar)
     }
 
     static func isDueToday(_ dueAt: Date, now: Date, calendar: Calendar = .current) -> Bool {
-        deadlineCalendar(timeZone: .gmt).startOfDay(for: dueAt) == canonicalDeadline(now, calendar: calendar)
+        utcDeadlineCalendar.startOfDay(for: dueAt) == canonicalDeadline(now, calendar: calendar)
+    }
+
+    /// Deadline math runs in sort comparators and in every row body, so both
+    /// Gregorian calendars are built once instead of on each call.
+    private static let utcDeadlineCalendar = deadlineCalendar(timeZone: .gmt)
+
+    /// The calendar for the caller's time zone, rebuilt only when that zone
+    /// changes (after travel, or when a test passes another calendar).
+    private static let localDeadlineCalendarCache = Mutex<Calendar?>(nil)
+
+    private static func localDeadlineCalendar(timeZone: TimeZone) -> Calendar {
+        localDeadlineCalendarCache.withLock { slot in
+            if let cached = slot, cached.timeZone == timeZone { return cached }
+            let calendar = deadlineCalendar(timeZone: timeZone)
+            slot = calendar
+            return calendar
+        }
     }
 
     private static func deadlineCalendar(timeZone: TimeZone) -> Calendar {

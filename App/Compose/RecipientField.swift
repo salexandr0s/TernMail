@@ -259,6 +259,8 @@ struct RecipientField: NSViewRepresentable {
         private let avatars = RecipientAvatarController()
         private var requestedQuery: String?
         private var dismissedQuery: String?
+        /// The text the rows on screen were found for, while the panel may be showing them.
+        private var presentedQuery: String?
 
         init(_ parent: RecipientField) {
             self.parent = parent
@@ -266,7 +268,10 @@ struct RecipientField: NSViewRepresentable {
             sizingField.delegate = self
             NotificationCenter.default.addObserver(self, selector: #selector(selectionChanged(_:)),
                 name: NSTextView.didChangeSelectionNotification, object: nil)
-            avatars.afterAcceptance = { [weak self] in self?.publish() }
+            avatars.afterAcceptance = { [weak self] in
+                self?.presentedQuery = nil
+                self?.publish()
+            }
         }
 
         func configureAvatars() {
@@ -287,6 +292,7 @@ struct RecipientField: NSViewRepresentable {
             queryGeneration += 1
             for task in groupTasks.values { task.cancel() }
             groupTasks = [:]
+            presentedQuery = nil
             avatars.stop()
         }
 
@@ -309,7 +315,7 @@ struct RecipientField: NSViewRepresentable {
                 let isFocused = responder === field || ownsEditor
                 guard isFocused != reportedFocus else { return }
                 reportedFocus = isFocused
-                if !isFocused { avatars.hideSuggestions() }
+                if !isFocused { hideSuggestions() }
                 (field as? RecipientTokenField)?.refreshAvatars()
                 parent.onFocusChange(isFocused)
                 if isFocused { RecipientField.revealSelection(in: field) }
@@ -337,9 +343,10 @@ struct RecipientField: NSViewRepresentable {
         }
 
         func controlTextDidChange(_ notification: Notification) {
-            if let editor = field?.currentEditor() as? NSTextView {
+            let editor = field?.currentEditor() as? NSTextView
+            if let editor {
                 if editor.hasMarkedText() {
-                    avatars.hideSuggestions()
+                    hideSuggestions()
                     return
                 }
                 // Inserting the terminator is a change of its own, which publishes.
@@ -347,7 +354,10 @@ struct RecipientField: NSViewRepresentable {
             }
             publish()
             dismissedQuery = nil
-            avatars.hideSuggestions()
+            let query = editor.map { typedQuery(in: $0) } ?? ""
+            // A lookup for text that has since changed must not show its rows.
+            if query != loadedQuery, query != requestedQuery { cancelLookup() }
+            if !keepsSuggestions(for: query) { hideSuggestions() }
         }
 
         func controlTextDidEndEditing(_ notification: Notification) {
@@ -355,14 +365,17 @@ struct RecipientField: NSViewRepresentable {
             // The field turns the text left at the end of editing into a token
             // without asking `shouldAdd`, so a list can still be one object.
             if (field?.objectValue as? [Any])?.contains(where: { $0 is TokenList }) == true { show(shownAddresses) }
-            avatars.hideSuggestions()
+            hideSuggestions()
             reportFocus()
         }
 
         func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
             let handled = avatars.handleCommand(commandSelector, editor: textView)
             if handled, commandSelector == #selector(NSResponder.cancelOperation(_:)) {
-                dismissedQuery = loadedQuery
+                // Rows kept from earlier text were on screen for the text typed since.
+                let typed = typedQuery(in: textView)
+                dismissedQuery = typed.isEmpty ? loadedQuery : typed
+                presentedQuery = nil
                 loadTask?.cancel()
                 queryGeneration += 1
             }
@@ -385,7 +398,7 @@ struct RecipientField: NSViewRepresentable {
                 loadedGroups = []; loadedDirectory = []; groupCompletions = [:]
                 completions = [:]
                 requestedQuery = nil
-                avatars.hideSuggestions()
+                hideSuggestions()
                 return []
             }
             if query == loadedQuery {
@@ -404,15 +417,17 @@ struct RecipientField: NSViewRepresentable {
             loadedGroups = []; loadedDirectory = []; groupCompletions = [:]
             completions = [:]
             requestedQuery = query
-            avatars.hideSuggestions()
+            if !keepsSuggestions(for: query) { hideSuggestions() }
             queryGeneration += 1
             let generation = queryGeneration
             let suggestions = parent.suggestions
             let directory = parent.directorySuggestions
             let groups = parent.groupSuggestions
             loadTask = Task { [weak self, weak tokenField] in
-                let results = await suggestions(query)
-                let groupResults = await groups(query)
+                // Addresses and groups come from separate reads, so they run together.
+                async let found = suggestions(query)
+                async let foundGroups = groups(query)
+                let (results, groupResults) = await (found, foundGroups)
                 guard let self, !Task.isCancelled, queryGeneration == generation else { return }
                 loadedQuery = query
                 requestedQuery = nil
@@ -590,11 +605,44 @@ struct RecipientField: NSViewRepresentable {
                 RecipientSuggestion(completion: groupCompletionString(group), title: group.name,
                                     subtitle: "\(group.memberCount) members" + (group.isComplete ? "" : " · list incomplete"), address: nil)
             }
-            avatars.present(addressRows(loaded) + groups + addressRows(loadedDirectory), for: tokenField, query: query,
+            let rows = addressRows(loaded) + groups + addressRows(loadedDirectory)
+            // With no rows the panel closes, so there is nothing to keep.
+            presentedQuery = rows.isEmpty ? nil : query
+            avatars.present(rows, for: tokenField, query: query,
                             isCurrent: { [weak self, weak tokenField] in
                                 guard let self, let tokenField else { return false }
                                 return field === tokenField && queryGeneration == generation && loadedQuery == query
                             }, selectFirst: !query.contains("@"))
+        }
+
+        /// Closes the panel at once: on Escape, a lost focus, or text its rows don't answer.
+        private func hideSuggestions() {
+            presentedQuery = nil
+            avatars.hideSuggestions()
+        }
+
+        /// Typing on from the text the rows were found for keeps them on screen
+        /// until the rows for the new text arrive, so the panel doesn't blink
+        /// with each character. The kept rows can't be chosen: the panel
+        /// accepts a row only for the query and text it was shown for.
+        private func keepsSuggestions(for query: String) -> Bool {
+            guard let presentedQuery else { return false }
+            return query.hasPrefix(presentedQuery)
+        }
+
+        /// The text being completed, as the field passes it to `completionsForSubstring`.
+        private func typedQuery(in editor: NSTextView) -> String {
+            let range = editor.rangeForUserCompletion
+            let text = editor.string as NSString
+            guard range.location != NSNotFound, NSMaxRange(range) <= text.length else { return "" }
+            return text.substring(with: range).trimmingCharacters(in: .whitespaces).lowercased()
+        }
+
+        /// Stops a lookup for text that has changed, so its rows can't arrive late.
+        private func cancelLookup() {
+            loadTask?.cancel()
+            queryGeneration += 1
+            requestedQuery = nil
         }
 
         private func completionString(_ address: EmailAddress) -> String {

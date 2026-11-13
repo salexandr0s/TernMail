@@ -1,7 +1,7 @@
 import Foundation
 
 /// A small, inert Mermaid subset. Unsupported input stays visible as source code.
-struct AssistantDiagram: Equatable {
+struct AssistantDiagram: Equatable, Sendable {
     enum Direction: String { case TD, TB, BT, LR, RL }
     enum Shape: Equatable { case rectangle, rounded, decision }
     struct Node: Identifiable, Equatable {

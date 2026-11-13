@@ -112,6 +112,7 @@ struct SnoozeDateSheet: View {
                         .font(.callout)
                         .foregroundStyle(Tokens.Status.error)
                         .fixedSize(horizontal: false, vertical: true)
+                        .ternTransition(.disclosure)
                 }
             }
             .padding(.horizontal, Tokens.Space.s5)

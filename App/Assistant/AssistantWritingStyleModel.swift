@@ -90,6 +90,8 @@ final class AssistantWritingStyleModel {
     @ObservationIgnored private var runner: Task<Void, Never>?
     @ObservationIgnored private var currentJob: Job?
     @ObservationIgnored private var waitedRequests: [UUID: Set<String>] = [:]
+    /// Numbers the writes `persist` queues, so only the newest reports how it ended.
+    @ObservationIgnored private var latestPersist = 0
 
     init(store: any AssistantWritingStyleStore, readSamples: @escaping ReadSamples,
          analyze: @escaping Analyze, now: @escaping @Sendable () -> Date = { .now },
@@ -100,7 +102,11 @@ final class AssistantWritingStyleModel {
         catch { loadFailed = true; storageErrorMessage = "Saved writing styles could not be read. Choose Relearn to replace them." }
         archive.disabledAccountIDs.formUnion(store.disabledAccountIDs)
         let disabled = archive.disabledAccountIDs
+        let storedCount = archive.profiles.count
         archive.profiles.removeAll { disabled.contains($0.accountID) }
+        // A quit can come between an opt-out and the rewrite of the profile file. The
+        // opt-out was saved first, so its profile is dropped here and erased from the file.
+        if !loadFailed, archive.profiles.count != storedCount { persist() }
     }
 
     var entries: [AssistantWritingStyleEntry] {
@@ -330,12 +336,25 @@ final class AssistantWritingStyleModel {
                 let record = AssistantStoredWritingStyle(accountID: account.id, email: account.email, revision: UUID(),
                     profile: profile, hasLimitedCoverage: samples.truncated || samples.skippedCount > 0
                         || !samples.failures.isEmpty || profile.sampleCount < samples.selectedCount)
-                var updated = archive
-                updated.profiles.removeAll { $0.accountID == account.id }; updated.profiles.append(record)
-                do { try store.save(updated) }
-                catch { storageErrorMessage = "Tern could not save the learned writing style. No new profile was stored."; throw error }
-                guard isCurrent(job) else { throw CancellationError() }
-                archive = updated; phases[account.id] = .ready; storageErrorMessage = nil
+                // The profile is used only once the file holding it is written. A change to
+                // another account can be written behind this one, and the profile is then
+                // written again on top of that change.
+                var isStored = false
+                while !isStored {
+                    let base = archive
+                    var updated = base
+                    updated.profiles.removeAll { $0.accountID == account.id }; updated.profiles.append(record)
+                    do { try await store.save(updated).value }
+                    catch { storageErrorMessage = "Tern could not save the learned writing style. No new profile was stored."; throw error }
+                    guard isCurrent(job) else {
+                        // The account changed during the write, so the file is put back
+                        // in step with the archive in use.
+                        persist()
+                        throw CancellationError()
+                    }
+                    if archive == base { archive = updated; isStored = true }
+                }
+                phases[account.id] = .ready; storageErrorMessage = nil
             } catch {
                 if isCurrent(job) {
                     phases[account.id] = .failed
@@ -367,10 +386,23 @@ final class AssistantWritingStyleModel {
                   : "A learned writing style is unavailable. This draft uses the conversation and your request.")
     }
 
+    /// Saves the opt-outs at once and queues the profile file. The file is written off
+    /// the main actor, so its result is reported when it arrives.
     private func persist() {
-        do { try store.save(archive); storageErrorMessage = nil }
-        catch { storageErrorMessage = "Tern could not update the saved profile file. Profile use has stopped for disabled accounts, but the file may still contain their previous styles." }
+        latestPersist += 1
+        let number = latestPersist
+        do {
+            let write = try store.save(archive)
+            Task { [weak self] in
+                let result = await write.result
+                // A newer write replaces this file and reports for itself.
+                guard let self, number == latestPersist else { return }
+                if case .failure = result { storageErrorMessage = Self.persistFailureMessage } else { storageErrorMessage = nil }
+            }
+        } catch { storageErrorMessage = Self.persistFailureMessage }
     }
+
+    private static let persistFailureMessage = "Tern could not update the saved profile file. Profile use has stopped for disabled accounts, but the file may still contain their previous styles."
 
     private static func sameEmail(_ lhs: String, _ rhs: String) -> Bool { lhs.lowercased() == rhs.lowercased() }
     private static func summary(_ profile: WritingStyleProfile) -> String {

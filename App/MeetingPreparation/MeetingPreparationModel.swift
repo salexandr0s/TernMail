@@ -17,17 +17,25 @@ final class MeetingPreparationModel: Identifiable {
     private(set) var isStale = false
     private(set) var statusMessage = ""
     private(set) var errorMessage: String?
-    private(set) var sources: [MeetingPreparationSourceRow] = []
+    private(set) var sources: [MeetingPreparationSourceRow] = [] {
+        didSet { if sources != oldValue { rebuildTrackedWork() } }
+    }
     private(set) var omittedSourceCount = 0
     private(set) var partialNotes: [String] = []
     var sourceSearchText = ""
     private(set) var searchResults: [MeetingPreparationSourceRow] = []
     private(set) var isSearching = false
     private(set) var searchError: String?
-    private var reports: [MeetingPreparationThreadReport] = []
-    private var acceptedEntries: [CommitmentEntry] = []
-    private var acceptedWorkReady = false
+    private var reports: [MeetingPreparationThreadReport] = [] { didSet { rebuildSections(); rebuildFiles() } }
+    private var acceptedEntries: [CommitmentEntry] = [] { didSet { rebuildSections(); rebuildTrackedWork() } }
+    private var acceptedWorkReady = false { didSet { if acceptedWorkReady != oldValue { rebuildSections() } } }
     private var generatedAccess: MeetingPreparationAccess?
+    private var pendingCandidates: [MeetingPreparationCandidate] = []
+    // What the page shows. Each is rebuilt when one of its inputs changes, so
+    // reading it from the view does not repeat the work.
+    private var preparedSections: [MeetingPreparationSection] = []
+    private var preparedFiles: [MeetingPreparationAttachment] = []
+    private var preparedTrackedWork: [CommitmentEntry] = []
 
     @ObservationIgnored let storeProvider: @MainActor () -> AccountStore?
     @ObservationIgnored let mailAccountIDs: @MainActor () -> Set<String>
@@ -35,13 +43,15 @@ final class MeetingPreparationModel: Identifiable {
     @ObservationIgnored let makeSession: SessionFactory
     @ObservationIgnored let readEvent: @MainActor (CalendarDisplayEvent) async throws -> CalendarDisplayEvent
     @ObservationIgnored let sourceLinks: @MainActor (CalendarDisplayEvent) async throws -> [CalendarSourceLink]
-    @ObservationIgnored let sourceTitle: @MainActor (ThreadKey) async throws -> String?
+    @ObservationIgnored let sourceTitles: @MainActor ([ThreadKey]) async throws -> [ThreadKey: String]
     @ObservationIgnored let search: @MainActor (String, Set<String>) async throws -> [MeetingPreparationSourceRow]
     @ObservationIgnored let threadRevision: @MainActor (ThreadKey) async throws -> String?
     @ObservationIgnored let openMail: @MainActor (MailLink) -> Void
     @ObservationIgnored let previewFile: @MainActor (AssistantSource) async throws -> URL
     @ObservationIgnored let acceptSuggestion: @MainActor (FollowUpSuggestionRequest) -> Void
-    @ObservationIgnored private var preferences: [ThreadKey: MeetingPreparationSourcePreference] = [:]
+    @ObservationIgnored private var preferences: [ThreadKey: MeetingPreparationSourcePreference] = [:] {
+        didSet { rebuildSections(); rebuildFiles() }
+    }
     @ObservationIgnored private var capturedMailAccountIDs: Set<String> = []
     @ObservationIgnored private var generation = 0
     @ObservationIgnored private var searchGeneration = 0
@@ -59,7 +69,7 @@ final class MeetingPreparationModel: Identifiable {
          makeSession: @escaping SessionFactory,
          readEvent: @escaping @MainActor (CalendarDisplayEvent) async throws -> CalendarDisplayEvent,
          sourceLinks: @escaping @MainActor (CalendarDisplayEvent) async throws -> [CalendarSourceLink],
-         sourceTitle: @escaping @MainActor (ThreadKey) async throws -> String? = { _ in nil },
+         sourceTitles: @escaping @MainActor ([ThreadKey]) async throws -> [ThreadKey: String] = { _ in [:] },
          search: @escaping @MainActor (String, Set<String>) async throws -> [MeetingPreparationSourceRow] = { _, _ in [] },
          threadRevision: @escaping @MainActor (ThreadKey) async throws -> String? = { _ in nil },
          openMail: @escaping @MainActor (MailLink) -> Void = { _ in },
@@ -67,7 +77,7 @@ final class MeetingPreparationModel: Identifiable {
          acceptSuggestion: @escaping @MainActor (FollowUpSuggestionRequest) -> Void = { _ in }) {
         self.event = event; self.followUps = followUps; storeProvider = store; self.mailAccountIDs = mailAccountIDs
         self.access = access; self.makeSession = makeSession; self.readEvent = readEvent; self.sourceLinks = sourceLinks
-        self.sourceTitle = sourceTitle; self.search = search; self.threadRevision = threadRevision
+        self.sourceTitles = sourceTitles; self.search = search; self.threadRevision = threadRevision
         self.openMail = openMail; self.previewFile = previewFile; self.acceptSuggestion = acceptSuggestion
         do { occurrence = try MeetingPreparationOccurrence(eventAccountID: event.accountID, calendarID: event.calendarID, event: event.event) }
         catch {
@@ -85,9 +95,26 @@ final class MeetingPreparationModel: Identifiable {
         return !stopped && mailAccountIDs() == capturedMailAccountIDs && access(capturedMailAccountIDs) == generatedAccess
     }
 
-    var sections: [MeetingPreparationSection] {
+    /// Included conversations whose summary has not arrived yet, in the order
+    /// their cards will appear. The view holds a place for each one.
+    var pendingSummaries: [MeetingPreparationCandidate] {
         guard generatedContentAllowed else { return [] }
-        return reports.filter { !isExcluded($0.candidate.thread) }.map { prepared in
+        return pendingCandidates.filter { !isExcluded($0.thread) }
+    }
+
+    // The access checks stay in these getters, so a profile switch hides
+    // generated content before any observation task has run.
+    var sections: [MeetingPreparationSection] { generatedContentAllowed ? preparedSections : [] }
+
+    var trackedWork: [CommitmentEntry] {
+        let available = mailAccountIDs()
+        return preparedTrackedWork.filter { available.contains($0.record.accountID) }
+    }
+
+    var recentFiles: [MeetingPreparationAttachment] { generatedContentAllowed ? preparedFiles : [] }
+
+    private func rebuildSections() {
+        preparedSections = reports.filter { !isExcluded($0.candidate.thread) }.map { prepared in
             let tracked = acceptedEntries.filter { $0.record.accountID == prepared.candidate.thread.accountID && $0.record.threadID == prepared.candidate.thread.threadID }
             var suggestions: [MeetingPreparationTaskSuggestion] = []
             var suppressed = 0
@@ -106,16 +133,14 @@ final class MeetingPreparationModel: Identifiable {
         }
     }
 
-    var trackedWork: [CommitmentEntry] {
+    private func rebuildTrackedWork() {
         let keys = Set(sources.filter { !$0.isExcluded }.map(\.key))
-        let available = mailAccountIDs()
-        return acceptedEntries.filter { available.contains($0.record.accountID) && keys.contains(ThreadKey(accountID: $0.record.accountID, threadID: $0.record.threadID)) }
+        preparedTrackedWork = acceptedEntries.filter { keys.contains(ThreadKey(accountID: $0.record.accountID, threadID: $0.record.threadID)) }
     }
 
-    var recentFiles: [MeetingPreparationAttachment] {
-        guard generatedContentAllowed else { return [] }
+    private func rebuildFiles() {
         var seen: Set<String> = []
-        return reports.filter { !isExcluded($0.candidate.thread) }.flatMap(\.attachments)
+        preparedFiles = reports.filter { !isExcluded($0.candidate.thread) }.flatMap(\.attachments)
             .filter { seen.insert($0.id).inserted }.sorted { $0.date == $1.date ? $0.id < $1.id : $0.date > $1.date }
     }
 
@@ -138,7 +163,7 @@ final class MeetingPreparationModel: Identifiable {
         let task = Task { await prepare(epoch: epoch, capturedAccess: capturedAccess) }
         operation = task
         await task.value
-        if generation == epoch { operation = nil; isLoading = false }
+        if generation == epoch { operation = nil; isLoading = false; clearPendingCandidates() }
     }
 
     func cancel() {
@@ -203,6 +228,16 @@ final class MeetingPreparationModel: Identifiable {
             let choices = try await store.meetingPreparationPreferences(for: occurrence)
             guard current(epoch) else { return }
             preferences = Dictionary(choices.map { (ThreadKey(accountID: $0.mailAccountID, threadID: $0.threadID), $0) }, uniquingKeysWith: { _, last in last })
+            // Saved choices and event links are local reads. They are shown
+            // before the event is read again, which can wait on the network.
+            let links: [CalendarSourceLink]
+            do { links = try await sourceLinks(event) }
+            catch { links = []; partialNotes.append("Event-linked conversations couldn't be loaded.") }
+            guard current(epoch) else { return }
+            let linked = links.filter { $0.accountID == event.accountID && $0.calendarID == event.calendarID && $0.eventID == event.event.id }
+                .map { MailLink(accountID: $0.accountID, threadID: $0.threadID, messageID: $0.messageID) }
+            await populateSources(linked: linked, epoch: epoch)
+            guard current(epoch) else { return }
             var eventIsFresh = true
             do {
                 let updated = try await readEvent(event)
@@ -217,14 +252,6 @@ final class MeetingPreparationModel: Identifiable {
                 isStale = true
                 eventIsFresh = false
             }
-            let links: [CalendarSourceLink]
-            do { links = try await sourceLinks(event) }
-            catch { links = []; partialNotes.append("Event-linked conversations couldn't be loaded.") }
-            guard current(epoch) else { return }
-            let linked = links.filter { $0.accountID == event.accountID && $0.calendarID == event.calendarID && $0.eventID == event.event.id }
-                .map { MailLink(accountID: $0.accountID, threadID: $0.threadID, messageID: $0.messageID) }
-            await populateSources(linked: linked, epoch: epoch)
-            guard current(epoch) else { return }
             do { acceptedEntries = try await store.commitmentEntries(accountIDs: capturedMailAccountIDs); acceptedWorkReady = true }
             catch { acceptedEntries = []; acceptedWorkReady = false; partialNotes.append("Tracked-work status is unavailable; task suggestions are hidden.") }
             guard current(epoch) else { return }
@@ -243,7 +270,8 @@ final class MeetingPreparationModel: Identifiable {
             let discovery = try await session.discover(event, included, linked, excluded)
             guard current(epoch), session.isValid() else { revalidateAccess(); return }
             merge(discovery.candidates)
-            pendingThreads = Set(discovery.candidates.prefix(MeetingPreparationService.reportLimit).map(\.thread))
+            let summarized = Array(discovery.candidates.prefix(MeetingPreparationService.reportLimit))
+            pendingThreads = Set(summarized.map(\.thread))
             guard pendingThreads.isDisjoint(with: changedWhilePreparing) else { markStale("Supporting mail changed. Refresh this preparation."); return }
             omittedSourceCount = discovery.omittedCount + max(0, discovery.candidates.count - MeetingPreparationService.reportLimit)
             partialNotes += discovery.failures
@@ -252,7 +280,10 @@ final class MeetingPreparationModel: Identifiable {
             if let unavailable = session.providerUnavailableMessage {
                 state = .providerUnavailable; statusMessage = unavailable; return
             }
-            for candidate in discovery.candidates.prefix(MeetingPreparationService.reportLimit) {
+            // Each conversation gets its card now, so a finished summary
+            // fills a card in place and does not push the page down.
+            pendingCandidates = summarized
+            for candidate in summarized {
                 guard current(epoch), session.isValid() else { revalidateAccess(); return }
                 statusMessage = "Preparing \(candidate.title)…"
                 do {
@@ -263,10 +294,12 @@ final class MeetingPreparationModel: Identifiable {
                     guard current(epoch), session.isValid() else { revalidateAccess(); return }
                     guard latestRevision == report.revision else { markStale("Supporting mail changed or became unavailable. Refresh this preparation."); return }
                     reports.append(report)
+                    pendingCandidates.removeAll { $0.thread == candidate.thread }
                     if report.report.hasPartialCoverage { partialNotes.append("Some content in \(candidate.title) was unavailable or shortened.") }
                 } catch is CancellationError { return } catch {
                     guard current(epoch), session.isValid() else { revalidateAccess(); return }
                     setSourceFailure(candidate.thread, message: "This conversation couldn't be prepared.")
+                    pendingCandidates.removeAll { $0.thread == candidate.thread }
                     partialNotes.append("A conversation couldn't be prepared; its original source remains available.")
                 }
             }
@@ -288,8 +321,11 @@ final class MeetingPreparationModel: Identifiable {
     private func isExcluded(_ key: ThreadKey) -> Bool { preferences[key]?.choice == .exclude }
     private func invalidateOperation(clearReports: Bool) {
         generation += 1; operation?.cancel(); operation = nil; isLoading = false
-        pendingThreads = []
+        pendingThreads = []; clearPendingCandidates()
         if clearReports { reports = []; generatedAccess = nil }
+    }
+    private func clearPendingCandidates() {
+        if !pendingCandidates.isEmpty { pendingCandidates = [] }
     }
     private func markStale(_ message: String) {
         isStale = true
@@ -385,17 +421,18 @@ extension MeetingPreparationModel {
         var links: [ThreadKey: MailLink] = [:]
         for link in linked { links[ThreadKey(accountID: link.accountID, threadID: link.threadID)] = link }
         for key in preferences.keys where links[key] == nil { links[key] = MailLink(accountID: key.accountID, threadID: key.threadID) }
-        var rows: [MeetingPreparationSourceRow] = []
-        for (index, key) in links.keys.sorted().enumerated() {
-            guard current(epoch), let link = links[key] else { return }
-            let allowed = capturedMailAccountIDs.contains(key.accountID) && mailAccountIDs().contains(key.accountID)
-            let title = index < 20 && allowed ? (try? await sourceTitle(key)) : nil
-            guard current(epoch) else { return }
+        let keys = links.keys.sorted()
+        // One read covers every title. Hidden accounts are left out of it.
+        let readable = keys.prefix(20).filter { capturedMailAccountIDs.contains($0.accountID) && mailAccountIDs().contains($0.accountID) }
+        var titles: [ThreadKey: String] = [:]
+        if !readable.isEmpty { titles = (try? await sourceTitles(readable)) ?? [:] }
+        guard current(epoch) else { return }
+        sources = keys.compactMap { key in
+            guard let link = links[key] else { return nil }
             let reason = preferences[key]?.choice == .include ? "Included by you" : preferences[key]?.choice == .exclude ? "Excluded by you" : "Linked to this event"
-            rows.append(sourceRow(key: key, link: link, title: title ?? "Conversation", reason: reason,
-                unavailable: mailAccountIDs().contains(key.accountID) ? nil : "This mail account is unavailable."))
+            return sourceRow(key: key, link: link, title: titles[key] ?? "Conversation", reason: reason,
+                unavailable: mailAccountIDs().contains(key.accountID) ? nil : "This mail account is unavailable.")
         }
-        sources = rows
     }
 
     private func sourceRow(key: ThreadKey, link: MailLink, title: String, reason: String, unavailable: String? = nil) -> MeetingPreparationSourceRow {

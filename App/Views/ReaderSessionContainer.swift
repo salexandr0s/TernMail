@@ -21,7 +21,7 @@ struct ReaderSessionID: Hashable, Identifiable {
     }
 }
 
-struct ReaderInteraction {
+struct ReaderInteraction: Equatable {
     let body: UInt64?
     let header: UInt64?
 }
@@ -84,6 +84,14 @@ final class ReaderSessionStore {
         trim(keeping: selected)
     }
 
+    /// Records `detail` against the session selected now. Before the first
+    /// activation that is the session itself.
+    func record(_ detail: ThreadDetail, for id: ReaderSessionID) {
+        record(detail, for: id, selected: selected ?? id)
+    }
+
+    func isSelected(_ id: ReaderSessionID) -> Bool { selected == id }
+
     func retainsSource(for id: ReaderSessionID) -> Bool { !discardedSources.contains(id) }
 
     func setVisible(_ visible: Bool, selected: ReaderSessionID) {
@@ -137,6 +145,9 @@ struct ReaderSessionContainer: View {
     let isActive: Bool
     var attachmentPartID: String? = nil
     var reportsNavigation = true
+    /// Called with the selected conversation. A reader whose other inputs
+    /// stay the same keeps the copy it was given first, so this must reach
+    /// only state that lives as long as the container, such as `@State`.
     var onDetailChange: ((ThreadDetail) -> Void)? = nil
     @State private var store = ReaderSessionStore()
     @State private var isWindowVisible = false
@@ -171,18 +182,16 @@ struct ReaderSessionContainer: View {
         ZStack {
             ForEach(displaySessions) { session in
                 let active = visible && session == selected
-                ThreadView(key: session.key, mailbox: mailbox, selectedMessageID: session.messageID,
-                           selectedAttachmentPartID: session == selected ? attachmentPartID : nil,
-                           isReaderActive: active,
-                           retainsHiddenBody: !active && allowsHiddenBodyRetention && store.retainsSource(for: session)
-                               && (visible || recentSessions.suffix(2).contains(session)),
-                           retainsSourceSnapshot: store.retainsSource(for: session),
-                           interaction: active && reportsNavigation ? ReaderInteraction(body: NavigationPerformance.shared.currentGeneration(for: .reader),
-                               header: NavigationPerformance.shared.currentGeneration(for: .readerHeader)) : nil,
-                           onDetailChange: { detail in
-                               store.record(detail, for: session, selected: selected)
-                               if session == selected { onDetailChange?(detail) }
-                           })
+                ReaderSessionHost(session: session, mailbox: mailbox, store: store,
+                    attachmentPartID: session == selected ? attachmentPartID : nil,
+                    isActive: active,
+                    retainsHiddenBody: !active && allowsHiddenBodyRetention && store.retainsSource(for: session)
+                        && (visible || recentSessions.suffix(2).contains(session)),
+                    retainsSourceSnapshot: store.retainsSource(for: session),
+                    interaction: active && reportsNavigation ? ReaderInteraction(body: NavigationPerformance.shared.currentGeneration(for: .reader),
+                        header: NavigationPerformance.shared.currentGeneration(for: .readerHeader)) : nil,
+                    onDetailChange: onDetailChange)
+                    .equatable()
                     .opacity(session == selected ? 1 : 0)
                     .allowsHitTesting(active)
                     .accessibilityHidden(!active)
@@ -202,5 +211,43 @@ struct ReaderSessionContainer: View {
             allowsHiddenBodyRetention = false
             store.releaseHidden(keeping: selected)
         }
+    }
+}
+
+/// One retained reader. The container builds every session each time the
+/// selection moves, and a closure never compares equal, so a reader given
+/// the callback directly runs its body on every move. This compares the
+/// inputs by value and leaves the callback out, so a reader whose inputs
+/// are the same is left alone.
+private struct ReaderSessionHost: View, Equatable {
+    let session: ReaderSessionID
+    let mailbox: MailboxModel
+    let store: ReaderSessionStore
+    let attachmentPartID: String?
+    let isActive: Bool
+    let retainsHiddenBody: Bool
+    let retainsSourceSnapshot: Bool
+    let interaction: ReaderInteraction?
+    let onDetailChange: ((ThreadDetail) -> Void)?
+
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.session == rhs.session && lhs.mailbox === rhs.mailbox && lhs.store === rhs.store
+            && lhs.attachmentPartID == rhs.attachmentPartID && lhs.isActive == rhs.isActive
+            && lhs.retainsHiddenBody == rhs.retainsHiddenBody && lhs.retainsSourceSnapshot == rhs.retainsSourceSnapshot
+            && lhs.interaction == rhs.interaction
+    }
+
+    var body: some View {
+        ThreadView(key: session.key, mailbox: mailbox, selectedMessageID: session.messageID,
+                   selectedAttachmentPartID: attachmentPartID, isReaderActive: isActive,
+                   retainsHiddenBody: retainsHiddenBody, retainsSourceSnapshot: retainsSourceSnapshot,
+                   interaction: interaction,
+                   // The store answers which session is selected when a
+                   // conversation arrives, since this reader may have been
+                   // built under an earlier selection.
+                   onDetailChange: { detail in
+                       store.record(detail, for: session)
+                       if store.isSelected(session) { onDetailChange?(detail) }
+                   })
     }
 }

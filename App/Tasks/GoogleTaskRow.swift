@@ -11,6 +11,9 @@ struct GoogleTaskRow: View {
     let onComplete: () -> Void
     let onEdit: () -> Void
     let onDelete: () -> Void
+    /// When this value was made. A due date draws as Today, Tomorrow or Overdue by the current
+    /// day, so rows made on different days must not compare equal.
+    private let createdAt = Date.now
     @Environment(\.openURL) private var openURL
     @State private var isHovered = false
     @FocusState private var focusedControl: Control?
@@ -18,17 +21,21 @@ struct GoogleTaskRow: View {
 
     private enum Control: Hashable { case complete, title, source, edit, delete }
     private var showsActions: Bool { !isPending && (isHovered || focusedControl != nil || accessibleControl != nil) }
+    /// A write to this task is waiting for Google, so what the row shows isn't saved yet. The
+    /// placeholder for a task being added keeps its own look.
+    private var contentOpacity: Double { isBusy && !isPending ? Tokens.Opacity.disabled : 1 }
 
     var body: some View {
         HStack(alignment: .top, spacing: Tokens.Space.s2) {
             Button(action: onComplete) {
+                // The symbol keeps its place, dimmed, while a write runs. The spinner joins it only
+                // if the write outlasts the loading delay, so a short one never flashes a spinner.
                 ZStack {
-                    if isBusy { ProgressView().controlSize(.small) }
-                    else {
-                        Image(systemName: task.isCompleted ? "checkmark.circle.fill" : "circle")
-                            .font(.title2.weight(.light))
-                            .foregroundStyle(task.isCompleted ? Color.accentColor : Color.secondary)
-                    }
+                    Image(systemName: task.isCompleted ? "checkmark.circle.fill" : "circle")
+                        .font(.title2.weight(.light))
+                        .foregroundStyle(task.isCompleted ? Color.accentColor : Color.secondary)
+                        .opacity(isBusy ? Tokens.Opacity.disabled : 1)
+                    if isBusy { ProgressView().controlSize(.small).ternDelayedLoading() }
                 }
                 .frame(width: Tokens.Control.iconButton, height: Tokens.Control.iconButton)
                 .contentShape(Circle())
@@ -39,6 +46,7 @@ struct GoogleTaskRow: View {
             .accessibilityFocused($accessibleControl, equals: .complete)
             .help(task.isCompleted ? "Mark incomplete" : "Mark complete")
             .accessibilityLabel("\(isPending ? "Adding task" : task.isCompleted ? "Mark incomplete" : "Complete"): \(task.title)")
+            .accessibilityValue(isBusy ? "Saving" : "")
             .accessibilityIdentifier("google-task-complete-\(task.id)")
             .ternHover(isEnabled: !isBusy, radius: Tokens.Radius.md)
 
@@ -66,11 +74,13 @@ struct GoogleTaskRow: View {
             }
             .padding(.vertical, Tokens.Space.s1_5)
             .frame(maxWidth: .infinity, alignment: .leading)
+            .opacity(contentOpacity)
 
             VStack(alignment: .trailing, spacing: Tokens.Space.s0_5) {
                 dueTile
                 actions
             }
+            .opacity(contentOpacity)
         }
         .padding(.vertical, Tokens.Space.s1_5)
         .padding(.horizontal, Tokens.Space.s2)
@@ -78,6 +88,7 @@ struct GoogleTaskRow: View {
             in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
         .onHover { isHovered = $0 }
         .ternAnimation(value: showsActions)
+        .ternAnimation(value: isBusy, duration: Tokens.Motion.fast)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("google-task-row-\(task.id)")
         .contentShape(Rectangle())
@@ -220,5 +231,17 @@ struct GoogleTaskRow: View {
             guard let url = URL(string: value), MailLink(url: url) != nil else { return nil }
             return url
         }.first
+    }
+}
+
+/// Rows compare by what they draw and by the task their actions act on, so a parent can use
+/// `.equatable()` to leave unchanged rows alone. The actions themselves are not compared. Use
+/// `.equatable()` only where they depend on the task and on state they read when they run, and on
+/// nothing else the parent could change while the row stays equal.
+extension GoogleTaskRow: Equatable {
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.task == rhs.task && lhs.parentTitle == rhs.parentTitle && lhs.isBusy == rhs.isBusy
+            && lhs.isPending == rhs.isPending && lhs.allowsEditing == rhs.allowsEditing
+            && (lhs.task.due == nil || Calendar.current.isDate(lhs.createdAt, inSameDayAs: rhs.createdAt))
     }
 }

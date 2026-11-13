@@ -1,5 +1,6 @@
 import Foundation
 import MailStore
+import Observation
 import TernAI
 
 enum AssistantScope: String, CaseIterable, Identifiable {
@@ -20,10 +21,11 @@ struct AssistantMessage: Identifiable {
     let id: UUID
     let isUser: Bool
     let createdAt: Date
+    /// Setting the text leaves a helper whose blocks match it and are parsed
+    /// on first display.
     var text: String {
-        didSet {
-            if text != oldValue { markdown = AssistantMessageMarkdown(text: text) }
-        }
+        get { markdown.text }
+        set { markdown = newValue == markdown.text ? markdown.settled : AssistantMessageMarkdown(text: newValue) }
     }
     private(set) var markdown: AssistantMessageMarkdown
     var sources: [AssistantSource]
@@ -34,16 +36,39 @@ struct AssistantMessage: Identifiable {
     var draftStyleNotes: [String: String] = [:]
     var calendarProposals: [AssistantCalendarProposal] = []
     var availabilityChoices: [AssistantAvailabilityChoice] = []
-    var state: State
+    /// A reply that stopped streaming shows blocks for exactly its text.
+    var state: State {
+        didSet { if state != .streaming { markdown = markdown.settled } }
+    }
     var errorMessage: String?
+    /// Counts the edits made through `edit`. A transcript row compares it
+    /// instead of the message's content.
+    private(set) var revision = 0
 
     init(id: UUID = UUID(), isUser: Bool, text: String, createdAt: Date = .now,
          sources: [AssistantSource] = [], emailResults: [AssistantEmailResult] = [],
          draftIDs: [String] = [], state: State = .completed, errorMessage: String? = nil) {
-        self.id = id; self.isUser = isUser; self.text = text
+        self.id = id; self.isUser = isUser
         self.markdown = AssistantMessageMarkdown(text: text)
         self.createdAt = createdAt; self.emailResults = emailResults; self.errorMessage = errorMessage
         self.sources = sources; self.draftIDs = draftIDs; self.state = state
+    }
+
+    /// The models change a message they show only through this, so its row is
+    /// redrawn for that change and skipped for every other one.
+    mutating func edit(_ change: (inout AssistantMessage) -> Void) {
+        let next = revision &+ 1
+        change(&self)
+        revision = next
+    }
+
+    /// For the publish closure of a text stream. While the reply is still
+    /// arriving, a message on screen keeps its blocks until a background parse
+    /// of the longer text lands, so the main actor does not parse the whole
+    /// reply on every flush. The last flush sets the text like any other edit.
+    @MainActor mutating func setStreamedText(_ newText: String, isFinal: Bool) {
+        if isFinal { text = newText }
+        else if newText != markdown.text { markdown = markdown.streaming(newText) }
     }
 }
 
@@ -51,20 +76,100 @@ struct AssistantMessage: Identifiable {
 /// copy replaces its helper, so parsing cannot change another copy's output.
 final class AssistantMessageMarkdown {
     let text: String
+    /// Present while a displayed reply streams. Its blocks can trail `text`.
+    private let stream: AssistantMarkdownStream?
     @MainActor private var cachedBlocks: [AssistantMarkdown.Block]?
     @MainActor private(set) var preparationCount = 0
 
-    init(text: String) { self.text = text }
+    init(text: String) { self.text = text; stream = nil }
+
+    private init(text: String, stream: AssistantMarkdownStream) { self.text = text; self.stream = stream }
 
     /// Only displayed messages pay the parsing cost. Retained blocks keep the
     /// parser's display limits and are released with this text revision.
     @MainActor var blocks: [AssistantMarkdown.Block] {
+        if let stream { return stream.displayedBlocks }
         if let cachedBlocks { return cachedBlocks }
         let blocks = AssistantMarkdown.parse(text)
         cachedBlocks = blocks
         preparationCount += 1
         return blocks
     }
+
+    /// The helper for text that is final: its blocks always match `text`.
+    var settled: AssistantMessageMarkdown { stream == nil ? self : AssistantMessageMarkdown(text: text) }
+
+    /// The helper after a streaming reply grew to `newText`. A reply on screen
+    /// keeps showing its blocks while the new text is parsed in the background.
+    /// A reply that was never displayed stays lazy and costs no parsing.
+    @MainActor func streaming(_ newText: String) -> AssistantMessageMarkdown {
+        guard let active = stream ?? cachedBlocks.map({ AssistantMarkdownStream(blocks: $0, text: text) }) else {
+            return AssistantMessageMarkdown(text: newText)
+        }
+        active.submit(newText)
+        return AssistantMessageMarkdown(text: newText, stream: active)
+    }
+
+    #if TERN_TEST_SUPPORT
+    @MainActor func waitForStreamedBlocks() async { await stream?.waitUntilCurrent() }
+    #endif
+}
+
+/// Parses a reply that is still arriving off the main actor, one text at a
+/// time. Texts that arrive during a parse are skipped and the newest is parsed
+/// next, so the blocks on screen trail the text by at most one parse.
+@MainActor @Observable
+final class AssistantMarkdownStream {
+    private var blocks: [AssistantMarkdown.Block]
+    @ObservationIgnored private var parsedText: String
+    @ObservationIgnored private var latestText: String
+    @ObservationIgnored private var parse: Task<Void, Never>?
+    /// A view has read the blocks since they last changed. A reply that keeps
+    /// streaming while nothing displays it is not parsed.
+    @ObservationIgnored private var hasReader = true
+
+    init(blocks: [AssistantMarkdown.Block], text: String) {
+        self.blocks = blocks; parsedText = text; latestText = text
+    }
+
+    var displayedBlocks: [AssistantMarkdown.Block] {
+        hasReader = true
+        parseIfNeeded()
+        return blocks
+    }
+
+    func submit(_ text: String) {
+        latestText = text
+        parseIfNeeded()
+    }
+
+    private func parseIfNeeded() {
+        guard hasReader, parse == nil, parsedText != latestText else { return }
+        let text = latestText
+        parse = Task { [weak self] in
+            let parsed = await Task.detached(priority: .userInitiated) { AssistantMarkdown.parse(text) }.value
+            self?.show(parsed, for: text)
+        }
+    }
+
+    private func show(_ parsed: [AssistantMarkdown.Block], for text: String) {
+        parse = nil
+        parsedText = text
+        if parsed == blocks { parseIfNeeded(); return }
+        // Views observe `blocks`. Their next read asks for the newest text.
+        hasReader = false
+        blocks = parsed
+    }
+
+    #if TERN_TEST_SUPPORT
+    /// Reads like a view until the blocks match the newest text.
+    func waitUntilCurrent() async {
+        while parsedText != latestText {
+            _ = displayedBlocks
+            await parse?.value
+        }
+    }
+    #endif
 }
 
 enum AssistantSuggestion: String, CaseIterable, Identifiable {

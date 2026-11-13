@@ -226,9 +226,29 @@ final class AppModel {
         return mailbox.selectedThreadIDs.contains(key)
     }
 
+    /// The mailbox Spotlight was last asked to rebuild its index from.
+    @ObservationIgnored private weak var spotlightMailbox: MailboxModel?
+
+    /// Rebuilds the Spotlight index from `mailbox`. Syncs keep it current
+    /// from here on.
+    private func startSpotlight(for mailbox: MailboxModel) {
+        spotlightMailbox = mailbox
+        spotlight.start()
+    }
+
+    /// Indexes what a sync changed. A pass that left the history cursor
+    /// where it was brought no records, so the conversations Spotlight
+    /// listed last still stand and aren't read again. A sync that lands
+    /// before the rebuild is asked for is covered by the rebuild.
+    private func indexInSpotlight(after snapshot: MailSyncNotification) {
+        guard let mailbox, spotlightMailbox === mailbox,
+              snapshot.fromHistoryID != snapshot.toHistoryID else { return }
+        spotlight.mailSynced(accountID: snapshot.accountID)
+    }
+
     private func configureMailRuntime(_ owner: AccountMailbox) {
         owner.onMailSync = { [weak self] snapshot in
-            self?.spotlight.mailSynced(accountID: snapshot.accountID)
+            self?.indexInSpotlight(after: snapshot)
             await self?.meetingPreparation?.process(snapshot)
             await self?.mailNotifications?.process(snapshot)
             await self?.automaticFollowUpsModel?.process(snapshot)
@@ -279,6 +299,12 @@ final class AppModel {
             automaticFollowUpsModel?.stop()
             followUpsModel?.stop()
         } else if let followUpsModel, !inboxUpdatesAreStopped {
+            // Today's panels refresh at once; the follow-up resume below can take seconds.
+            Task {
+                guard self.canResumeFollowUps(in: expectedMailbox, generation: generation),
+                      self.syncActivity == .active, self.destination == .today else { return }
+                await self.todayDashboardModel?.refresh()
+            }
             Task {
                 guard self.canResumeFollowUps(in: expectedMailbox, generation: generation) else { return }
                 await self.automaticFollowUpsModel?.start()
@@ -287,7 +313,6 @@ final class AppModel {
                 guard self.canResumeFollowUps(in: expectedMailbox, generation: generation) else { return }
                 if self.syncActivity == .active, self.destination == .today {
                     await self.todayModel?.beginVisit()
-                    await self.todayDashboardModel?.refresh()
                 }
             }
         }
@@ -561,10 +586,15 @@ final class AppModel {
     }
 
     private func stopInboxUpdates() async {
+        for watcher in detachInboxWatchers() { await watcher.stop() }
+    }
+
+    /// Takes every watcher out of service and hands them to the caller to stop.
+    private func detachInboxWatchers() -> [InboxWatcher] {
         inboxReconciliationRevision += 1
         let watchers = Array(inboxWatchers.values)
         inboxWatchers = [:]
-        for watcher in watchers { await watcher.stop() }
+        return watchers
     }
     /// Copies of the files attached to drafts, kept until the draft is sent or discarded.
     private var outgoingDirectory: URL?
@@ -577,6 +607,8 @@ final class AppModel {
     private var accountChange: Task<Void, Never>?
 
     func start() async {
+        // Read off the main actor now, so the assistant's first use finds the saved styles in memory.
+        AssistantWritingStyleStores.preload()
         observeActivity()
         spotlight.retryRemoval()
         // Shared .eml files hold whole messages, and an earlier run may have left some.
@@ -701,10 +733,24 @@ final class AppModel {
             }
             // Both stores can migrate on first launch after an update. Keep
             // SQLite setup off the main actor so the launch UI stays responsive.
-            let (accounts, openedCache) = try await Task.detached(priority: .userInitiated) {
-                let accounts = try openAccounts ?? AccountStore.open(at: directory.appending(path: "config.sqlite"))
+            // The window stays hidden until it knows whether to show setup or
+            // the mailbox. The accounts decide that and live in the small
+            // config store, so it opens first and the window can show
+            // "Opening your mail…" while the mail cache opens and migrates.
+            let accounts = try await Task.detached(priority: .userInitiated) {
+                try openAccounts ?? AccountStore.open(at: directory.appending(path: "config.sqlite"))
+            }.value
+            // An account whose sign-out stopped partway isn't opened again.
+            // Its removal finishes below, after the mailbox opens.
+            let removing = Set(try await accounts.pendingAccountRemovals().map(\.accountID))
+            let stored = try await accounts.accounts().filter { !removing.contains($0.id) }
+            onboarding.resolve(hasExistingAccounts: !stored.isEmpty)
+            // The Keychain reads only need the account IDs, so they run while
+            // the mail cache opens. Nothing uses a session before the await below.
+            async let savedSessions = AccountSession.restore(accountIDs: stored.map(\.id))
+            let openedCache = try await Task.detached(priority: .userInitiated) {
                 do {
-                    return (accounts, try openCache ?? MailCache.open(at: cacheURL))
+                    return try openCache ?? MailCache.open(at: cacheURL)
                 } catch {
                     throw CacheOpenFailure(error: error)
                 }
@@ -712,20 +758,18 @@ final class AppModel {
             cache = openedCache
             outgoingDirectory = directory.appending(path: "Outgoing", directoryHint: .isDirectory)
             self.accounts = accounts
-            if let cache { await startMailPreferences(store: accounts, cache: cache) }
+            await startMailPreferences(store: accounts, cache: openedCache)
 
-            if try await cleanupCoordinator().retryPending() == false {
-                reportSignInError(AccountRemovalError.incomplete.localizedDescription)
-            }
-            let stored = try await accounts.accounts()
-            onboarding.resolve(hasExistingAccounts: !stored.isEmpty)
-            try await removeLeftovers(keeping: Set(stored.map(\.id)))
+            let restored = await savedSessions
             for account in stored {
-                let session = await AccountSession.restore(accountID: account.id)
-                adopt(session ?? AccountSession(accountID: account.id))
+                adopt(restored[account.id] ?? AccountSession(accountID: account.id))
             }
             let signedIn = try await correctGrants(of: stored, in: accounts)
+            let kept = Set(stored.map(\.id))
             guard !signedIn.isEmpty else {
+                // No cached mail waits on the cleanup here, so it keeps its
+                // place before the sign-in screen.
+                try await finishInterruptedRemovals(keeping: kept)
                 phase = .signedOut
                 return
             }
@@ -738,6 +782,16 @@ final class AppModel {
             accountsNeedingSignIn = Set(expired.map(\.id))
             await openMailbox(for: signedIn)
             if let signInError { reportSignInError(signInError) }
+            // The cleanup reads every cache table and may wait on the
+            // Keychain, and cached mail needs neither. It runs once the
+            // mailbox is open, inside this same account change. A cleanup
+            // that fails still fails the launch, with the mailbox closed.
+            do {
+                try await finishInterruptedRemovals(keeping: kept)
+            } catch {
+                await closeMailbox()
+                throw error
+            }
         } catch {
             let cacheError = (error as? CacheOpenFailure)?.error
             let failure = cacheError ?? error
@@ -1289,6 +1343,9 @@ final class AppModel {
     }
 
     /// Stops background work before quitting. `cancelQuit()` starts it again.
+    /// Maintenance, the calendar and the inbox watchers don't depend on one
+    /// another, so they stop together and Quit waits for the slowest of
+    /// them, not for each in turn.
     func prepareToQuit() async {
         meetingPreparation?.cancel()
         inboxUpdatesAreStopped = true
@@ -1296,16 +1353,29 @@ final class AppModel {
         todayModel?.endVisit()
         todayDashboardModel?.stop()
         automaticFollowUpsModel?.stop()
-        await maintenanceModel?.suspend()
         maintenanceTask?.cancel()
         maintenanceTask = nil
         mailURLRouter?.stop()
-        await stopInboxUpdates()
         assistantModel?.stop()
         assistantModel?.connection.cancelSignIn()
-        await calendarModel?.stop()
         tasksModel?.stop()
         followUpsModel?.stop()
+        let watchers = detachInboxWatchers()
+        // A watcher only asks its account to sync, so nothing is lost while
+        // its connection closes. Quit waits for that only when mail waits to
+        // send or the Outbox can't be read, so no watcher asks for another
+        // sync during the final send.
+        let mailWaits = (try? await sendingDraftIDs().isEmpty) != true
+        if !mailWaits {
+            for watcher in watchers { Task { await watcher.stop() } }
+        }
+        let (maintenance, calendar) = (maintenanceModel, calendarModel)
+        await withTaskGroup(of: Void.self) { group in
+            group.addTask { await maintenance?.suspend() }
+            group.addTask { await calendar?.stop() }
+            guard mailWaits else { return }
+            for watcher in watchers { group.addTask { await watcher.stop() } }
+        }
     }
 
     /// A user can keep Tern open after its final send attempt fails.
@@ -1406,29 +1476,52 @@ final class AppModel {
               let first = records.first, let gmail = mailboxService(for: first.id)
         else { return }
         await closeMailbox()
+        // The loaded preferences say which accounts are paused, so opening
+        // the mailbox waits on no config read.
+        let preferences = accountPreferences
         let mailbox = MailboxModel(
             account: first, cache: cache, gmail: gmail,
             outgoingDirectory: outgoingDirectory, downloadsDirectory: cacheDownloadDirectory, snoozeStore: accounts,
-            syncEnabled: (try? await accounts.mailPreferences(accountID: first.id).syncEnabled) ?? true
+            syncEnabled: preferences?.preferences(for: first.id).syncEnabled ?? true
         )
         configureMailRuntime(mailbox.defaultAccount)
         mailNotifications?.prepareAccount(first.id)
         for record in records.dropFirst() {
             guard let gmail = mailboxService(for: record.id) else { continue }
             mailNotifications?.prepareAccount(record.id)
-            let syncEnabled = (try? await accounts.mailPreferences(accountID: record.id).syncEnabled) ?? true
+            let syncEnabled = preferences?.preferences(for: record.id).syncEnabled ?? true
             await mailbox.addAccount(record, gmail: gmail, syncEnabled: syncEnabled, onCreate: configureMailRuntime)
         }
         if mailbox.hasSeveralAccounts { mailbox.selectedMailbox = .combined(SystemLabel.inbox) }
+        // The loaded preferences also say which accounts are hidden. Applied
+        // here, they leave the list's first read nothing to read twice.
+        // Preferences that don't know an account yet, as after a first
+        // sign-in, wait for their reconciliation as before.
+        if let preferences, Set(records.map(\.id)).isSubset(of: preferences.records.map(\.id)) {
+            mailbox.applyAccountPresentation(preferences: Array(preferences.preferencesByID.values),
+                                             visibleAccountIDs: preferences.visibleAccountIDs)
+        }
+        // An empty list says "Downloading mail…" only for an account that
+        // has never synced, so the window learns that before it shows the
+        // mailbox.
+        await mailbox.restoreSyncState()
         self.mailbox = mailbox
         bindMailNotificationRoutes()
         phase = .signedIn(first)
+        // The saved mail shows at once. The engines start below, where they
+        // always have.
+        Task { await mailbox.startLocal() }
         schedulePreferenceReconciliation()
         mailURLRouter?.resume()
         await refreshInboxUpdates()
         startCacheMaintenance()
-        spotlight.start()
-        Task { await mailbox.start() }
+        // Spotlight lists up to 2,000 conversations per account. It starts
+        // once the mailbox has, so that read queues behind the first rows.
+        Task {
+            await mailbox.start()
+            guard self.mailbox === mailbox else { return }
+            startSpotlight(for: mailbox)
+        }
         for owner in mailbox.accounts {
             followUps.restoreAccount(owner.account.id)
             automaticFollowUps.restoreAccount(owner.account.id)
@@ -1447,7 +1540,7 @@ final class AppModel {
         syncActivityGeneration += 1
         organizationSessionsModel?.clear()
         todayModel?.endVisit()
-        todayDashboardModel?.stop()
+        todayDashboardModel?.reset()
         automaticFollowUpsModel?.stop()
         followUpsModel?.stop()
         MailNotificationRouter.shared.unbind()
@@ -1479,6 +1572,16 @@ final class AppModel {
         // account's files. Share services already hold their own copies.
         await TemporaryShareFile.removeAll()
         try await scheduleAccountRemoval(accountID: account.id, session: session)
+    }
+
+    /// Finishes the sign-outs an earlier run left partway, then deletes what
+    /// is left of accounts that aren't signed in. A sign-out that still
+    /// can't finish is reported.
+    private func finishInterruptedRemovals(keeping signedIn: Set<String>) async throws {
+        if try await cleanupCoordinator().retryPending() == false {
+            reportSignInError(AccountRemovalError.incomplete.localizedDescription)
+        }
+        try await removeLeftovers(keeping: signedIn)
     }
 
     /// Deletes what the cache and disk still hold for accounts that aren't
@@ -1526,7 +1629,7 @@ final class AppModel {
                     try await removeCachedData(accountIDs: [accountID])
                 },
                 removeWritingStyle: { accountID in
-                    if !isolated { try AssistantWritingStyleCleanup.remove(accountID: accountID) }
+                    if !isolated { try await AssistantWritingStyleCleanup.erase(accountID: accountID) }
                 }
             ))
         accountCleanup = coordinator

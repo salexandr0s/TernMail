@@ -3,6 +3,8 @@ import SwiftUI
 
 struct AttachmentLibraryFilters: View {
     @Bindable var model: AttachmentLibraryModel
+    /// The most height the popover takes. Without one it is as tall as its filters.
+    var maxHeight: CGFloat?
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -64,7 +66,9 @@ struct AttachmentLibraryFilters: View {
             }
         }
         .frame(width: Tokens.Sheet.smallWidth)
-        // As tall as the filters it holds, so nothing scrolls inside the popover.
+        // As tall as the filters it holds, so nothing scrolls inside the popover. Where
+        // that is more than `maxHeight`, the header and the buttons stay and the form scrolls.
+        .frame(maxHeight: maxHeight)
         .fixedSize(horizontal: false, vertical: true)
     }
 
@@ -136,10 +140,10 @@ struct AttachmentFilterChip: Identifiable {
 
 struct AttachmentActiveFilters: View {
     let model: AttachmentLibraryModel
+    /// The chips to list. The library view builds them once per update.
+    let chips: [AttachmentFilterChip]
 
     var body: some View {
-        // Search and category already have visible, editable controls above.
-        let chips = AttachmentFilterChip.values(for: model).filter { $0.id != "search" && $0.id != "category" }
         if !chips.isEmpty {
             HStack(spacing: Tokens.Space.s3) {
                 ScrollView(.horizontal) {

@@ -135,6 +135,9 @@ struct CalendarEditorDraft: Identifiable {
     var operationID: String?
     var recovery: CalendarOperationRecovery?
     var seriesMaster: GoogleCalendarEvent?
+    /// A repeating event opens on its cached occurrence while its series is read.
+    /// True until that read ends, with `seriesMaster` set or without.
+    var isLoadingSeries = false
     var additionalNotificationRecipients: [String] = []
     var sourceEvent: GoogleCalendarEvent? { source?.event }
     var isNew: Bool { source == nil }

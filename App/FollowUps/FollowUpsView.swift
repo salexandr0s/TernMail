@@ -3,21 +3,23 @@ import SwiftUI
 
 struct FollowUpsView: View {
     @Bindable var model: FollowUpsModel
-    @Environment(\.openWindow) private var openWindow
+    /// False while another section shows. The page stays mounted, and its rows stop following the clock.
+    var isActive = true
     @State private var direction: DirectionFilter = .all
     @State private var showsHistory = false
 
-    private enum DirectionFilter: String, CaseIterable, Identifiable {
+    fileprivate enum DirectionFilter: String, CaseIterable, Identifiable {
         case all = "All", waitingFor = "Waiting for", owedByMe = "I owe"
         var id: String { rawValue }
-    }
 
-    private var filteredEntries: [CommitmentEntry] {
-        model.visibleEntries.filter { entry in
-            let matchesDirection = direction == .all
-                || (direction == .waitingFor && entry.record.direction == .waitingFor)
-                || (direction == .owedByMe && entry.record.direction == .owedByMe)
-            return matchesDirection && ((entry.record.status != .open) == showsHistory)
+        /// Whether an entry belongs under this direction on the Open or History tab.
+        func includes(_ entry: CommitmentEntry, history: Bool) -> Bool {
+            let matchesDirection = switch self {
+            case .all: true
+            case .waitingFor: entry.record.direction == .waitingFor
+            case .owedByMe: entry.record.direction == .owedByMe
+            }
+            return matchesDirection && (entry.record.status != .open) == history
         }
     }
 
@@ -25,14 +27,16 @@ struct FollowUpsView: View {
         VStack(spacing: 0) {
             filters
             feedback
-            content(now: MinuteClock.shared.now)
+            FollowUpsContent(model: model, direction: direction, showsHistory: showsHistory, isActive: isActive)
             footer
         }
+        // A banner that appears or leaves moves the list; animate that move.
+        .ternAnimation(value: [model.errorMessage, model.notice])
         .background(Tokens.Surface.primary)
         .accessibilityIdentifier("follow-ups-view")
         .onChange(of: model.selectedEntryID, initial: true) { _, id in
-            guard !filteredEntries.contains(where: { $0.id == id }),
-                  let entry = model.visibleEntries.first(where: { $0.id == id }) else { return }
+            guard let entry = model.visibleEntries.first(where: { $0.id == id }),
+                  !direction.includes(entry, history: showsHistory) else { return }
             direction = .all
             showsHistory = entry.record.status != .open
         }
@@ -41,6 +45,7 @@ struct FollowUpsView: View {
     private var filters: some View {
         ViewThatFits(in: .horizontal) {
             HStack(spacing: Tokens.Space.s4) { directionPicker; Spacer(minLength: 0); historyPicker }
+                .readableColumn()
             VStack(alignment: .leading, spacing: Tokens.Space.s2) { directionPicker; historyPicker }
         }
         .padding(Tokens.Space.s4)
@@ -77,47 +82,18 @@ struct FollowUpsView: View {
                 Spacer(minLength: 0)
                 Button("Retry") { Task { await model.refresh() } }.disabled(model.isLoading)
             }
+            .readableColumn()
             .padding(Tokens.Space.s4)
             .accessibilityIdentifier("follow-ups-error")
+            .ternTransition(.disclosure)
         }
         if let notice = model.notice {
             Text(notice).font(.callout).foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .readableColumn()
                 .padding(.horizontal, Tokens.Space.s4).padding(.vertical, Tokens.Space.s2)
                 .accessibilityIdentifier("follow-ups-notice")
-        }
-    }
-
-    @ViewBuilder private func content(now: Date) -> some View {
-        if model.isLoading && model.entries.isEmpty {
-            ProgressView("Loading follow-ups…").frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else if filteredEntries.isEmpty {
-            TernEmptyState(title: emptyTitle, systemImage: showsHistory ? "checkmark.circle" : "clock.arrow.circlepath",
-                message: emptyMessage)
-        } else {
-            ScrollViewReader { proxy in
-                List(selection: $model.selectedEntryID) {
-                    ForEach(filteredEntries) { entry in
-                        FollowUpRow(entry: entry, accountName: model.accountName(for: entry.record.accountID),
-                            checkState: model.replyCheckStates[entry.id], now: now, isBusy: model.busyIDs.contains(entry.id),
-                            onEdit: { model.edit(entry) },
-                            onComplete: { Task { await model.setStatus(entry, status: .completed) } },
-                            onDismiss: { Task { await model.setStatus(entry, status: .dismissed) } },
-                            onReopen: { Task { await model.setStatus(entry, status: .open) } },
-                            onSnooze: { date in Task { await model.snooze(entry, until: date) } },
-                            onOpenSource: { model.openSource(entry) },
-                            onDraft: { draft(entry) },
-                            onBringBack: { Task { await model.deferAttention(entry, until: nil) } })
-                            .tag(entry.id)
-                            .id(entry.id)
-                    }
-                }
-                .listStyle(.inset)
-                .accessibilityIdentifier("follow-ups-list")
-                .onChange(of: model.selectedEntryID) { _, id in
-                    if let id { proxy.scrollTo(id, anchor: .center) }
-                }
-            }
+                .ternTransition(.disclosure)
         }
     }
 
@@ -137,6 +113,7 @@ struct FollowUpsView: View {
                         .accessibilityIdentifier("follow-ups-allow-notifications")
                 }
             }
+            .readableColumn()
             .padding(.horizontal, Tokens.Space.s4)
             .padding(.bottom, Tokens.Space.s3)
         }
@@ -147,6 +124,79 @@ struct FollowUpsView: View {
         case .allowed: EmptyView()
         case .denied: Text("Notifications are off. Due items stay here; you can allow Tern notifications in System Settings.")
         case .notRequested: Text("Due items stay here even without notifications.")
+        }
+    }
+}
+
+/// The list with its loading and empty states. It is a separate view so the
+/// minute tick, reply checks and busy rows update the rows without the filter
+/// bar, banners and footer, and so changes there leave the rows alone.
+private struct FollowUpsContent: View {
+    @Bindable var model: FollowUpsModel
+    let direction: FollowUpsView.DirectionFilter
+    let showsHistory: Bool
+    let isActive: Bool
+    /// The time a hidden page's rows keep, so they aren't rebuilt every minute.
+    @State private var hiddenAt = Date.now
+    @Environment(\.openWindow) private var openWindow
+
+    private enum Phase { case list, loading, empty }
+
+    var body: some View {
+        // One filter pass per update. The branches below share its result.
+        let entries = model.visibleEntries.filter { direction.includes($0, history: showsHistory) }
+        // The loading flag is read only while nothing is saved, so a refresh
+        // does not re-evaluate a page that already has entries.
+        let phase: Phase = !entries.isEmpty ? .list : model.entries.isEmpty && model.isLoading ? .loading : .empty
+        // The three states share one place and cross-fade.
+        ZStack {
+            switch phase {
+            case .list:
+                list(entries, now: isActive ? MinuteClock.shared.now : hiddenAt)
+                    .ternTransition(.fade)
+            case .loading:
+                ProgressView("Loading follow-ups…")
+                    .ternDelayedLoading()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .ternTransition(.fade)
+            case .empty:
+                TernEmptyState(title: emptyTitle, systemImage: showsHistory ? "checkmark.circle" : "clock.arrow.circlepath",
+                    message: emptyMessage)
+                    .ternTransition(.fade)
+            }
+        }
+        .ternAnimation(value: phase)
+        .onChange(of: isActive) { _, active in
+            if !active { hiddenAt = MinuteClock.shared.now }
+        }
+    }
+
+    private func list(_ entries: [CommitmentEntry], now: Date) -> some View {
+        ScrollViewReader { proxy in
+            List(selection: $model.selectedEntryID) {
+                ForEach(entries) { entry in
+                    FollowUpRow(entry: entry, accountName: model.accountName(for: entry.record.accountID),
+                        checkState: model.replyCheckStates[entry.id], now: now, isBusy: model.busyIDs.contains(entry.id),
+                        onEdit: { model.edit(entry) },
+                        onComplete: { Task { await model.setStatus(entry, status: .completed) } },
+                        onDismiss: { Task { await model.setStatus(entry, status: .dismissed) } },
+                        onReopen: { Task { await model.setStatus(entry, status: .open) } },
+                        onSnooze: { date in Task { await model.snooze(entry, until: date) } },
+                        onOpenSource: { model.openSource(entry) },
+                        onDraft: { draft(entry) },
+                        onBringBack: { Task { await model.deferAttention(entry, until: nil) } })
+                        .readableColumn()
+                        .tag(entry.id)
+                        .id(entry.id)
+                }
+            }
+            .listStyle(.inset)
+            // Rows that arrive or leave fade, and the rest move to their place.
+            .ternAnimation(value: entries.map(\.id))
+            .accessibilityIdentifier("follow-ups-list")
+            .onChange(of: model.selectedEntryID) { _, id in
+                if let id { proxy.scrollTo(id, anchor: .center) }
+            }
         }
     }
 
@@ -165,5 +215,12 @@ struct FollowUpsView: View {
         Task {
             if let id = await model.draftFollowUp(entry) { openWindow(id: ComposeWindow.sceneID, value: id) }
         }
+    }
+}
+
+private extension View {
+    /// Keeps content in a column of readable width, centered when the page is wider.
+    func readableColumn() -> some View {
+        frame(maxWidth: Tokens.Layout.readableWidth, alignment: .leading).frame(maxWidth: .infinity)
     }
 }

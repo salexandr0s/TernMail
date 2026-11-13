@@ -231,6 +231,8 @@ import Testing
             for offset in [-1, 1] {
                 fixture.model.date = try #require(fixture.model.calendar.date(byAdding: .day, value: offset, to: center))
                 let prepared = try #require(fixture.model.rangeSnapshots[fixture.model.rangeIdentity]?.presentation)
+                // The date change shows the prepared day before any activation runs.
+                #expect(fixture.model.presentation?.id == prepared.id)
                 await fixture.model.activateRange()
                 #expect(fixture.model.presentation?.id == prepared.id)
                 #expect(fixture.model.events.map(\.event.id) == ["adjacent-\(offset)"])

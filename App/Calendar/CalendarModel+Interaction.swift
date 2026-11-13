@@ -87,9 +87,17 @@ extension CalendarModel {
         }
     }
 
+    /// Shows queued changes at once. Setting `events` drops the snapshot they no
+    /// longer match, so the next one is built here and the grid keeps laying
+    /// out from a snapshot in the same update.
     func projectPendingEvents() {
-        events = CalendarPendingEvents.project(events, operations: operations, calendars: calendars,
-                                               interval: displayInterval, calendar: calendar)
+        let projected = CalendarPendingEvents.project(events, operations: operations, calendars: calendars,
+                                                      interval: displayInterval, calendar: calendar)
+        guard projected != events else { return }
+        events = projected
+        presentation = CalendarPresentationSnapshot(events: projected, interval: displayInterval, calendar: calendar,
+                                                    buildsTimeAxis: mode == .day || mode == .week,
+                                                    describesChips: mode == .month)
     }
 
     /// Recheck the durable queue at the mutation boundary, including actions from

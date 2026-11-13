@@ -17,7 +17,9 @@ extension MailCache {
     /// Watches the account, so an update in another conversation and Undo Send
     /// can refresh an open invitation without changing its message body.
     public func calendarInvitationState(accountID: String) -> AsyncThrowingStream<CalendarInvitationState, any Error> {
-        observe { db in try CacheTransaction(db: db).calendarInvitationState(accountID: accountID) }
+        observe(region: ObservedTables.calendarInvitations) { db in
+            try CacheTransaction(db: db).calendarInvitationState(accountID: accountID)
+        }
     }
 }
 

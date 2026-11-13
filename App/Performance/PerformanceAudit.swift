@@ -43,6 +43,9 @@ enum PerformanceAudit {
 
     struct Report: Encodable {
         let version = 4
+        /// True when the run did not require the app to be active. Such a
+        /// report compares builds; it cannot pass acceptance.
+        let unattended = LaunchMode.current.performance.unattended
         let unexpectedNativeInputEvents: Int
         let buildRevision: String
         let requestedScenario: String
@@ -86,6 +89,9 @@ enum PerformanceAudit {
         }
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+        // An unattended run may never become active, so its window goes in
+        // front of the other apps' windows to stay drawn.
+        if options.unattended { window.orderFrontRegardless() }
         auditWindow = window
         auditCache = mailbox.cache
         let originalKeyViewLoop = window.autorecalculatesKeyViewLoop
@@ -360,12 +366,40 @@ enum PerformanceAudit {
         try? await Task.sleep(for: .milliseconds(300))
         scrolling.append(await measureScroll("calendar", in: window, surface: .calendar))
         app.destination = .mail
-        mailbox.selectedMailbox = .combined(AttachmentLibraryModel.mailboxID)
-        try? await Task.sleep(for: .milliseconds(300))
-        scrolling.append(await measureScroll("attachments", in: window, surface: .attachments))
+        if await storeLibraryFiles(in: mailbox.cache) {
+            mailbox.selectedMailbox = .combined(AttachmentLibraryModel.mailboxID)
+            try? await Task.sleep(for: .milliseconds(300))
+            scrolling.append(await measureScroll("attachments", in: window, surface: .attachments))
+        } else {
+            scrolling.append(.failure(name: "attachments", reason: "The synthetic files could not be stored."))
+        }
         app.destination = .mail
         mailbox.selectedMailbox = .combined(SystemLabel.inbox)
         return scrolling
+    }
+
+    /// The fixture's mail has no files, so the library gets synthetic ones to
+    /// scroll. They go in after every timing that opens the library, which
+    /// keeps those timings comparable with earlier reports.
+    private static func storeLibraryFiles(in cache: MailCache) async -> Bool {
+        do {
+            try await cache.write { tx in
+                for index in 0..<300 {
+                    let message = MessageRecord(accountID: "ui-audit", id: "performance-file-\(index)",
+                        threadID: "performance-file-\(index)", historyID: 1,
+                        date: Date(timeIntervalSinceNow: -Double(index) * 3_600), snippet: "",
+                        sender: "Synthetic Sender <files@example.invalid>", recipients: "", cc: nil,
+                        subject: "Synthetic file \(index + 1)", sizeEstimate: 1)
+                    let file = AttachmentRecord(accountID: message.accountID, messageID: message.id, partID: "1",
+                        attachmentID: nil, filename: "Synthetic-file-\(index + 1).pdf", mimeType: "application/pdf",
+                        size: 48_000 + index, isInline: false)
+                    try tx.replaceLibraryAttachments([file], message: message, labelIDs: [SystemLabel.inbox])
+                }
+            }
+            return true
+        } catch {
+            return false
+        }
     }
 
     private static func finish(app: AppModel, mailbox: MailboxModel, scope: Scope, visibleRows: Int,
@@ -527,8 +561,9 @@ enum PerformanceAudit {
     }
 
     private static var auditMayContinue: Bool {
-        unexpectedNativeInputEvents == 0 && NSApp.isActive
-            && auditWindow?.isKeyWindow == true && auditWindow?.occlusionState.contains(.visible) == true
+        unexpectedNativeInputEvents == 0
+            && (LaunchMode.current.performance.unattended || (NSApp.isActive && auditWindow?.isKeyWindow == true))
+            && auditWindow?.occlusionState.contains(.visible) == true
     }
 
     private static var auditInterruptionReason: String {
@@ -542,7 +577,13 @@ enum PerformanceAudit {
 
     private static func measureScroll(_ name: String, in window: NSWindow, surface: Surface) async -> PerformanceScrollAudit.Result {
         guard auditMayContinue else { return .failure(name: name, reason: auditInterruptionReason) }
-        guard let scroll = scrollView(in: window, surface: surface) else {
+        // A surface that was just shown may still be laying out or reading its first page.
+        var found: NSScrollView?
+        _ = await wait(timeout: .seconds(5)) {
+            found = scrollView(in: window, surface: surface)
+            return found != nil
+        }
+        guard let scroll = found else {
             return .failure(name: name, reason: "The explicitly identified scrolling surface was missing or had no scrollable content.")
         }
         return await PerformanceScrollAudit.run(name: name, scroll: scroll)
@@ -551,6 +592,7 @@ enum PerformanceAudit {
     private static func scrollView(in window: NSWindow, surface: Surface) -> NSScrollView? {
         guard let root = window.contentView else { return nil }
         func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
+        for case let marker as any PerformanceScrollSurfaceRegistrant in descendants(root) { marker.registerScrollSurface() }
         let candidates = descendants(root).compactMap { $0 as? NSScrollView }.filter { scroll in
             guard !scroll.isHiddenOrHasHiddenAncestor, !scroll.visibleRect.isEmpty,
                   (scroll.documentView?.bounds.height ?? 0) > scroll.contentView.bounds.height + 10 else { return false }

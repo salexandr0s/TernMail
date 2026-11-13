@@ -24,7 +24,10 @@ enum AttributedDocument {
         [.font: baseFont(font), .foregroundColor: NSColor.textColor, .paragraphStyle: NSParagraphStyle.default]
     }
 
-    static func string(from document: ComposeDocument, font: ComposeFont = .sansSerif, inlineImages: [String: Data] = [:]) -> NSAttributedString {
+    /// `previews` holds images decoded beforehand, by content ID. An image
+    /// without one is decoded from `inlineImages` when the editor draws it.
+    static func string(from document: ComposeDocument, font: ComposeFont = .sansSerif, inlineImages: [String: Data] = [:],
+                       previews: [String: ComposeImagePreview] = [:]) -> NSAttributedString {
         let result = NSMutableAttributedString()
         // The lists open at each level, so consecutive items share one list
         // and its numbering, as AppKit expects.
@@ -47,7 +50,9 @@ enum AttributedDocument {
             }
             for run in block.runs {
                 if let image = run.image, image.isValid {
-                    paragraph.append(NSAttributedString(attachment: ComposeImageAttachment(reference: image, data: inlineImages[image.contentID])))
+                    paragraph.append(NSAttributedString(attachment: ComposeImageAttachment(
+                        reference: image, data: inlineImages[image.contentID], preview: previews[image.contentID]
+                    )))
                 } else {
                     paragraph.append(NSAttributedString(string: run.text, attributes: attributes(for: run, font: font)))
                 }

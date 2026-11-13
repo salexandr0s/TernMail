@@ -4,6 +4,13 @@ import MessageContent
 import SwiftUI
 import WebKit
 
+/// A message's inline resources as the conversation's opening read returned
+/// them, and when that read arrived.
+struct InitialMessageResources {
+    let snapshot: ReadingResourceSnapshot
+    let deliveredAt: ContinuousClock.Instant
+}
+
 struct MessageView: View {
     let message: MessageDetail
     var selectedAttachmentPartID: String? = nil
@@ -16,6 +23,9 @@ struct MessageView: View {
     let bodyLoadFailed: Bool
     let requiredNetwork: Bool
     let bodyAvailableAt: ContinuousClock.Instant?
+    /// Resources the conversation read along with its own detail. The message
+    /// draws from them until its observation delivers something else.
+    let initialResources: InitialMessageResources?
     let mailbox: MailboxModel
     let finder: ReaderFindModel
     let onVisible: () -> Void
@@ -35,7 +45,6 @@ struct MessageView: View {
     @State private var inlineResources = InlineResourceMap()
     /// Load Images was chosen for this message.
     @State private var explicitImagePermission: SenderImageIdentity?
-    @State private var rememberedImagePermission: SenderImageIdentity?
     @State private var selectedText = ""
     @State private var activeBlocker: WKContentRuleList?
     @State private var resourceSnapshot: ReadingResourceSnapshot?
@@ -58,6 +67,7 @@ struct MessageView: View {
         let body: ReaderBodyVersion?
         let resourceRevision: Int?
         let allowsImages: Bool
+        let permissionKnown: Bool
         let showsLight: Bool
         let adaptsDark: Bool
         let textScale: Double
@@ -66,9 +76,23 @@ struct MessageView: View {
         let isRealized: Bool
     }
 
+    private struct ImagePermission: Equatable {
+        let allows: Bool
+        let isKnown: Bool
+    }
+
     private var imageSenderIdentity: SenderImageIdentity {
         SenderImageIdentity(accountID: message.record.accountID, messageID: message.id,
             from: message.record.sender, verifiedSender: message.record.verifiedImageSender)
+    }
+    /// The account's remembered senders, read from memory while the message lays out.
+    private var imageSenders: ImageSenderAllowSet? { mailbox.account(id: message.record.accountID)?.imageSenders }
+    private var rememberedImagePermission: SenderImageIdentity? { imageSenders?.remembered(imageSenderIdentity) }
+    /// False while the saved list of remembered senders could still grant this
+    /// message its images. The body isn't rendered until that is settled, so
+    /// mail isn't shown without its images first and then again with them.
+    private var imagePermissionKnown: Bool {
+        !blocksImages || imageSenderIdentity.address == nil || imageSenders?.isKnown != false
     }
     private var allowsSenderImages: Bool { imageSenderIdentity.permitsRemembered(rememberedImagePermission) }
     private var allowsImages: Bool {
@@ -78,6 +102,9 @@ struct MessageView: View {
     private var isRealized: Bool {
         isExpanded && ((isReaderActive && (isInViewport || retainsViewportBody || finder.requestedMessageID == message.id)) || retainsHiddenBody)
     }
+    /// The observation's resources once it has delivered a change, and until
+    /// then the ones the conversation read.
+    private var readingResources: ReadingResourceSnapshot? { resourceSnapshot ?? initialResources?.snapshot }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -134,30 +161,36 @@ struct MessageView: View {
         }
         .task(id: isReaderActive && isRealized) {
             guard isReaderActive, isRealized else { return }
-            let token = TernSignposts.begin(.readerResources)
+            // The span times a body that waits for its resources. Nothing
+            // waits when the conversation's opening read brought them.
+            let token = readingResources == nil ? TernSignposts.begin(.readerResources) : nil
             var received = false
-            defer { if !received { TernSignposts.cancel(token) } }
+            defer { if !received, let token { TernSignposts.cancel(token) } }
             do {
                 for try await snapshot in mailbox.cache.readingResources(messageID: message.id, accountID: message.record.accountID) {
                     guard !Task.isCancelled else { return }
-                    if !received { TernSignposts.end(token); received = true }
+                    if !received {
+                        if let token { TernSignposts.end(token) }
+                        received = true
+                    }
+                    // The observation starts with the resources as they are now,
+                    // which the opening read usually brought already. Keeping
+                    // that copy avoids a second render and a second copy of the data.
+                    guard snapshot.revision != readingResources?.revision else { continue }
                     resourcesAvailableAt = .now
                     resourceSnapshot = snapshot
                 }
             } catch { /* Keep the last safely prepared body on a transient store error. */ }
         }
         .task(id: RenderIdentity(accountID: message.record.accountID, messageID: message.id, body: message.body.map(ReaderBodyVersion.init),
-            resourceRevision: resourceSnapshot?.revision, allowsImages: allowsImages, showsLight: showsLightBackground, adaptsDark: adaptsDark,
+            resourceRevision: readingResources?.revision, allowsImages: allowsImages, permissionKnown: imagePermissionKnown,
+            showsLight: showsLightBackground, adaptsDark: adaptsDark,
             textScale: textScale, isExpanded: isExpanded, isActive: isReaderActive, isRealized: isRealized)) {
             await render()
         }
-        .task(id: imageSenderIdentity) {
-            let identity = imageSenderIdentity
-            rememberedImagePermission = nil
-            guard let address = identity.address else { return }
-            let allowed = try? await mailbox.accountStore?.allowedImageSenders(accountID: identity.accountID)
-            guard !Task.isCancelled, identity == imageSenderIdentity else { return }
-            rememberedImagePermission = allowed?.contains(address) == true ? identity : nil
+        .task(id: imageSenders.map(ObjectIdentifier.init)) {
+            // Usually read already. A new account object starts with an unread list.
+            await imageSenders?.load(from: mailbox.accountStore)
         }
         .onChange(of: isExpanded) { _, expanded in if !expanded { selectedText = ""; onHoverLink(nil) } }
         .onChange(of: isRealized) { _, realized in
@@ -168,17 +201,22 @@ struct MessageView: View {
         }
         .onChange(of: selectedText) { _, text in reportSelection(text) }
         .onDisappear { reportSelection(""); onHoverLink(nil) }
-        .onChange(of: allowsImages) { _, _ in
+        .onChange(of: ImagePermission(allows: allowsImages, isKnown: imagePermissionKnown)) { old, new in
+            guard old.allows != new.allows else { return }
             rendered = nil; selectedText = ""; onHoverLink(nil)
-            ReaderPreparedCache.shared.invalidate(accountID: message.record.accountID, messageID: message.id)
+            // The saved list arriving isn't a change of permission, so
+            // documents prepared ahead stay. A change the user made drops them.
+            if old.isKnown {
+                ReaderPreparedCache.shared.invalidate(accountID: message.record.accountID, messageID: message.id)
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: ReadingPreferences.imagePermissionChanged)) { change in
+            // The account's remembered senders already hold the change.
+            // Blocking the sender's images ends Load Images too.
             guard change.userInfo?["account"] as? String == message.record.accountID,
                   change.userInfo?["sender"] as? String == senderAddress.lowercased(),
-                  let allowed = change.userInfo?["allowed"] as? Bool else { return }
-            rememberedImagePermission = allowed && imageSenderIdentity.address != nil ? imageSenderIdentity : nil
-            // Blocking the sender's images ends Load Images too.
-            if !allowed { explicitImagePermission = nil }
+                  change.userInfo?["allowed"] as? Bool == false else { return }
+            explicitImagePermission = nil
         }
     }
 
@@ -249,10 +287,13 @@ struct MessageView: View {
                     .buttonStyle(.bordered)
             }
         } else {
+            // The slot is as tall as the body's own minimum, so nothing shifts
+            // when the indicator appears or the body takes its place.
             ProgressView("Loading message…")
                 .controlSize(.small)
+                .ternDelayedLoading()
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .frame(minHeight: max(contentHeight, height))
+                .frame(minHeight: max(contentHeight, height, Tokens.Space.s5))
         }
     }
 
@@ -294,8 +335,12 @@ struct MessageView: View {
             height = 0
             return
         }
-        guard let snapshot = resourceSnapshot, let owner = mailbox.account(id: message.record.accountID) else { return }
-        let readyAt = max(bodyAvailableAt ?? .now, resourcesAvailableAt ?? .now)
+        // Images stay blocked until the remembered senders are read, so the
+        // body waits for them and is prepared once, under its final permission.
+        guard imagePermissionKnown else { return }
+        guard let snapshot = readingResources, let owner = mailbox.account(id: message.record.accountID) else { return }
+        let resourcesReadyAt = resourceSnapshot == nil ? initialResources?.deliveredAt : resourcesAvailableAt
+        let readyAt = max(bodyAvailableAt ?? .now, resourcesReadyAt ?? .now)
         let rules = await RemoteContentBlocker.ruleList(allowsRemoteImages: allowsImages)
         guard !Task.isCancelled else { return }
         activeBlocker = rules

@@ -14,14 +14,18 @@ final class TodayModel {
     typealias SaveHistory = @MainActor (TodayVisitContext, [CommitmentEntry], [CommitmentEntry], Date) async throws -> TodayVisitAcknowledgement
 
     let followUps: FollowUpsModel
-    var searchText = ""
+    var searchText = "" { didSet { if searchText != oldValue { refreshPresentation() } } }
     var searchFocusRequest = 0
-    var filter: TodayFilter = .briefing
+    var filter: TodayFilter = .briefing { didSet { if filter != oldValue { refreshPresentation() } } }
+    /// The follow-up list the page draws. It is rebuilt when its inputs change and
+    /// replaced only when the result differs, so drawing the page never projects the entries again.
+    private(set) var presentation = TodayPresentation(projection: TodayProjection(sections: []), filter: .briefing, now: .now)
     private(set) var activeVisitID: UUID?
     private(set) var historyReady = false
     private(set) var historyError: String?
     private(set) var isLoadingHistory = false
-    private var historyRevision = 0
+    /// Counts changes to the visit and its baseline. Each one can change what the rows say.
+    private var historyRevision = 0 { didSet { refreshPresentation() } }
     @ObservationIgnored private let contextProvider: @MainActor () -> TodayVisitContext
     @ObservationIgnored private let canPresent: @MainActor () -> Bool
     @ObservationIgnored private let readHistory: ReadHistory
@@ -33,6 +37,10 @@ final class TodayModel {
     @ObservationIgnored private var acknowledged: [String: TodayCommitmentSnapshot] = [:]
     @ObservationIgnored private var loadTask: Task<TodayVisitBaseline, Error>?
     @ObservationIgnored private var saveTasks: [UUID: Task<TodayVisitAcknowledgement, Error>] = [:]
+    @ObservationIgnored private var visiblePresentation: (rows: [TodayRow], visitID: UUID)?
+    @ObservationIgnored private var visibleTask: Task<Void, Never>?
+    /// The follow-ups revision `presentation` was last built from.
+    @ObservationIgnored private var preparedEntriesRevision = -1
 
     init(followUps: FollowUpsModel, context: @escaping @MainActor () -> TodayVisitContext,
          canPresent: @escaping @MainActor () -> Bool = { true },
@@ -40,6 +48,8 @@ final class TodayModel {
          readHistory: @escaping ReadHistory, saveHistory: @escaping SaveHistory) {
         self.followUps = followUps; contextProvider = context; self.canPresent = canPresent
         self.now = now; self.calendar = calendar; self.readHistory = readHistory; self.saveHistory = saveHistory
+        refreshPresentation()
+        followPresentationInputs()
     }
 
     convenience init(app: AppModel?) {
@@ -65,12 +75,39 @@ final class TodayModel {
     var presentationRevision: Int { followUps.presentationRevision + historyRevision }
 
     func projection(now date: Date) -> TodayProjection {
-        // Reading historyRevision also makes successful baseline loads observable.
-        _ = historyRevision
         let context = visitContext
         return TodayProjection.make(entries: followUps.entries, accountIDs: context.accountIDs,
             baseline: activeContext == context && historyReady ? baseline : nil,
             replyChecks: followUps.replyCheckStates, filter: filter, searchText: searchText, now: date, calendar: calendar())
+    }
+
+    /// Rebuilds the list from the current follow-ups, visit history, filter and search.
+    /// The filter, the search and the visit history call it when they change. The page
+    /// calls it when it comes on screen and each minute while it stays there, because
+    /// due and snoozed rows also move with the clock.
+    func refreshPresentation() {
+        preparedEntriesRevision = followUps.presentationRevision
+        let date = now()
+        let value = TodayPresentation(projection: projection(now: date), filter: filter, now: date)
+        if value != presentation { presentation = value }
+    }
+
+    /// Follow-ups, reply checks and the visible accounts belong to other models.
+    /// This rebuilds the list after one of them changes and keeps one observation open.
+    /// The rebuild runs on the main actor from the values of that moment, so an
+    /// older result can never replace a newer one.
+    private func followPresentationInputs() {
+        withObservationTracking {
+            _ = followUps.entries
+            _ = followUps.replyCheckStates
+            _ = visitContext
+        } onChange: { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.refreshPresentation()
+                self.followPresentationInputs()
+            }
+        }
     }
 
     func beginVisit() async {
@@ -89,6 +126,7 @@ final class TodayModel {
         activeVisitID = nil; activeContext = nil; baseline = nil; acknowledged = [:]
         loadTask?.cancel(); loadTask = nil
         for task in saveTasks.values { task.cancel() }
+        visiblePresentation = nil; visibleTask?.cancel(); visibleTask = nil
         saveTasks = [:]; historyReady = false; isLoadingHistory = false; historyError = nil
         historyRevision += 1
     }
@@ -119,13 +157,31 @@ final class TodayModel {
         }
     }
 
-    /// Called by native rows that actually appeared, or by a rendered empty state.
+    /// Queues the rows that are on screen now, or none for a rendered empty state.
+    /// Saves run one at a time and a newer list replaces a waiting one, so a
+    /// scroll or a change never starts one save per row.
+    func acknowledgeVisible(_ rows: [TodayRow], visitID: UUID) {
+        visiblePresentation = (rows, visitID)
+        guard visibleTask == nil else { return }
+        visibleTask = Task { [weak self] in
+            while !Task.isCancelled, let self, let next = self.visiblePresentation {
+                self.visiblePresentation = nil
+                await self.acknowledgePresented(next.rows, visitID: next.visitID)
+            }
+            // endVisit() has already let go of a cancelled task.
+            if !Task.isCancelled { self?.visibleTask = nil }
+        }
+    }
+
+    /// Saves rows that actually appeared, or a rendered empty state.
     /// The first successful account visit is the one documented census exception.
     func acknowledgePresented(_ rows: [TodayRow], visitID: UUID) async {
         guard let context = activeContext, isCurrent(visitID, context: context), historyReady,
               followUps.hasLoadedEntries, let previous = baseline else { return }
-        let currentProjection = projection(now: now())
-        let displayed = Dictionary(uniqueKeysWithValues: currentProjection.rows.map { ($0.id, $0.snapshot) })
+        // Changed entries reach the prepared list one step later. Catch up before trusting it.
+        if preparedEntriesRevision != followUps.presentationRevision { refreshPresentation() }
+        let shown = presentation.rows
+        let displayed = Dictionary(uniqueKeysWithValues: shown.map { ($0.id, $0.snapshot) })
         let canonical = Dictionary(uniqueKeysWithValues: followUps.entries.map { ($0.id, $0) })
         let valid = rows.compactMap { row -> CommitmentEntry? in
             guard displayed[row.id] == row.snapshot, let entry = canonical[row.id],
@@ -135,7 +191,7 @@ final class TodayModel {
             // a newer acknowledgement after a semantic edit-and-revert.
             return row.entry
         }
-        guard rows.isEmpty ? currentProjection.rowCount == 0 : !valid.isEmpty else { return }
+        guard rows.isEmpty ? shown.isEmpty : !valid.isEmpty else { return }
         let presented = valid.filter { acknowledged[$0.id] != TodayCommitmentSnapshot(entry: $0) }
         let missingAccounts = context.accountIDs.subtracting(previous.initializedAccountIDs)
         guard !presented.isEmpty || !missingAccounts.isEmpty else { return }

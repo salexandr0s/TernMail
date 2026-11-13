@@ -40,7 +40,7 @@ import Testing
             reads += 1
             if reads == 2 { await gate.hold() }
             return Self.unread(captured)
-        }, loadCalendar: { _ in Self.emptyCalendar }, openMail: { opened.append($0) })
+        }, loadCalendar: { _, _ in Self.emptyCalendar }, openMail: { opened.append($0) })
         await model.refreshUnread()
         let old = try #require(model.unreadMessages.first)
         #expect(opened.isEmpty)
@@ -56,8 +56,16 @@ import Testing
         await model.refreshUnread()
         model.openUnread(try #require(model.unreadMessages.first))
         #expect(opened == [old.link])
+        let replacement = scope.value
         model.stop()
+        #expect(model.unreadMessages.map(\.link) == [old.link], "A hidden Today keeps its last content.")
+        scope.value = Self.scope("a")
+        #expect(model.unreadMessages.isEmpty, "Kept content never shows in another profile or runtime.")
+        #expect(!model.hasLoadedUnread)
+        scope.value = replacement
+        model.reset()
         #expect(model.unreadMessages.isEmpty)
+        #expect(!model.hasLoadedUnread)
     }
 
     @Test func calendarLoadsCoalesceAndStopDiscardsACompletedOldRequest() async throws {
@@ -66,7 +74,7 @@ import Testing
         let scope = Self.scope("a")
         let gate = TodayDashboardGate()
         var reads = 0
-        let model = TodayDashboardModel(tasks: fixture.tasks(), context: { scope }, loadUnread: { Self.unread($0) }, loadCalendar: { _ in
+        let model = TodayDashboardModel(tasks: fixture.tasks(), context: { scope }, loadUnread: { Self.unread($0) }, loadCalendar: { _, _ in
             reads += 1
             await gate.hold()
             return Self.emptyCalendar
@@ -100,7 +108,7 @@ import Testing
             Self.event("after-window", start: end, end: end.addingTimeInterval(3600))]
         let scope = Self.scope("a")
         let model = TodayDashboardModel(tasks: fixture.tasks(), context: { scope }, calendar: { calendar },
-            loadUnread: { Self.unread($0) }, loadCalendar: { _ in
+            loadUnread: { Self.unread($0) }, loadCalendar: { _, _ in
                 TodayCalendarSnapshot(events: events, calendarCount: 1, unavailableCount: 1, omittedCount: 0, isStale: true)
             })
         model.selectedDate = day
@@ -113,6 +121,36 @@ import Testing
         #expect(model.calendarCoverage.contains("cached"))
     }
 
+    @Test func savedEventsShowBeforeTheNetworkAndSurviveANewRevision() async throws {
+        let fixture = try TodayDashboardFixture()
+        defer { fixture.clean() }
+        let scope = Self.scope("a")
+        let day = Calendar.autoupdatingCurrent.startOfDay(for: .now)
+        let saved = Self.event("saved", start: day.addingTimeInterval(90_000), end: day.addingTimeInterval(93_600))
+        let fresh = Self.event("fresh", start: day.addingTimeInterval(97_200), end: day.addingTimeInterval(100_800))
+        var revision = "1", hasSavedEvents = true
+        var passes: [Bool] = []
+        var shownWhenNetworkStarts: [[String]] = []
+        var shown: @MainActor () -> [String] = { [] }
+        let model = TodayDashboardModel(tasks: fixture.tasks(), context: { scope }, calendarRevision: { revision },
+            loadUnread: { Self.unread($0) }, loadCalendar: { _, refresh in
+                passes.append(refresh)
+                if refresh { shownWhenNetworkStarts.append(shown()) }
+                return TodayCalendarSnapshot(events: refresh ? [saved, fresh] : hasSavedEvents ? [saved] : [], calendarCount: 1,
+                    unavailableCount: 0, omittedCount: 0, isStale: !refresh, isComplete: refresh || hasSavedEvents)
+            })
+        shown = { model.upcomingEvents.map(\.event.id) }
+        await model.refreshCalendar()
+        #expect(passes == [false, true])
+        #expect(shownWhenNetworkStarts == [["saved"]], "Saved events show while the network read runs.")
+        #expect(model.upcomingEvents.map(\.event.id) == ["saved", "fresh"])
+        #expect(!model.calendarIsStale)
+        revision = "2"; hasSavedEvents = false
+        #expect(model.hasLoadedCalendar, "A new revision reloads without blanking the agenda.")
+        await model.refreshCalendar()
+        #expect(shownWhenNetworkStarts.last == ["saved", "fresh"], "A read with no saved events never replaces loaded ones.")
+    }
+
     @Test func taskRowsAndEditorKeepTheirListAndRejectProfileChanges() async throws {
         let fixture = try TodayDashboardFixture()
         defer { fixture.clean() }
@@ -121,7 +159,7 @@ import Testing
         let tasks = fixture.tasks(accounts: [account])
         let scope = TodayDashboardTestScope(Self.scope("a"))
         let model = TodayDashboardModel(tasks: tasks, context: { scope.value },
-            loadUnread: { Self.unread($0) }, loadCalendar: { _ in Self.emptyCalendar })
+            loadUnread: { Self.unread($0) }, loadCalendar: { _, _ in Self.emptyCalendar })
         await model.refresh()
         tasks.lists = [.init(id: "list", title: "First list"), .init(id: "other", title: "Other list")]
         tasks.tasks = [.init(id: "same-id", title: "Original task")]

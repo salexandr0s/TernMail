@@ -74,7 +74,8 @@ final class PerformanceScrollAudit: NSObject {
 
     @objc private func tick(_ link: CADisplayLink) {
         guard let scroll, let document = scroll.documentView else { finish(timedOut: true); return }
-        guard NSApp.isActive, scroll.window?.isKeyWindow == true, scroll.window?.occlusionState.contains(.visible) == true else {
+        guard LaunchMode.current.performance.unattended || (NSApp.isActive && scroll.window?.isKeyWindow == true),
+              scroll.window?.occlusionState.contains(.visible) == true else {
             finish(timedOut: false, failureReason: "Foreground activation was lost."); return
         }
         let time = CACurrentMediaTime()

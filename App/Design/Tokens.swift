@@ -132,6 +132,15 @@ enum Tokens {
         static let sidebarWidth: CGFloat = 248
         static let compactWidth = Layout.sidebarCompactWidth
         static let contentMinWidth: CGFloat = 420
+        /// The narrowest a day column gets before the day and week grids scroll sideways.
+        /// Seven of them and the hour gutter fit beside the sidebar in a 900 pt window.
+        static let dayMinWidth = Space.s16
+        /// A timeline card narrower than this gives up half its side padding to show more of its title.
+        static let compactCardWidth = Space.s12
+        /// A month chip drops its time when the title beside it would get less than this.
+        static let chipTitleMinWidth = Space.s12
+        /// The room that test allows for the time: a 12-hour time with two hour digits.
+        static let chipTimeWidth = Space.s12 + Space.s1
         static let editorWidth: CGFloat = 600
         static let editorHeight: CGFloat = 680
         static let activityWidth: CGFloat = 620
@@ -140,6 +149,12 @@ enum Tokens {
         static let allDayTint = 0.18
         static let selectedTint = 0.24
         static let todayTint = 0.04
+        /// The grid keeps the previous range this long while the next one loads.
+        static let rangeHold: Duration = .milliseconds(150)
+        /// A dropped event stays at its new slot this long at most while its change is written.
+        static let dropHold: Duration = .seconds(3)
+        /// Behind Mail, Calendar starts with the first page of the list, or after this long without one.
+        static let startDelay: Duration = .seconds(2)
         /// Sheets grow with their content; this keeps the editor and reviews usable when nearly empty.
         static let sheetMinHeight: CGFloat = 400
     }
@@ -213,19 +228,6 @@ enum Tokens {
         // Two windows fit side by side on a 13-inch display.
         static let windowMinWidth: CGFloat = 720
         static let windowMinHeight: CGFloat = 480
-        /// Below this window width, replies share the More mail actions menu.
-        static let replyMenuFoldWidth: CGFloat = 800
-        // Full window widths keep shared toolbar controls steady across sections.
-        /// The profile picker shows its name beside its icon.
-        static let wideToolbarWidth: CGFloat = 1440
-        /// Below this, mail actions fold into menus.
-        static let compactToolbarWidth: CGFloat = 1280
-        /// Below this, an idle search field folds into a button.
-        static let searchFoldWidth: CGFloat = 1080
-        /// Fold the title with Search so Calendar leaves room for Tasks and Assistant.
-        static let toolbarTitleFoldWidth = searchFoldWidth
-        /// An icon-only menu in the toolbar, with the gap after it.
-        static let toolbarMenuWidth: CGFloat = 58
         static let sidebarMinWidth: CGFloat = 180
         static let sidebarWidth: CGFloat = 220
         static let sidebarMaxWidth: CGFloat = 320
@@ -257,7 +259,6 @@ enum Tokens {
         static let attachmentWidth: CGFloat = 240
         static let shortcutsWidth: CGFloat = 480
         static let shortcutsHeight: CGFloat = 600
-        static let settingsHeight: CGFloat = 280
     }
 
     /// `shadow.md`: 0 8px 20px rgba(0,0,0,0.10). SwiftUI's radius is about half the CSS blur.
@@ -289,6 +290,8 @@ enum Tokens {
         static let fast: Double = 0.12
         static let base: Double = 0.16
         static let slow: Double = 0.22
+        /// A loading indicator waits this long, so a load that ends sooner shows none.
+        static let loadingDelay: Duration = .milliseconds(150)
 
         /// `motion.easing.standard`: cubic-bezier(0.2, 0.8, 0.2, 1).
         static func standard(duration: Double = base) -> Animation {

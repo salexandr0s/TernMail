@@ -366,6 +366,299 @@ import Testing
         #expect(model.creationState(for: request) == .idle)
     }
 
+    @Test func completionUsesTheWriteResponseAndReadsAgainOnlyForATaskWithSubtasks() async throws {
+        let fixture = try TasksModelFixture()
+        defer { fixture.clean() }
+        let service = MemoryTasksService()
+        await service.put(.init(id: "single", title: "Single"), listID: "list")
+        await service.put(.init(id: "parent", title: "Parent"), listID: "list")
+        await service.put(.init(id: "child", title: "Child", parent: "parent"), listID: "list")
+        let model = fixture.model(accounts: [Self.account("a")], services: ["a": service])
+        await model.refresh()
+        let single = try #require(model.openTasks.first { $0.id == "single" })
+        var reads = await service.reads
+        #expect(await model.setCompleted(single, completed: true))
+        #expect(model.completedTasks.map(\.id) == ["single"])
+        #expect(model.busyTaskIDs.isEmpty)
+        #expect(await service.reads == reads)
+
+        // The response describes only the parent, so the list is read again for its subtasks.
+        let parent = try #require(model.openTasks.first { $0.id == "parent" })
+        reads = await service.reads
+        #expect(await model.setCompleted(parent, completed: true))
+        #expect(await service.reads == reads + 2)
+    }
+
+    @Test(.timeLimit(.minutes(1))) func aWriteThatOverlapsAListReadEndsWithItsOwnRead() async throws {
+        let fixture = try TasksModelFixture()
+        defer { fixture.clean() }
+        let service = MemoryTasksService()
+        await service.put(.init(id: "task", title: "Task"), listID: "list")
+        let model = fixture.model(accounts: [Self.account("a")], services: ["a": service])
+        await model.refresh()
+        let task = try #require(model.openTasks.first)
+        let gate = TasksReadGate()
+        defer { Task { await gate.release() } }
+        await service.holdNextListRead(gate)
+        let read = Task { await model.refresh() }
+        await gate.waitUntilHeld()
+        #expect(model.isLoading)
+        // The write retires the read in flight, so its own read has to clear the loading state.
+        #expect(await model.setCompleted(task, completed: true))
+        #expect(!model.isLoading)
+        #expect(model.completedTasks.map(\.id) == ["task"])
+        await gate.release()
+        await read.value
+        #expect(!model.isLoading)
+        #expect(model.completedTasks.map(\.id) == ["task"])
+    }
+
+    @Test(.timeLimit(.minutes(1))) func switchingListsDrawsCachedRowsAndHoldsThePreviousOnesUntilTheFirstRead() async throws {
+        let fixture = try TasksModelFixture()
+        defer { fixture.clean() }
+        let service = MemoryTasksService(lists: [.init(id: "list", title: "First"), .init(id: "second", title: "Second")])
+        await service.put(.init(id: "first-task", title: "First list task"), listID: "list")
+        await service.put(.init(id: "second-task", title: "Second list task"), listID: "second")
+        let model = fixture.model(accounts: [Self.account("a")], services: ["a": service])
+        await model.refresh()
+        #expect(model.tasks.map(\.id) == ["first-task"])
+
+        // Nothing is cached for the second list. The first list's rows are held, never its tasks.
+        var gate = TasksReadGate()
+        await service.holdNextTaskRead(gate)
+        model.selectList("second")
+        await gate.waitUntilHeld()
+        #expect(model.tasks.isEmpty)
+        #expect(model.heldRows?.open.map(\.id) == ["first-task"])
+        await gate.release()
+        try await Self.until { model.tasks.first?.id == "second-task" }
+        #expect(model.heldRows == nil)
+
+        // Going back draws the first list from the cache while its read is still out.
+        await service.put(.init(id: "first-new", title: "Added elsewhere"), listID: "list")
+        gate = TasksReadGate()
+        await service.holdNextTaskRead(gate)
+        model.selectList("list")
+        #expect(model.tasks.map(\.id) == ["first-task"])
+        #expect(model.lastSyncedAt != nil)
+        #expect(model.heldRows == nil)
+        await gate.waitUntilHeld()
+        await gate.release()
+        try await Self.until { model.tasks.map(\.id) == ["first-task", "first-new"] }
+
+        // Losing access to the account drops the rows cached for its lists.
+        model.invalidateAccount("a")
+        await model.refresh()
+        gate = TasksReadGate()
+        await service.holdNextTaskRead(gate)
+        model.selectList("second")
+        await gate.waitUntilHeld()
+        #expect(model.tasks.isEmpty)
+        await gate.release()
+        try await Self.until { model.tasks.first?.id == "second-task" }
+    }
+
+    @Test(.timeLimit(.minutes(1))) func completionDrawsAtOnceAndAFailedWriteRestoresTheRow() async throws {
+        let fixture = try TasksModelFixture()
+        defer { fixture.clean() }
+        let service = MemoryTasksService()
+        await service.put(.init(id: "task", title: "Task"), listID: "list")
+        let model = fixture.model(accounts: [Self.account("a")], services: ["a": service])
+        await model.refresh()
+        let task = try #require(model.openTasks.first)
+        let gate = TasksReadGate()
+        defer { Task { await gate.release() } }
+        await service.holdNextUpdate(gate)
+        let write = Task { await model.setCompleted(task, completed: true) }
+        await gate.waitUntilHeld()
+        // The row has moved and is busy. What Google confirmed has not changed.
+        #expect(model.openTasks.isEmpty)
+        let pending = try #require(model.completedTasks.first)
+        #expect(pending.id == "task")
+        #expect(model.taskIsBusy(pending))
+        #expect(model.tasks.first?.isCompleted == false)
+        // The waiting row takes no second change.
+        #expect(await model.setCompleted(pending, completed: false) == false)
+        #expect(await model.delete(pending) == false)
+
+        await service.setUpdateFailure(.transport(.timedOut))
+        await gate.release()
+        #expect(await write.value == false)
+        #expect(model.openTasks.map(\.id) == ["task"])
+        #expect(model.completedTasks.isEmpty)
+        #expect(model.busyTaskIDs.isEmpty)
+        #expect(model.errorMessage?.hasPrefix("Couldn't confirm the change.") == true)
+        // The failed write is not sent again.
+        #expect(await service.updates == 1)
+    }
+
+    @Test(.timeLimit(.minutes(1))) func aReadDuringAPendingCompletionDoesNotFlipTheRowBack() async throws {
+        let fixture = try TasksModelFixture()
+        defer { fixture.clean() }
+        let service = MemoryTasksService()
+        await service.put(.init(id: "task", title: "Task"), listID: "list")
+        let model = fixture.model(accounts: [Self.account("a")], services: ["a": service])
+        await model.refresh()
+        let task = try #require(model.openTasks.first)
+        let gate = TasksReadGate()
+        defer { Task { await gate.release() } }
+        await service.holdNextUpdate(gate)
+        let write = Task { await model.setCompleted(task, completed: true) }
+        await gate.waitUntilHeld()
+        // Google hasn't applied the write, so this read returns the task as open, beside a new one.
+        await service.put(.init(id: "other", title: "Added elsewhere"), listID: "list")
+        await model.refresh()
+        #expect(model.tasks.map(\.id) == ["task", "other"])
+        #expect(model.tasks.first?.isCompleted == false)
+        #expect(model.openTasks.map(\.id) == ["other"])
+        #expect(model.completedTasks.map(\.id) == ["task"])
+        #expect(model.taskIsBusy(task))
+
+        await gate.release()
+        #expect(await write.value)
+        #expect(model.tasks.first?.isCompleted == true)
+        #expect(model.openTasks.map(\.id) == ["other"])
+        #expect(model.completedTasks.map(\.id) == ["task"])
+        #expect(model.busyTaskIDs.isEmpty)
+    }
+
+    @Test(.timeLimit(.minutes(1))) func aListLeftDuringACompletionComesBackWithGooglesAnswer() async throws {
+        let fixture = try TasksModelFixture()
+        defer { fixture.clean() }
+        let service = MemoryTasksService(lists: [.init(id: "list", title: "First"), .init(id: "second", title: "Second")])
+        await service.put(.init(id: "first-task", title: "First list task"), listID: "list")
+        let model = fixture.model(accounts: [Self.account("a")], services: ["a": service])
+        await model.refresh()
+        let task = try #require(model.openTasks.first)
+        let write = TasksReadGate()
+        defer { Task { await write.release() } }
+        await service.holdNextUpdate(write)
+        let completion = Task { await model.setCompleted(task, completed: true) }
+        await write.waitUntilHeld()
+        // Leaving caches the list as Google last confirmed it, with the task still open.
+        model.selectList("second")
+        await write.release()
+        #expect(await completion.value)
+
+        // Going back draws from the cache while the list's own read is still out.
+        let read = TasksReadGate()
+        defer { Task { await read.release() } }
+        await service.holdNextTaskRead(read)
+        model.selectList("list")
+        #expect(model.completedTasks.map(\.id) == ["first-task"])
+        #expect(model.openTasks.isEmpty)
+        #expect(!model.taskIsBusy(task))
+        await read.waitUntilHeld()
+        await read.release()
+        try await Self.until { !model.isLoading }
+        #expect(model.completedTasks.map(\.id) == ["first-task"])
+    }
+
+    @Test(.timeLimit(.minutes(1))) func aFinishedWriteDoesNotReleaseALaterWriteToTheSameTask() async throws {
+        let fixture = try TasksModelFixture()
+        defer { fixture.clean() }
+        let service = MemoryTasksService()
+        await service.put(.init(id: "parent", title: "Parent"), listID: "list")
+        await service.put(.init(id: "child", title: "Child", parent: "parent"), listID: "list")
+        let model = fixture.model(accounts: [Self.account("a")], services: ["a": service])
+        await model.refresh()
+        let parent = try #require(model.openTasks.first { $0.id == "parent" })
+        // Completing a task with subtasks is followed by a read. Google answers the write, and
+        // that read stays out.
+        let read = TasksReadGate()
+        defer { Task { await read.release() } }
+        await service.holdNextTaskRead(read)
+        let completion = Task { await model.setCompleted(parent, completed: true) }
+        await read.waitUntilHeld()
+        let completed = try #require(model.completedTasks.first { $0.id == "parent" })
+        #expect(!model.taskIsBusy(completed))
+
+        let write = TasksReadGate()
+        defer { Task { await write.release() } }
+        await service.holdNextUpdate(write)
+        let reopening = Task { await model.setCompleted(completed, completed: false) }
+        await write.waitUntilHeld()
+        // The first call returns while the second write is still with Google.
+        await read.release()
+        #expect(await completion.value)
+        #expect(model.taskIsBusy(completed))
+        #expect(model.openTasks.contains { $0.id == "parent" })
+        #expect(await model.setCompleted(completed, completed: true) == false)
+
+        await write.release()
+        #expect(await reopening.value)
+        #expect(model.busyTaskIDs.isEmpty)
+        #expect(model.openTasks.contains { $0.id == "parent" })
+        #expect(await service.updates == 2)
+    }
+
+    @Test(.timeLimit(.minutes(1))) func removingAnAccountDropsItsCachedRowsAndPendingCompletion() async throws {
+        let fixture = try TasksModelFixture()
+        defer { fixture.clean() }
+        let service = MemoryTasksService(lists: [.init(id: "list", title: "First"), .init(id: "second", title: "Second")])
+        await service.put(.init(id: "first-task", title: "First list task"), listID: "list")
+        await service.put(.init(id: "second-task", title: "Second list task"), listID: "second")
+        let model = fixture.model(accounts: [Self.account("a")], services: ["a": service])
+        await model.refresh()
+        // Show the second list and come back, so its rows are cached.
+        model.selectList("second")
+        try await Self.until { model.tasks.first?.id == "second-task" }
+        var read = TasksReadGate()
+        await service.holdNextTaskRead(read)
+        model.selectList("list")
+        await read.waitUntilHeld()
+        await read.release()
+        try await Self.until { !model.isLoading }
+        let task = try #require(model.openTasks.first)
+        let write = TasksReadGate()
+        defer { Task { await write.release() } }
+        await service.holdNextUpdate(write)
+        let completion = Task { await model.setCompleted(task, completed: true) }
+        await write.waitUntilHeld()
+        #expect(model.completedTasks.map(\.id) == ["first-task"])
+
+        // Turning Tasks off removes the account. The fixture still lists it, so it loads again
+        // from Google, where the held write has not landed.
+        await model.removeAccount("a")
+        #expect(model.openTasks.map(\.id) == ["first-task"])
+        #expect(model.completedTasks.isEmpty)
+        read = TasksReadGate()
+        await service.holdNextTaskRead(read)
+        model.selectList("second")
+        await read.waitUntilHeld()
+        #expect(model.tasks.isEmpty)
+        await read.release()
+        try await Self.until { model.tasks.first?.id == "second-task" }
+        // The answer to a write from before the removal is discarded.
+        await write.release()
+        #expect(await completion.value == false)
+        #expect(model.tasks.map(\.id) == ["second-task"])
+    }
+
+    @Test(.timeLimit(.minutes(1))) func thePanelsFirstRefreshJoinsAPreloadInFlight() async throws {
+        let fixture = try TasksModelFixture()
+        defer { fixture.clean() }
+        let gate = TasksReadGate()
+        defer { Task { await gate.release() } }
+        let service = MemoryTasksService(gate: gate)
+        await service.put(.init(id: "task", title: "Task"), listID: "list")
+        let model = fixture.model(accounts: [Self.account("a")], services: ["a": service])
+        model.preload()
+        await gate.waitUntilHeld()
+        let opening = Task { await model.refreshOnAppear() }
+        await gate.release()
+        await opening.value
+        #expect(model.tasks.map(\.id) == ["task"])
+        // One read of the lists and one of the tasks. Opening the panel did not send them again.
+        #expect(await service.reads == 2)
+    }
+
+    private static func until(_ condition: () -> Bool) async throws {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while !condition(), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+        try #require(condition())
+    }
+
     private static func account(_ id: String) -> AccountRecord {
         AccountRecord(id: id, email: "\(id)@example.invalid", displayName: id,
             grantedScopes: [GoogleScopes.tasks], addedAt: .now, enabledFeatures: [AccountFeature.tasks.rawValue])
@@ -418,6 +711,9 @@ private actor MemoryTasksService: TasksService {
     private var insertFailure: GmailError?
     private var readFailure: GmailError?
     private var failedTaskList: String?
+    private var taskGate: TasksReadGate?
+    private var updateGate: TasksReadGate?
+    private var updateFailure: GmailError?
     var taskListReads: [String] = []
 
     init(lists: [GoogleTaskList] = [.init(id: "list", title: "My tasks")], gate: TasksReadGate? = nil) {
@@ -426,6 +722,11 @@ private actor MemoryTasksService: TasksService {
     func setInsertFailure(_ error: GmailError?) { insertFailure = error }
     func setReadFailure(_ error: GmailError?) { readFailure = error }
     func failTaskList(_ id: String) { failedTaskList = id }
+    func holdNextListRead(_ gate: TasksReadGate) { self.gate = gate }
+    func holdNextTaskRead(_ gate: TasksReadGate) { taskGate = gate }
+    /// The held write has reached the service and has not changed the task yet.
+    func holdNextUpdate(_ gate: TasksReadGate) { updateGate = gate }
+    func setUpdateFailure(_ error: GmailError?) { updateFailure = error }
     func delayInsert(_ insert: TasksReadGate, refresh: TasksReadGate) {
         insertGate = insert; afterInsertGate = refresh
     }
@@ -439,6 +740,7 @@ private actor MemoryTasksService: TasksService {
     func tasks(listID: String, pageToken: String?) async throws -> GoogleTaskPage {
         reads += 1
         taskListReads.append(listID)
+        if let taskGate { self.taskGate = nil; await taskGate.hold() }
         if failedTaskList == listID { throw GmailError.transport(.timedOut) }
         if let readFailure { throw readFailure }
         return .init(items: values[listID] ?? [])
@@ -454,6 +756,8 @@ private actor MemoryTasksService: TasksService {
     }
     func updateTask(listID: String, taskID: String, update: GoogleTaskUpdate, etag: String?) async throws -> GoogleTask {
         updates += 1
+        if let updateGate { self.updateGate = nil; await updateGate.hold() }
+        if let updateFailure { throw updateFailure }
         guard let index = values[listID]?.firstIndex(where: { $0.id == taskID }), var task = values[listID]?[index] else { throw GmailError.notFound }
         if let title = update.title { task.title = title }
         if let notes = update.notes { task.notes = notes }

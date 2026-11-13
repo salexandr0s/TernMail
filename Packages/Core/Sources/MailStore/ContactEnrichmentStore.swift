@@ -18,7 +18,7 @@ extension MailCache {
     }
 
     public func observeContactPhoto(accountID: String, address: String) -> AsyncThrowingStream<ContactPhotoRecord?, any Error> {
-        observe { try CacheTransaction(db: $0).contactPhoto(accountID: accountID, address: address) }
+        observe(region: ObservedTables.contactPhoto) { try CacheTransaction(db: $0).contactPhoto(accountID: accountID, address: address) }
     }
 
     @discardableResult

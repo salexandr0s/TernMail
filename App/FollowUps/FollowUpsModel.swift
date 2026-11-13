@@ -96,26 +96,40 @@ final class FollowUpsModel {
     func refresh(checkReminders: Bool = true) async {
         guard !stopped, let store = storeProvider() else { return }
         refreshGeneration += 1
-        let request = refreshGeneration, epoch = generation
+        let request = refreshGeneration
         isLoading = true
-        defer { if request == refreshGeneration { isLoading = false } }
+        let loaded = await loadEntries(from: store, request: request)
+        // Loading covers the local read only. The reminder pass reads Gmail
+        // thread by thread and must not hold the page in its loading state.
+        if request == refreshGeneration { isLoading = false }
+        if loaded, checkReminders { await evaluateReminders() }
+    }
+
+    /// Returns whether this request published its entries.
+    private func loadEntries(from store: AccountStore, request: Int) async -> Bool {
+        let epoch = generation
         do {
             let records = try await store.accounts()
             removedAccounts.formIntersection(Set(records.map(\.id)))
             let ids = Set(records.map(\.id)).subtracting(removedAccounts)
             let values = try await store.commitmentEntries(accountIDs: ids)
+            guard isCurrent(epoch), request == refreshGeneration else { return false }
+            // The list is published before the identity reads. Only tracking a
+            // new follow-up uses them, and it falls back to the account's address.
+            accounts = records.filter { ids.contains($0.id) }
+            applyEntries(values); errorMessage = nil; isLoading = false
+            observe(store: store, accountIDs: ids)
             var identities: [String: Set<String>] = [:]
             for record in records where ids.contains(record.id) {
                 let aliases = try await store.identities(accountID: record.id)
                 identities[record.id] = Set(aliases.filter(\.canSend).map { $0.address.lowercased() }).union([record.email.lowercased()])
             }
-            guard isCurrent(epoch), request == refreshGeneration else { return }
-            accounts = records.filter { ids.contains($0.id) }; ownAddressesByAccount = identities
-            applyEntries(values); errorMessage = nil
-            observe(store: store, accountIDs: ids)
-            if checkReminders { await evaluateReminders() }
-        } catch is CancellationError {} catch {
+            guard isCurrent(epoch), request == refreshGeneration else { return false }
+            ownAddressesByAccount = identities
+            return true
+        } catch is CancellationError { return false } catch {
             if isCurrent(epoch), request == refreshGeneration { errorMessage = "Couldn't load follow-ups." }
+            return false
         }
     }
 

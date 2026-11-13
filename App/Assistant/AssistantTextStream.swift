@@ -9,7 +9,9 @@ final class AssistantTextStream {
     private(set) var utf8Count = 0
     private var hasPublished = false
     private var hasPendingText = false
-    private var isFinished = false
+    /// Set before the last publication, so `publish` can tell it from the
+    /// flushes of a reply that is still arriving.
+    private(set) var isFinished = false
     private var flushTask: Task<Void, Never>?
 
     init(sleep: @escaping @MainActor (Duration) async throws -> Void = { try await Task.sleep(for: $0) },

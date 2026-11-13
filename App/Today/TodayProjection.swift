@@ -36,6 +36,8 @@ struct TodayRow: Identifiable, Equatable {
     let entry: CommitmentEntry
     let snapshot: TodayCommitmentSnapshot
     let reasons: [TodayReason]
+    /// Whether the row is open and hidden from the briefing until a later time.
+    let isSnoozed: Bool
     var id: String { entry.id }
 }
 
@@ -56,7 +58,8 @@ struct TodayProjection: Equatable {
                      replyChecks: [String: FollowUpReplyCheckState] = [:], filter: TodayFilter = .briefing,
                      searchText: String = "", now: Date, calendar: Calendar = .current) -> TodayProjection {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        var grouped: [TodaySectionKind: [TodayRow]] = [:]
+        // Each row carries its sort key, worked out once when the row is built.
+        var grouped: [TodaySectionKind: [(key: (Int, Date, String), row: TodayRow)]] = [:]
         for entry in entries where accountIDs.contains(entry.record.accountID) {
             let record = entry.record
             let isDeferred = record.status == .open && (record.deferredUntil.map { $0 > now } ?? false)
@@ -104,16 +107,17 @@ struct TodayProjection: Equatable {
                 guard !reasons.isEmpty else { continue }
                 kind = .changes
             }
-            grouped[kind, default: []].append(TodayRow(entry: entry, snapshot: snapshot, reasons: reasons))
+            let row = TodayRow(entry: entry, snapshot: snapshot, reasons: reasons, isSnoozed: isDeferred)
+            grouped[kind, default: []].append((sortKey(row, deadline: day, now: now), row))
         }
         return TodayProjection(sections: TodaySectionKind.allCases.compactMap { kind in
             guard let values = grouped[kind], !values.isEmpty else { return nil }
-            return TodaySection(kind: kind, rows: values.sorted { sortKey($0, now: now, calendar: calendar) < sortKey($1, now: now, calendar: calendar) })
+            return TodaySection(kind: kind, rows: values.sorted { $0.key < $1.key }.map(\.row))
         })
     }
 
-    private static func sortKey(_ row: TodayRow, now: Date, calendar: Calendar) -> (Int, Date, String) {
-        let deadline = row.entry.record.dueAt.map { FollowUpSchedule.pickerDate(from: $0, calendar: calendar) }
+    /// `deadline` is the row's due day in the user's calendar, which its section already needed.
+    private static func sortKey(_ row: TodayRow, deadline: Date?, now: Date) -> (Int, Date, String) {
         let reminder = row.entry.reminders.filter { $0.receivedReplyMessageID == nil }.map(\.remindAt).min()
         let priority = row.reasons.contains { $0.code == .overdue } ? 0
             : row.reasons.contains { $0.code == .dueToday || $0.code == .reminderDue } ? 1 : 2
@@ -153,5 +157,50 @@ struct TodayProjection: Equatable {
 
     private static func add(_ code: TodayReasonCode, _ title: String, to reasons: inout [TodayReason]) {
         if !reasons.contains(where: { $0.code == code }) { reasons.append(TodayReason(code: code, title: title)) }
+    }
+}
+
+/// The two preset times a row's Snooze menu offers. They follow the clock, so
+/// they are worked out with the list and a row only shows them.
+struct TodaySnoozeChoices: Equatable {
+    let tomorrow: Date
+    let friday: Date
+
+    init(now: Date) {
+        tomorrow = FollowUpSchedule.tomorrow(from: now)
+        friday = FollowUpSchedule.friday(from: now)
+    }
+}
+
+/// The follow-up list as the Today page shows it. `TodayModel` prepares it when
+/// its inputs change, so drawing the page only reads it.
+struct TodayPresentation: Equatable {
+    /// Every row in display order. An owed row keeps the place its section gives it.
+    let rows: [TodayRow]
+    /// `rows` as snapshots. The acknowledgement compares this array on each scroll step.
+    let snapshots: [TodayCommitmentSnapshot]
+    /// Open commitments the user owes. The briefing lists them under "I owe".
+    let owed: [TodayRow]
+    /// The follow-up list: each section without its owed rows. A section left empty is dropped.
+    let sections: [TodaySection]
+    /// Section and row IDs in display order. The list animates when they change.
+    let contentIDs: [String]
+    let snooze: TodaySnoozeChoices
+
+    var followUpCount: Int { rows.count - owed.count }
+
+    init(projection: TodayProjection, filter: TodayFilter, now: Date) {
+        func isOwed(_ row: TodayRow) -> Bool {
+            filter == .briefing && row.entry.record.status == .open && row.entry.record.direction == .owedByMe
+        }
+        rows = projection.rows
+        snapshots = rows.map(\.snapshot)
+        owed = rows.filter(isOwed)
+        sections = projection.sections.compactMap { section in
+            let others = section.rows.filter { !isOwed($0) }
+            return others.isEmpty ? nil : TodaySection(kind: section.kind, rows: others)
+        }
+        contentIDs = projection.sections.flatMap { [$0.id] + $0.rows.map(\.id) }
+        snooze = TodaySnoozeChoices(now: now)
     }
 }

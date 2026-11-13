@@ -29,14 +29,16 @@ struct WorkspaceView: View {
     @FocusState private var compactBackFocused: Bool
     /// Shared with the mail assistant, so the panel keeps one width across launches.
     @AppStorage(AssistantSidebarLayout.widthKey) private var preferredAssistantWidth = Double(Tokens.Assistant.sidebarWidth)
+    /// The panel's width while its divider is dragged; saved when the drag ends.
+    @State private var draggedAssistantWidth: CGFloat?
     let mailbox: MailboxModel
 
     var body: some View {
         GeometryReader { geometry in
             let layout = CalendarUtilityLayout(availableWidth: geometry.size.width,
-                preferredWidth: CGFloat(preferredAssistantWidth), isPresented: calendarPanel != nil)
+                preferredWidth: draggedAssistantWidth ?? CGFloat(preferredAssistantWidth), isPresented: calendarPanel != nil)
             ZStack {
-                MainView(mailbox: mailbox, isActive: app.destination == .mail,
+                MainView(mailbox: mailbox, isActive: app.destination == .mail, windowWidth: geometry.size.width,
                     calendarPanel: calendarPanel,
                     onCalendarPanelToggle: toggleCalendarPanel, calendarSidebarState: calendarSidebar,
                     isCalendarUtilityCompact: layout.isCompact)
@@ -57,7 +59,7 @@ struct WorkspaceView: View {
                             .allowsHitTesting(app.destination == .calendar)
                             .accessibilityHidden(app.destination != .calendar)
                             .focusedValue(\.calendarWorkspaceHasFocus, app.destination == .calendar)
-                        FollowUpsView(model: app.followUps)
+                        FollowUpsView(model: app.followUps, isActive: app.destination == .followUps)
                             .opacity(app.destination == .followUps ? 1 : 0)
                             .allowsHitTesting(app.destination == .followUps)
                             .accessibilityHidden(app.destination != .followUps)
@@ -87,7 +89,8 @@ struct WorkspaceView: View {
                         CalendarUtilityPanel(layout: layout, height: geometry.size.height,
                             title: calendarPanel == .tasks ? "Tasks" : "Assistant",
                             canClose: calendarPanel != .tasks || tasksAllowClosing,
-                            backFocused: $compactBackFocused, onBack: closeCalendarPanel, onResize: resizeAssistant) {
+                            backFocused: $compactBackFocused, onBack: closeCalendarPanel, onResize: resizeAssistant,
+                            onResizeEnd: saveAssistantWidth) {
                             ZStack {
                                 if calendarPanel == .tasks {
                                     GoogleTasksSidebar(model: app.tasks, onClose: closeCalendarPanel,
@@ -134,7 +137,9 @@ struct WorkspaceView: View {
                     compactBackFocused = true
                 }
             }
-            .task { await app.calendar.start() }
+            .background {
+                CalendarStart(calendar: app.calendar, mailbox: mailbox, destination: app.destination)
+            }
             .onChange(of: app.tasksSidebarRequest, initial: true) { _, request in
                 if app.destination != .mail, request != nil {
                     if calendarPanel != .tasks { toggleCalendarPanel(.tasks) }
@@ -143,6 +148,8 @@ struct WorkspaceView: View {
             }
             .onChange(of: app.destination, initial: true) { _, destination in
                 app.calendar.isVisible = destination == .calendar
+                // The Tasks panel sits beside Calendar, so its first read starts here.
+                if destination == .calendar { app.tasks.preload() }
             }
             .onChange(of: mailbox.accounts.map(\.account.id)) { _, _ in
                 Task { await app.calendar.refresh() }
@@ -164,12 +171,53 @@ struct WorkspaceView: View {
     }
 
     private func resizeAssistant(_ width: CGFloat) {
-        preferredAssistantWidth = Double(min(max(width, Tokens.Assistant.sidebarMinWidth), Tokens.Assistant.sidebarMaxWidth))
+        draggedAssistantWidth = AssistantSidebarLayout.clampedWidth(width)
+    }
+
+    private func saveAssistantWidth() {
+        guard let width = draggedAssistantWidth else { return }
+        preferredAssistantWidth = Double(width)
+        draggedAssistantWidth = nil
     }
 
     private func openAssistant(fullScreen: Bool) {
         calendarPanel = nil
         AssistantWindow.open(using: openWindow, fullScreen: fullScreen)
+    }
+}
+
+/// Starts Calendar once per workspace. Calendar and Today need it at once.
+/// Behind Mail it waits for the first page of the list, so opening its store
+/// and syncing do not compete with that page, and for at most
+/// `Tokens.Calendar.startDelay`. Event reminders and meeting preparation
+/// therefore work for someone who never opens Calendar.
+///
+/// It is a view of its own so the list's readiness is observed here and a
+/// mailbox switch does not re-evaluate the workspace.
+private struct CalendarStart: View {
+    let calendar: CalendarModel
+    let mailbox: MailboxModel
+    let destination: WorkspaceDestination
+    /// Set once and never cleared: a start that is under way must not be
+    /// cancelled, because a cancelled start stops Calendar.
+    @State private var isDue = false
+
+    private var isNeededNow: Bool {
+        destination == .calendar || destination == .today || mailbox.isListPresentationReady
+    }
+
+    var body: some View {
+        Color.clear
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+            .onChange(of: isNeededNow, initial: true) { _, needed in
+                if needed { isDue = true }
+            }
+            .task(id: isDue) {
+                guard !isDue else { await calendar.start(); return }
+                do { try await Task.sleep(for: Tokens.Calendar.startDelay) } catch { return }
+                isDue = true
+            }
     }
 }
 

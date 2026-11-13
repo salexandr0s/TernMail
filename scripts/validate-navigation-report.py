@@ -13,6 +13,8 @@ def validate(report):
         errors.append('Optimized build was not verified.')
     if report.get('version') != 4:
         errors.append('Expected report schema version 4 with native input validity monitoring.')
+    if report.get('unattended'):
+        errors.append('Unattended run: the app was not required to be active, so these timings compare builds and cannot pass acceptance.')
     native_input = report.get('unexpectedNativeInputEvents')
     if type(native_input) is not int or native_input < 0:
         errors.append('Native input validity count is missing or invalid.')

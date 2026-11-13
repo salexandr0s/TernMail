@@ -192,6 +192,28 @@ private struct TernAnimation<Value: Equatable>: ViewModifier {
     }
 }
 
+/// Reveals a loading indicator once loading has lasted `Tokens.Motion.loadingDelay`.
+/// The indicator keeps its size while hidden, so nothing moves when it appears.
+private struct TernDelayedLoading: ViewModifier {
+    @State private var isShown = false
+    let isLoading: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(isShown ? 1 : 0)
+            .accessibilityHidden(!isShown)
+            .ternAnimation(value: isShown, duration: Tokens.Motion.fast)
+            .task(id: isLoading) {
+                guard isLoading else {
+                    isShown = false
+                    return
+                }
+                try? await Task.sleep(for: Tokens.Motion.loadingDelay)
+                if !Task.isCancelled { isShown = true }
+            }
+    }
+}
+
 /// Hover feedback for rows and chips that act on a click. The tint fades
 /// unless Reduce Motion is on.
 private struct TernHover: ViewModifier {
@@ -235,6 +257,14 @@ extension View {
 
     func ternAnimation<Value: Equatable>(value: Value, duration: Double = Tokens.Motion.base) -> some View {
         modifier(TernAnimation(value: value, duration: duration))
+    }
+
+    /// Hides a spinner or placeholder until loading has lasted `Tokens.Motion.loadingDelay`,
+    /// so a short load shows no indicator. Apply it to the indicator itself: either one
+    /// that is always in the layout, with the loading state passed in, or one inside an
+    /// `if` branch, with the default.
+    func ternDelayedLoading(_ isLoading: Bool = true) -> some View {
+        modifier(TernDelayedLoading(isLoading: isLoading))
     }
 
     /// Highlights the view under the pointer. Pass `.link` for views that open something.

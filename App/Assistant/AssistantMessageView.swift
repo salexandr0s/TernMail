@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-struct AssistantMessageView: View {
+struct AssistantMessageView: View, Equatable {
     let message: AssistantMessage
     let startsGroup: Bool
     let status: String?
@@ -10,19 +10,48 @@ struct AssistantMessageView: View {
     let onOpenSource: (AssistantSource) -> Void
     let onOpenSourceInNewWindow: (AssistantSource) -> Void
     let onOpenDraft: (String) -> Void
-    var model: AssistantModel? = nil
+    let model: AssistantModel?
+    /// What `==` reads of the message. The message holds a class, so `==`
+    /// cannot read it outside the main actor.
+    private let version: Version
     @State private var showsAllEmails = false
     @State private var showsSources = false
     @State private var copied = false
 
+    private struct Version: Equatable, Sendable {
+        let id: UUID
+        let revision: Int
+        let isStreaming: Bool
+    }
+
+    init(message: AssistantMessage, startsGroup: Bool, status: String?, canRetry: Bool,
+         onRetry: @escaping () -> Void, onOpenSource: @escaping (AssistantSource) -> Void,
+         onOpenSourceInNewWindow: @escaping (AssistantSource) -> Void,
+         onOpenDraft: @escaping (String) -> Void, model: AssistantModel? = nil) {
+        self.message = message; self.startsGroup = startsGroup; self.status = status; self.canRetry = canRetry
+        self.onRetry = onRetry; self.onOpenSource = onOpenSource
+        self.onOpenSourceInNewWindow = onOpenSourceInNewWindow; self.onOpenDraft = onOpenDraft; self.model = model
+        version = Version(id: message.id, revision: message.revision, isStreaming: message.state == .streaming)
+    }
+
+    /// A row is redrawn when its own message was edited, not when another reply
+    /// streams. Only a streaming reply shows the status. The actions and the
+    /// model are not compared: a row's actions reach the same objects for as
+    /// long as the row exists.
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.version == rhs.version && lhs.startsGroup == rhs.startsGroup && lhs.canRetry == rhs.canRetry
+            && (!lhs.version.isStreaming || lhs.status == rhs.status)
+    }
+
     var body: some View {
+        let emails = uniqueEmails, sources = uniqueSources
         HStack(alignment: .top, spacing: 0) {
             if message.isUser { Spacer(minLength: Tokens.Assistant.bubbleInset) }
             VStack(alignment: message.isUser ? .trailing : .leading, spacing: Tokens.Space.s2) {
-                bubble
-                footer
+                bubble(emails: emails)
+                footer(sources: sources)
                 if showsSources, !sources.isEmpty {
-                    sourceList.ternTransition(.disclosure)
+                    sourceList(sources).ternTransition(.disclosure)
                 }
             }
             .ternAnimation(value: showsSources, duration: Tokens.Motion.slow)
@@ -40,7 +69,7 @@ struct AssistantMessageView: View {
         }
     }
 
-    private var bubble: some View {
+    private func bubble(emails: [AssistantEmailResult]) -> some View {
         VStack(alignment: .leading, spacing: Tokens.AssistantFormatting.blockGap) {
             if !message.text.isEmpty {
                 if message.isUser {
@@ -137,7 +166,7 @@ struct AssistantMessageView: View {
         }
     }
 
-    private var footer: some View {
+    private func footer(sources: [AssistantSource]) -> some View {
         HStack(spacing: Tokens.Space.s2) {
             if message.state == .cancelled { Text("Stopped") }
             if message.state == .failed { Label("Incomplete", systemImage: "exclamationmark.circle") }
@@ -156,7 +185,7 @@ struct AssistantMessageView: View {
                 .accessibilityValue(showsSources ? "Expanded" : "Collapsed")
                 .help(showsSources ? "Hide sources" : "Show sources")
             }
-            if !copyText.isEmpty {
+            if hasCopyText {
                 Button { copy(.formatted) } label: {
                     Image(systemName: copied ? "checkmark" : "doc.on.doc")
                         .frame(width: Tokens.Space.s6, height: Tokens.Space.s6)
@@ -184,7 +213,7 @@ struct AssistantMessageView: View {
         .padding(.horizontal, message.isUser ? Tokens.Space.s2 : 0)
     }
 
-    private var sourceList: some View {
+    private func sourceList(_ sources: [AssistantSource]) -> some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s2) {
             ForEach(sources) { source in
                 let title = sourceTitle(source)
@@ -207,7 +236,7 @@ struct AssistantMessageView: View {
 
     @ViewBuilder private var messageMenu: some View {
         Group {
-            if !copyText.isEmpty {
+            if hasCopyText {
                 Button("Copy", systemImage: "doc.on.doc") { copy(.formatted) }
                 if !message.isUser {
                     Button("Copy as Markdown") { copy(.markdown) }
@@ -215,7 +244,7 @@ struct AssistantMessageView: View {
                 }
             }
             if canRetry {
-                if !copyText.isEmpty { Divider() }
+                if hasCopyText { Divider() }
                 Button("Retry", systemImage: "arrow.clockwise", action: onRetry)
             }
         }
@@ -224,24 +253,26 @@ struct AssistantMessageView: View {
 
     private func copy(_ format: AssistantMarkdown.CopyFormat) {
         // User messages show as typed, never as Markdown, so they copy unchanged.
-        AssistantMarkdown.copy(copyText, as: message.isUser ? .markdown : format)
+        AssistantMarkdown.copy(AssistantResultExport.markdown(message), as: message.isUser ? .markdown : format)
         copied = true
     }
 
-    private var copyText: String {
-        AssistantResultExport.markdown(message)
+    /// The export is built when the reader copies, not to decide whether to
+    /// offer the copy action.
+    private var hasCopyText: Bool {
+        AssistantResultExport.hasContent(message)
     }
 
     private var messageDate: String {
         message.createdAt.formatted(date: .abbreviated, time: .shortened)
     }
 
-    private var emails: [AssistantEmailResult] {
+    private var uniqueEmails: [AssistantEmailResult] {
         var seen = Set<String>()
         return message.emailResults.filter { seen.insert($0.id).inserted }
     }
 
-    private var sources: [AssistantSource] {
+    private var uniqueSources: [AssistantSource] {
         var seen = Set<String>()
         return message.sources.filter { source in
             if source.isCalendar { return seen.insert(source.id).inserted }

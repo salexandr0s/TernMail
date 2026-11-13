@@ -8,36 +8,51 @@ struct TodayUnreadPanel: View {
         dashboard.unreadMessages.filter { query.isEmpty || [$0.sender, $0.subject, $0.snippet, $0.accountTitle]
             .contains { $0.localizedCaseInsensitiveContains(query) } }
     }
+    /// Only the first read of a profile's mail shows a loading state. Later
+    /// reads keep the rows and the count, and show the header indicator.
+    private var isFirstLoad: Bool { dashboard.unreadLoading && !dashboard.hasLoadedUnread }
     private var count: Int? {
-        dashboard.hasLoadedUnread && !dashboard.unreadLoading && (dashboard.unreadError == nil || !messages.isEmpty)
+        dashboard.hasLoadedUnread && (dashboard.unreadError == nil || !messages.isEmpty)
             && !dashboard.context.accountIDs.isEmpty ? messages.count : nil
     }
 
     var body: some View {
-        TodayDashboardSection(title: "Unread emails", symbol: "envelope.badge", count: count, countLabel: "cached unread emails shown") {
-            if dashboard.unreadLoading && messages.isEmpty {
-                TodayLoadingStatus("Loading unread emails…").padding(.vertical, Tokens.Space.s2)
-            } else if dashboard.context.accountIDs.isEmpty {
-                TodayCompactState(title: "No mail accounts", symbol: "envelope",
-                    message: "No mail accounts are available in this profile.")
-            } else if !dashboard.hasLoadedUnread {
-                TodayCompactState(title: "Unread mail not loaded", symbol: "envelope",
-                    message: "Refresh to check synced inbox mail.")
-            } else if messages.isEmpty {
-                TodayCompactState(title: emptyTitle, symbol: dashboard.unreadError == nil ? "envelope" : "exclamationmark.circle",
-                    message: query.isEmpty ? "Mail that has not synced is not included." : "Try another search.")
-            } else {
-                LazyVStack(spacing: 0) {
-                    ForEach(messages) { message in
-                        Button { dashboard.openUnread(message) } label: { TodayUnreadRow(message: message) }
-                            .buttonStyle(.plain).ternHover()
-                            .accessibilityLabel("Open unread email: \(message.subject.isEmpty ? "No subject" : message.subject), from \(message.sender)")
-                            .accessibilityValue("\(message.accountTitle), \(message.date.formatted(date: .complete, time: .shortened))")
-                            .accessibilityIdentifier("today-unread-\(message.messageID)")
-                        if message.id != messages.last?.id { Divider() }
+        let messages = self.messages
+        TodayDashboardSection(title: "Unread emails", symbol: "envelope.badge", count: count, countLabel: "cached unread emails shown",
+            updatingLabel: "Updating unread emails…", isUpdating: dashboard.unreadLoading && dashboard.hasLoadedUnread) {
+            VStack(alignment: .leading, spacing: 0) {
+                if isFirstLoad {
+                    TodayLoadingStatus("Loading unread emails…").padding(.vertical, Tokens.Space.s2)
+                        .ternDelayedLoading().ternTransition(.fade)
+                } else if dashboard.context.accountIDs.isEmpty {
+                    TodayCompactState(title: "No mail accounts", symbol: "envelope",
+                        message: "No mail accounts are available in this profile.")
+                        .ternTransition(.fade)
+                } else if !dashboard.hasLoadedUnread {
+                    TodayCompactState(title: "Unread mail not loaded", symbol: "envelope",
+                        message: "Refresh to check synced inbox mail.")
+                        .ternTransition(.fade)
+                } else if messages.isEmpty {
+                    TodayCompactState(title: emptyTitle, symbol: dashboard.unreadError == nil ? "envelope" : "exclamationmark.circle",
+                        message: query.isEmpty ? "Mail that has not synced is not included." : "Try another search.")
+                        .ternTransition(.fade)
+                } else {
+                    VStack(spacing: 0) {
+                        ForEach(messages) { message in
+                            Button { dashboard.openUnread(message) } label: { TodayUnreadRow(message: message) }
+                                .buttonStyle(.plain).ternHover()
+                                .accessibilityLabel("Open unread email: \(message.subject.isEmpty ? "No subject" : message.subject), from \(message.sender)")
+                                .accessibilityValue("\(message.accountTitle), \(message.date.formatted(date: .complete, time: .shortened))")
+                                .accessibilityIdentifier("today-unread-\(message.messageID)")
+                            if message.id != messages.last?.id { Divider() }
+                        }
                     }
+                    .ternTransition(.fade)
                 }
             }
+            .ternAnimation(value: TodayContentKey(
+                states: [isFirstLoad, dashboard.context.accountIDs.isEmpty, dashboard.hasLoadedUnread],
+                ids: messages.map(\.id)))
             footer
         }
         .accessibilityIdentifier("today-unread")
@@ -53,7 +68,6 @@ struct TodayUnreadPanel: View {
             if let error = dashboard.unreadError {
                 TodayInlineWarning(error, retry: { Task { await dashboard.refreshUnread() } })
             }
-            if dashboard.unreadLoading && !messages.isEmpty { TodayLoadingStatus("Updating unread emails…") }
             TodayCoverageNote(summary: "Synced inbox mail only.", details: dashboard.unreadCoverage, label: "Unread mail data")
         }
     }

@@ -33,7 +33,11 @@ import TernAI
             try await Task.sleep(for: .milliseconds(1))
         }
         try #require(fixture.model.messages.last?.text.isEmpty == false)
-        await Task.yield()
+        // The tail has to reach the model before the stop, or there is nothing pending to keep.
+        while fixture.model.activeTextStream?.utf8Count != "First tail".utf8.count, ContinuousClock.now < deadline {
+            await Task.yield()
+        }
+        try #require(fixture.model.activeTextStream?.utf8Count == "First tail".utf8.count)
 
         // Starts at once, so it holds the turn before stopping clears the model's reference.
         let stoppedTurn = Task.immediate { await fixture.model.waitForCurrentTurn() }

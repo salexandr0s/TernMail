@@ -49,6 +49,11 @@ extension MailboxModel {
                     return
                 }
                 try await store.setImageSenderAllowed(allowed, address: address, accountID: accountID)
+                if let senders = account(id: accountID)?.imageSenders {
+                    // Read the saved list first when it hasn't been, so the change lands on top of it.
+                    await senders.load(from: store)
+                    senders.record(allowed, address: address)
+                }
                 NotificationCenter.default.post(name: ReadingPreferences.imagePermissionChanged, object: nil,
                     userInfo: ["account": accountID, "sender": address.lowercased(), "allowed": allowed])
             } catch { notice = .init(message: "This sender's image preference could not be saved.", isError: true) }

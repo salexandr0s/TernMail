@@ -177,6 +177,54 @@ import TernAI
         #expect(store.disabledAccountIDs == ["a"])
     }
 
+    @Test func preloadedArchiveAnswersLoadsUntilAWriteAndHonorsLaterOptOuts() async throws {
+        let directory = FileManager.default.temporaryDirectory.appending(path: "TernStyleTests-" + UUID().uuidString)
+        let domain = "TernStyleTests." + UUID().uuidString
+        let preferences = try #require(UserDefaults(suiteName: domain))
+        defer { try? FileManager.default.removeItem(at: directory); preferences.removePersistentDomain(forName: domain) }
+        let file = directory.appending(path: "styles.json")
+        let store = FileAssistantWritingStyleStore(url: file, preferences: preferences)
+        try await store.save(.init(profiles: [try stored("a"), try stored("b")])).value
+
+        store.file.preload()
+        #expect(try store.load().profiles.count == 2)
+        // With the file unreadable, only the preloaded archive can answer the next load.
+        try Data("invalid profile archive".utf8).write(to: file)
+        try store.setDisabledAccountIDs(["a"])
+        let preloaded = try store.load()
+        #expect(preloaded.profiles.map(\.accountID) == ["a", "b"])
+        #expect(preloaded.disabledAccountIDs == ["a"])
+
+        try await store.save(.init(profiles: [try stored("b")])).value
+        #expect(try store.load().profiles.map(\.accountID) == ["b"])
+    }
+
+    @Test func optOutSavedBeforeAQuitErasesTheLeftoverProfileAtTheNextLaunch() async throws {
+        let directory = FileManager.default.temporaryDirectory.appending(path: "TernStyleTests-" + UUID().uuidString)
+        let domain = "TernStyleTests." + UUID().uuidString
+        let preferences = try #require(UserDefaults(suiteName: domain))
+        defer { try? FileManager.default.removeItem(at: directory); preferences.removePersistentDomain(forName: domain) }
+        let file = directory.appending(path: "styles.json")
+        let store = FileAssistantWritingStyleStore(url: file, preferences: preferences)
+        try await store.save(.init(profiles: [try stored("a"), try stored("b")])).value
+        // What a quit between the opt-out and the file rewrite leaves: the opt-out is
+        // saved and the profile is still in the file.
+        try store.setDisabledAccountIDs(["a"])
+
+        let relaunched = FileAssistantWritingStyleStore(url: file, preferences: preferences)
+        let model = makeModel(reader: StyleReader(), analyzer: StyleAnalyzerProbe(), store: relaunched)
+        model.refresh(accounts: [account("a"), account("b")], accountListReady: true, connectionRevision: 1, modelID: nil)
+        let round = model.round(accountIDs: ["a", "b"], requestID: UUID())
+        #expect(round.hints["a"]?.status == "off")
+        #expect(round.hints["a"]?.profile == nil)
+        #expect(round.hints["b"]?.profile != nil)
+        // `load` waits for the queued rewrite before the file is read directly.
+        _ = try relaunched.load()
+        let saved = try JSONDecoder().decode(AssistantWritingStyleArchive.self, from: Data(contentsOf: file))
+        #expect(saved.profiles.map(\.accountID) == ["b"])
+        #expect(saved.disabledAccountIDs == ["a"])
+    }
+
     @Test func draftToolRequiresCurrentRoundStyleAndRechecksBeforeQueueing() async throws {
         let mailbox = MailboxModel(
             account: AccountRecord(id: "first", email: "audit@example.invalid", displayName: nil, grantedScopes: [], addedAt: .now),
@@ -255,6 +303,12 @@ import TernAI
         }, analyze: { samples, model, date in
             try await analyzer.analyze(samples, model: model, date: date)
         }, draftWaitLimit: waitLimit)
+    }
+
+    private func stored(_ id: String) throws -> AssistantStoredWritingStyle {
+        .init(accountID: id, email: "\(id)@example.invalid", revision: UUID(),
+              profile: try WritingStyleProfile(sampleCount: 5, profiledAt: .now,
+                  traits: .init(formality: .informal, detail: .brief)), hasLimitedCoverage: false)
     }
 
     private func account(_ id: String, enabled: Bool = true, instance: String? = nil) -> AssistantWritingStyleAccount {

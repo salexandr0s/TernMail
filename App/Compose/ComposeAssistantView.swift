@@ -19,7 +19,29 @@ struct ComposeAssistantView: View {
 
     private enum Input: Hashable { case bar, conversation }
 
+    /// The provider's state for one pass over the bar or the popover. Reading
+    /// the availability asks the assistant about the draft's account, so a
+    /// pass reads it once and hands it to everything it draws.
+    private struct Setup {
+        let availabilityMessage: String?
+        /// Shown while the provider or its models load.
+        let loadingCaption: String?
+    }
+
+    private var setup: Setup {
+        let availabilityMessage = model.availabilityMessage
+        var loadingCaption: String?
+        if assistant.isRestoringConnection {
+            loadingCaption = "Loading \(assistant.providerDisplayName)…"
+        } else if assistant.isLoadingModels, availabilityMessage == AssistantError.noModel.errorDescription {
+            loadingCaption = "Loading models…"
+        }
+        return Setup(availabilityMessage: availabilityMessage, loadingCaption: loadingCaption)
+    }
+
     var body: some View {
+        let setup = self.setup
+        let title = conversationTitle(setup)
         VStack(spacing: Tokens.Space.s2) {
             HStack(spacing: Tokens.Space.s2) {
                 Label {
@@ -28,10 +50,10 @@ struct ComposeAssistantView: View {
                     Image(systemName: "sparkles").foregroundStyle(Color.accentColor)
                 }
                 .font(.callout.weight(.semibold)).fixedSize()
-                Text(barHasFileDrop ? "Use as AI context" : compactContext)
+                Text(barHasFileDrop ? "Use as AI context" : compactContext(setup))
                     .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                     .help(model.contextDescription)
-                    .accessibilityLabel(loadingCaption ?? "Context: \(model.contextDescription)")
+                    .accessibilityLabel(setup.loadingCaption ?? "Context: \(model.contextDescription)")
                     .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
                     .layoutPriority(-1)
                 Button {
@@ -39,8 +61,8 @@ struct ComposeAssistantView: View {
                 } label: {
                     ViewThatFits(in: .horizontal) {
                         if model.proposal != nil || model.errorMessage != nil || model.hasContextFileErrors
-                            || (model.availabilityMessage != nil && loadingCaption == nil) {
-                            Label(conversationTitle, systemImage: conversationSymbol).fixedSize()
+                            || (setup.availabilityMessage != nil && setup.loadingCaption == nil) {
+                            Label(title, systemImage: conversationSymbol).fixedSize()
                         }
                         Image(systemName: conversationSymbol)
                             .frame(width: Tokens.Space.s6, height: Tokens.Space.s6)
@@ -48,18 +70,19 @@ struct ComposeAssistantView: View {
                 }
                 .buttonStyle(.borderless).controlSize(.small)
                 .foregroundStyle(model.proposal != nil ? Color.accentColor : Color.secondary)
-                .help(conversationTitle)
-                .accessibilityLabel(conversationTitle)
-                .popover(isPresented: $showsConversation, arrowEdge: .top) { conversation }
+                .help(title)
+                .accessibilityLabel(title)
+                // The popover is drawn in its own pass, so it reads the setup itself.
+                .popover(isPresented: $showsConversation, arrowEdge: .top) { conversation(self.setup) }
                 iconButton("Assistant Settings", symbol: "slider.horizontal.3") { showsSettings = true }
                 iconButton("Close compose assistant", symbol: "xmark", action: onClose)
             }
             contextFiles
             HStack(alignment: .bottom, spacing: Tokens.Space.s2) {
                 contextFileButton
-                requestField(.bar)
+                requestField(.bar, setup)
                     .frame(minWidth: 0, maxWidth: .infinity)
-                requestButton
+                requestButton(setup)
             }
         }
         .padding(Tokens.Space.s3)
@@ -86,7 +109,7 @@ struct ComposeAssistantView: View {
             Task { await assistant.refreshConnection(); model.refreshAccess() }
         }
         .onChange(of: model.isRunning) { wasRunning, isRunning in
-            if wasRunning, !isRunning, !model.messages.isEmpty { showsConversation = true }
+            if wasRunning, !isRunning, model.hasMessages { showsConversation = true }
         }
         .onChange(of: model.proposal?.id) { _, proposal in
             if proposal != nil { showsConversation = true }
@@ -107,32 +130,24 @@ struct ComposeAssistantView: View {
         }
     }
 
-    private var conversationTitle: String {
+    private func conversationTitle(_ setup: Setup) -> String {
         if model.hasContextFileErrors { return "Review Files" }
-        if loadingCaption != nil { return "Conversation" }
-        if model.availabilityMessage != nil { return "Set Up" }
+        if setup.loadingCaption != nil { return "Conversation" }
+        if setup.availabilityMessage != nil { return "Set Up" }
         if model.errorMessage != nil { return "Review Error" }
         if model.proposal != nil { return "Review Draft" }
         return "Conversation"
     }
 
-    private var compactContext: String {
+    private func compactContext(_ setup: Setup) -> String {
         if model.isRunning { return model.statusText ?? "Thinking…" }
         if model.isLoadingContextFiles { return "Reading AI context…" }
         if model.hasContextFileErrors { return "File needs attention" }
-        if let loadingCaption { return loadingCaption }
-        if model.availabilityMessage != nil { return "Setup needed" }
+        if let loadingCaption = setup.loadingCaption { return loadingCaption }
+        if setup.availabilityMessage != nil { return "Setup needed" }
         if model.errorMessage != nil { return "Couldn't finish" }
         if let status = model.statusText { return status }
         return assistant.hasCalendarAccess ? "Draft · Mail · Calendar" : "Draft · Mail"
-    }
-
-    private var loadingCaption: String? {
-        if assistant.isRestoringConnection { return "Loading \(assistant.providerDisplayName)…" }
-        if assistant.isLoadingModels, model.availabilityMessage == AssistantError.noModel.errorDescription {
-            return "Loading models…"
-        }
-        return nil
     }
 
     private var conversationSymbol: String {
@@ -141,15 +156,15 @@ struct ComposeAssistantView: View {
         return "bubble.left"
     }
 
-    private func requestField(_ location: Input) -> some View {
+    private func requestField(_ location: Input, _ setup: Setup) -> some View {
         ComposePromptField(text: $model.prompt, isFocused: Binding(
             get: { focusedInput == location },
             set: { focused in
                 if focused { focusedInput = location }
                 else if focusedInput == location { focusedInput = nil }
             }), isFileTargeted: location == .bar ? $barInputDropTargeted : $conversationInputDropTargeted,
-            placeholder: model.messages.isEmpty ? "Write a reply, or suggest a time to meet…" : "Ask for a change…",
-            isEditable: model.availabilityMessage == nil, canAddFiles: model.canAddContextFiles,
+            placeholder: model.hasMessages ? "Ask for a change…" : "Write a reply, or suggest a time to meet…",
+            isEditable: setup.availabilityMessage == nil, canAddFiles: model.canAddContextFiles,
             onDrop: acceptContextFiles, onRejectedDrop: model.rejectContextFileDrop,
             onSubmit: submit, onEscape: {
                 if showsConversation { showsConversation = false }
@@ -160,7 +175,7 @@ struct ComposeAssistantView: View {
             })
     }
 
-    @ViewBuilder private var requestButton: some View {
+    @ViewBuilder private func requestButton(_ setup: Setup) -> some View {
         if model.isRunning {
             Button { model.stop() } label: {
                 Image(systemName: "stop.fill").frame(width: Tokens.Space.s6, height: Tokens.Space.s6)
@@ -171,11 +186,11 @@ struct ComposeAssistantView: View {
             ProgressView().controlSize(.small)
                 .frame(width: Tokens.Space.s6, height: Tokens.Space.s6)
                 .accessibilityLabel("Reading AI context files")
-        } else if let loadingCaption {
+        } else if let loadingCaption = setup.loadingCaption {
             ProgressView().controlSize(.small)
                 .frame(width: Tokens.Space.s6, height: Tokens.Space.s6)
                 .accessibilityLabel(loadingCaption)
-        } else if model.availabilityMessage != nil {
+        } else if setup.availabilityMessage != nil {
             Button("Set Up") { showsConversation = false; showsSettings = true }
                 .controlSize(.small)
                 .accessibilityLabel("Set up compose assistant")
@@ -185,12 +200,13 @@ struct ComposeAssistantView: View {
                     .frame(width: Tokens.Space.s6, height: Tokens.Space.s6)
             }
             .buttonStyle(.borderedProminent).buttonBorderShape(.circle)
-            .disabled(!model.canAsk || model.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            .disabled(!model.canAsk(availabilityMessage: setup.availabilityMessage)
+                      || model.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             .help("Ask assistant (Return)").accessibilityLabel("Ask assistant")
         }
     }
 
-    private var conversation: some View {
+    private func conversation(_ setup: Setup) -> some View {
         VStack(spacing: 0) {
             HStack(spacing: Tokens.Space.s2) {
                 VStack(alignment: .leading, spacing: Tokens.Space.s0_5) {
@@ -214,47 +230,10 @@ struct ComposeAssistantView: View {
             }
             .padding(Tokens.Space.s3)
             Divider()
-            ScrollViewReader { proxy in
-                ScrollView {
-                    VStack(alignment: .leading, spacing: Tokens.Space.s4) {
-                        if let loadingCaption {
-                            HStack(spacing: Tokens.Space.s2) {
-                                ProgressView().controlSize(.small)
-                                Text(loadingCaption).font(.callout)
-                            }
-                        } else if let message = model.availabilityMessage {
-                            Text(message).font(.callout).textSelection(.enabled)
-                            Button("Assistant Settings…") { showsConversation = false; showsSettings = true }
-                        } else if model.messages.isEmpty {
-                            starters
-                        }
-                        contextFileErrors
-                        ForEach(model.messages) { message in
-                            messageRow(message)
-                        }
-                        if !model.isRunning, let status = model.statusText {
-                            Text(status).font(.callout).foregroundStyle(.secondary)
-                        }
-                        if let error = model.errorMessage {
-                            Label(error, systemImage: "exclamationmark.circle")
-                                .font(.callout).foregroundStyle(Tokens.Status.error)
-                                .textSelection(.enabled)
-                            Button("Try Again") { model.retry() }.disabled(!model.canAsk)
-                        }
-                        if let proposal = model.proposal {
-                            draftPreview(proposal)
-                        }
-                        Color.clear.frame(height: Tokens.Space.s1).id("compose-assistant-end")
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(Tokens.Space.s4)
-                }
-                .frame(height: Tokens.Popover.maxListHeight)
-                .onChange(of: model.messages.count) { proxy.scrollTo("compose-assistant-end", anchor: .bottom) }
-                .onChange(of: model.proposal?.id) { scrollToResult(proxy) }
-                .onChange(of: model.hasContextFileErrors) { scrollToResult(proxy) }
-                .onAppear { scrollToResult(proxy) }
-            }
+            ComposeAssistantConversationView(
+                model: model, loadingCaption: setup.loadingCaption, availabilityMessage: setup.availabilityMessage,
+                onOpenSettings: { showsConversation = false; showsSettings = true },
+                onUseStarter: { model.prompt = $0; focusedInput = .conversation })
             if model.proposal != nil || model.canUndo {
                 VStack(spacing: 0) {
                     Divider()
@@ -278,8 +257,8 @@ struct ComposeAssistantView: View {
                 contextFiles
                 HStack(alignment: .bottom, spacing: Tokens.Space.s2) {
                     contextFileButton
-                    requestField(.conversation)
-                    requestButton
+                    requestField(.conversation, setup)
+                    requestButton(setup)
                 }
             }
             .padding(Tokens.Space.s3)
@@ -358,139 +337,10 @@ struct ComposeAssistantView: View {
             .allowsHitTesting(false)
     }
 
-    @ViewBuilder private var contextFileErrors: some View {
-        if model.hasContextFileErrors {
-            VStack(alignment: .leading, spacing: Tokens.Space.s3) {
-                ForEach(model.contextAttachments) { file in
-                    if let error = file.errorMessage {
-                        VStack(alignment: .leading, spacing: Tokens.Space.s2) {
-                            Label(file.filename, systemImage: "exclamationmark.circle")
-                                .font(.callout.weight(.medium))
-                            Text(error).font(.callout).textSelection(.enabled)
-                                .fixedSize(horizontal: false, vertical: true)
-                            HStack(spacing: Tokens.Space.s2) {
-                                Button("Retry") { model.retryContextFile(file.id) }.disabled(!model.canAddContextFiles)
-                                Button("Remove") { model.removeContextFile(file.id) }
-                            }
-                            .controlSize(.small)
-                        }
-                    }
-                }
-            }
-            .id("compose-context-errors")
-        }
-    }
-
     private func acceptContextFiles(_ files: [ComposeDroppedFile]) {
         barDropTargeted = false; conversationDropTargeted = false
         barInputDropTargeted = false; conversationInputDropTargeted = false
         model.addContextFiles(files)
-    }
-
-    private var starters: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s3) {
-            Text("Start with your draft").font(.headline)
-            Text("Use this conversation and the mail and calendars you've allowed.")
-                .font(.callout).foregroundStyle(.secondary)
-            VStack(spacing: Tokens.Space.s2) {
-                starter("Draft a reply", symbol: "arrowshape.turn.up.left",
-                        prompt: "Draft a reply based on this conversation.")
-                starter("Make it shorter", symbol: "text.alignleft",
-                        prompt: "Make my current draft shorter while keeping the important details.")
-                starter("Suggest a time", symbol: "calendar",
-                        prompt: "Suggest a time to meet next week. Check my calendar first.")
-            }
-        }
-    }
-
-    private func starter(_ title: String, symbol: String, prompt: String) -> some View {
-        Button {
-            model.prompt = prompt
-            focusedInput = .conversation
-        } label: {
-            HStack(spacing: Tokens.Space.s2) {
-                Label(title, systemImage: symbol)
-                Spacer(minLength: 0)
-                Image(systemName: "arrow.down.left").font(.caption).foregroundStyle(.secondary)
-            }
-            .font(.callout).padding(.horizontal, Tokens.Space.s3).padding(.vertical, Tokens.Space.s2)
-            .background(Tokens.Surface.primary, in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
-            .ternOutline(radius: Tokens.Radius.md)
-        }
-        .buttonStyle(.borderless).foregroundStyle(.primary)
-        .help("Add this request to the assistant input")
-    }
-
-    @ViewBuilder private func messageRow(_ message: AssistantMessage) -> some View {
-        if message.isUser {
-            VStack(alignment: .trailing, spacing: Tokens.Space.s1) {
-                Text("You").font(.caption).foregroundStyle(.secondary)
-                Text(message.text).font(.callout).textSelection(.enabled)
-                    .padding(Tokens.Space.s3)
-                    .background(Tokens.Assistant.userBubble, in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
-            }
-            .frame(maxWidth: .infinity, alignment: .trailing)
-            .padding(.leading, Tokens.Space.s6)
-        } else {
-            VStack(alignment: .leading, spacing: Tokens.Space.s2) {
-                Text("Assistant").font(.caption.weight(.medium)).foregroundStyle(.secondary)
-                if !message.text.isEmpty { AssistantMarkdownView(markdown: message.markdown) }
-                if message.state == .streaming {
-                    HStack(spacing: Tokens.Space.s2) {
-                        ProgressView().controlSize(.small)
-                        Text(model.statusText ?? "Thinking…").font(.caption).foregroundStyle(.secondary)
-                    }
-                } else if message.state == .cancelled {
-                    Text("Response stopped").font(.caption).foregroundStyle(.secondary)
-                }
-                if !message.sources.isEmpty {
-                    DisclosureGroup("Sources") {
-                        ForEach(message.sources) { source in
-                            Label(source.title.isEmpty ? "No Subject" : source.title, systemImage: source.systemImage)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                    }
-                    .font(.caption).foregroundStyle(.secondary)
-                }
-            }
-        }
-    }
-
-    private func draftPreview(_ proposal: ComposeAssistantProposal) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Label("Draft preview", systemImage: "doc.text")
-                .font(.callout.weight(.semibold))
-                .padding(.horizontal, Tokens.Space.s4).padding(.vertical, Tokens.Space.s3)
-            Divider()
-            VStack(alignment: .leading, spacing: Tokens.Space.s3) {
-                VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-                    Text("Subject").font(.caption).foregroundStyle(.secondary)
-                    Text(proposal.subject).font(.callout.weight(.medium)).textSelection(.enabled)
-                }
-                Divider()
-                Text(proposal.body).font(.body).lineSpacing(Tokens.Space.s0_5).textSelection(.enabled)
-                    .fixedSize(horizontal: false, vertical: true)
-                if model.preservesInlineImages {
-                    Text("Inline images will stay below the rewritten text.")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-                if let message = model.proposalStatusMessage {
-                    Label(message, systemImage: "info.circle").font(.callout).foregroundStyle(.secondary)
-                }
-            }
-            .padding(Tokens.Space.s4)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Tokens.Surface.primary, in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
-        .ternOutline(radius: Tokens.Radius.md)
-        .accessibilityIdentifier("compose-assistant-preview")
-        .id("compose-assistant-proposal")
-    }
-
-    private func scrollToResult(_ proxy: ScrollViewProxy) {
-        if model.hasContextFileErrors { proxy.scrollTo("compose-context-errors", anchor: .top) }
-        else if model.proposal != nil { proxy.scrollTo("compose-assistant-proposal", anchor: .top) }
-        else { proxy.scrollTo("compose-assistant-end", anchor: .bottom) }
     }
 
     private var hasMarkedText: Bool {

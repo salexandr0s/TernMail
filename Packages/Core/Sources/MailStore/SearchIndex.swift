@@ -102,7 +102,7 @@ extension MailCache {
         now: Date,
         limit: Int
     ) -> AsyncThrowingStream<[ThreadRecord], any Error> {
-        observe { db in
+        observe(region: ObservedTables.searchThreads) { db in
             try CacheTransaction(db: db).searchThreads(
                 query, including: included, accountID: accountID, timeZone: timeZone, now: now, limit: limit
             )

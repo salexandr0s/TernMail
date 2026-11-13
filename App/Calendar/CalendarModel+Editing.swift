@@ -24,32 +24,48 @@ extension CalendarModel {
             editor = CalendarEditorDraft(event: proposedEvent ?? display.event, calendarKey: display.calendarKey, source: display)
             return
         }
+        // The editor opens on the cached occurrence at once. Reading the series
+        // can reach the network, so its master follows; the editor keeps the
+        // series and following scopes disabled until then.
+        var opened = CalendarEditorDraft(event: proposedEvent ?? display.event, calendarKey: display.calendarKey, source: display)
+        opened.isLoadingSeries = true
+        editor = opened
+        let draftID = opened.id
         Task {
             do {
                 guard let engine = engines[display.accountID] else { throw CalendarModelError.unavailable }
                 let id = display.event.recurringEventId ?? display.event.id
                 let master = try await engine.readEvent(calendarID: display.calendarID, eventID: id, refresh: false)
-                guard !Task.isCancelled, revision == editRevision, isAuthorized() else { return }
+                guard !Task.isCancelled, var draft = seriesDraft(draftID, revision: revision) else { return }
+                // Access that ended meanwhile leaves the occurrence without its series.
+                guard isAuthorized() else { editor = draft; return }
                 var sourceEvent = display.event
                 sourceEvent.recurrence = master.recurrence
                 let source = display.replacingEvent(sourceEvent)
-                var proposed = proposedEvent ?? source.event
-                proposed.recurrence = source.event.recurrence
-                var draft = CalendarEditorDraft(event: proposed, calendarKey: source.calendarKey, source: source)
+                draft.source = source
+                draft.event.recurrence = master.recurrence
                 draft.seriesMaster = master
                 draft.additionalNotificationRecipients = (master.attendees ?? []).map(\.email)
                 editor = draft
-                await loadSeriesReview(draftID: draft.id, source: source, masterID: id, isAuthorized: isAuthorized)
+                await loadSeriesReview(draftID: draftID, source: source, masterID: id, isAuthorized: isAuthorized)
             } catch {
-                guard !Task.isCancelled, revision == editRevision, isAuthorized() else { return }
+                guard !Task.isCancelled, var draft = seriesDraft(draftID, revision: revision) else { return }
+                guard isAuthorized() else { editor = draft; return }
                 // A cached occurrence can still be changed offline. Series-wide
                 // options require the master and its reviewed version.
-                var draft = CalendarEditorDraft(event: proposedEvent ?? display.event, calendarKey: display.calendarKey, source: display)
                 if display.event.recurrence?.isEmpty == false { draft.seriesMaster = display.event }
                 editor = draft
                 statusText = "Showing the cached occurrence. Series details could not refresh."
             }
         }
+    }
+
+    /// The editor a series read was started for, with its loading state ended.
+    /// Nil once that editor closed or another event took its place.
+    private func seriesDraft(_ id: UUID, revision: Int) -> CalendarEditorDraft? {
+        guard revision == editRevision, var draft = editor, draft.id == id else { return nil }
+        draft.isLoadingSeries = false
+        return draft
     }
 
     func loadSeriesReview(draftID: UUID, source: CalendarDisplayEvent, masterID: String,

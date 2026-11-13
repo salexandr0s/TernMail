@@ -14,12 +14,16 @@ struct ComposeWindow: View {
     @State private var isEdited = false
     /// Asks the draft's model before the window closes.
     @State private var closer = ComposeWindowCloser()
+    /// Keeps what is typed before the draft's fields can take it. It outlives
+    /// a move to another account, so the copy gets what was typed meanwhile.
+    @State private var typeAhead = ComposeTypeAhead()
 
     var body: some View {
         Group {
             if let id = localDraftID, let mailbox = app.mailbox {
                 ComposeView(localDraftID: id, mailbox: mailbox, isEdited: $isEdited,
-                            handoff: handoff?.localDraftID == id ? handoff : nil, closer: closer) {
+                            handoff: handoff?.localDraftID == id ? handoff : nil, closer: closer,
+                            typeAhead: typeAhead) {
                     handoff = $0
                     localDraftID = $0.localDraftID
                 }
@@ -28,10 +32,12 @@ struct ComposeWindow: View {
                     .id(ObjectIdentifier(mailbox))
             } else {
                 ProgressView("Opening message…")
+                    .ternDelayedLoading()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .frame(minWidth: ComposeView.minWidth, minHeight: ComposeView.minHeight)
+        .background { ComposeTypeAheadAnchor(typeAhead: typeAhead) }
         .background { WindowEditedMarker(isEdited: isEdited) }
         .background { WindowCloseGuard { [closer] _ in closer.shouldClose() } }
         .background { ComposeWindowCascade() }

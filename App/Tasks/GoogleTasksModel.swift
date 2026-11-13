@@ -3,8 +3,9 @@ import GmailAPI
 import MailStore
 import Observation
 
-/// Tasks are confirmed by Google before the local presentation changes. Read
-/// generations keep delayed account/list responses out of the current sidebar.
+/// `tasks` holds what Google last confirmed. Completing or reopening a task draws its row in the
+/// new state at once, marked as still being saved; every other change draws after Google accepts
+/// it. Read generations keep delayed account/list responses out of the current sidebar.
 @MainActor @Observable
 final class GoogleTasksModel {
     private(set) var accounts: [AccountRecord] = []
@@ -14,7 +15,10 @@ final class GoogleTasksModel {
     var lists: [GoogleTaskList] = []
     var tasks: [GoogleTask] = [] {
         didSet {
-            guard tasks != oldValue else { return }
+            // Held rows stand in for a list only until its own rows arrive.
+            if heldRows != nil { heldRows = nil }
+            // A pending completion belongs to one list, so equal rows for another list still redraw.
+            guard tasks != oldValue || !pendingCompletions.isEmpty else { return }
             prepareTaskPresentation()
         }
     }
@@ -31,6 +35,28 @@ final class GoogleTasksModel {
     var lastSyncedAt: Date?
     var pendingCreation: TaskCreationRequest?
     var creationStates: [String: TaskCreationState] = [:]
+    /// The rows that were on screen when a list or account with nothing cached was chosen. The
+    /// sidebar keeps drawing them, dimmed and inert, until the new list's first read lands. They
+    /// belong to another list, so nothing may act on them.
+    private(set) var heldRows: GoogleTaskHeldRows?
+
+    /// A list's rows as they were when it was last on screen. Choosing the list again draws them
+    /// at once and the read that follows replaces them. Only lists that are not selected have an
+    /// entry, and a write to a list drops its entry.
+    private struct CachedTasks {
+        let tasks: [GoogleTask]
+        let syncedAt: Date
+    }
+    @ObservationIgnored private var cachedTasks: [GoogleTaskLocation: CachedTasks] = [:]
+    @ObservationIgnored private var cachedLists: [String: [GoogleTaskList]] = [:]
+
+    /// Completions and reopenings sent to Google and not answered yet, by list and task ID. The
+    /// value is the state the user asked for. Rows draw in that state while `tasks` keeps what
+    /// Google last confirmed, so a read that lands meanwhile can't flip a row back, and a failed
+    /// write restores its row by leaving here.
+    @ObservationIgnored private var pendingCompletions: [GoogleTaskLocation: [String: Bool]] = [:]
+    /// The read `preload()` started, kept so the panel's first refresh can wait for it.
+    @ObservationIgnored private var preloading: Task<Void, Never>?
 
     @ObservationIgnored let defaults: UserDefaults
     @ObservationIgnored let loadAccounts: @MainActor () async throws -> [AccountRecord]
@@ -83,19 +109,56 @@ final class GoogleTasksModel {
         task.parent.flatMap { taskTitlesByID[$0] }
     }
 
-    /// Keep row inputs in server order and prepare them only when task values change.
+    /// Keep row inputs in server order and prepare them only when task values change. A row with
+    /// a pending completion goes in the section the user moved it to.
     private func prepareTaskPresentation() {
+        let pending = selectedLocation.flatMap { pendingCompletions[$0] } ?? [:]
         var open: [GoogleTask] = []
         var completed: [GoogleTask] = []
         var titles: [String: String] = [:]
-        for task in tasks {
+        for var task in tasks {
             if titles[task.id] == nil { titles[task.id] = task.title }
             guard task.deleted != true else { continue }
+            if let isCompleted = pending[task.id], isCompleted != task.isCompleted {
+                task.status = isCompleted ? "completed" : "needsAction"
+            }
             if task.isCompleted { completed.append(task) } else { open.append(task) }
         }
         if openTasks != open { openTasks = open }
         if completedTasks != completed { completedTasks = completed }
         if taskTitlesByID != titles { taskTitlesByID = titles }
+    }
+
+    /// Draws a completion or reopening before Google answers. The caller keeps the row busy for
+    /// as long as it waits, which is what marks it as not saved yet.
+    func showPendingCompletion(_ isCompleted: Bool, taskID: String, at location: GoogleTaskLocation) {
+        pendingCompletions[location, default: [:]][taskID] = isCompleted
+        if location == selectedLocation { prepareTaskPresentation() }
+    }
+
+    /// Google answered. After a success `tasks` already has the new state. After a failure the
+    /// row goes back to what Google last confirmed.
+    func endPendingCompletion(taskID: String, at location: GoogleTaskLocation) {
+        guard pendingCompletions[location]?.removeValue(forKey: taskID) != nil else { return }
+        if pendingCompletions[location]?.isEmpty == true { pendingCompletions[location] = nil }
+        if location == selectedLocation { prepareTaskPresentation() }
+    }
+
+    /// Starts the first read before the panel is on screen, so opening it finds rows where it
+    /// would have shown a loading state. It does nothing once a read has started or landed. From
+    /// then on the panel's own refreshes keep the list current.
+    func preload() {
+        guard preloading == nil, lastSyncedAt == nil, !isLoading, !stopped else { return }
+        preloading = Task { [weak self] in
+            await self?.refresh()
+            self?.preloading = nil
+        }
+    }
+
+    /// The panel's refresh as it comes on screen. A preload still in flight is that refresh:
+    /// starting another would retire its requests and send them again.
+    func refreshOnAppear() async {
+        if let preloading { await preloading.value } else { await refresh() }
     }
 
     func creationState(for request: TaskCreationRequest) -> TaskCreationState {
@@ -107,22 +170,26 @@ final class GoogleTasksModel {
 
     func selectAccount(_ id: String) {
         guard accounts.contains(where: { $0.id == id }), selectedAccountID != id else { return }
+        let shown = leaveSelectedList()
         readGeneration += 1
         isLoading = false
         selectedAccountID = id
         selectedListID = defaults.string(forKey: listKey(id))
         defaults.set(id, forKey: Self.accountKey)
-        lists = []; tasks = []; issue = nil; errorMessage = nil; notice = nil; lastSyncedAt = nil
+        lists = cachedLists[id] ?? []; issue = nil; errorMessage = nil; notice = nil
+        showSelectedList(holding: shown)
         Task { await refresh() }
     }
 
     func selectList(_ id: String) {
         guard lists.contains(where: { $0.id == id }), selectedListID != id, let accountID = selectedAccountID else { return }
+        let shown = leaveSelectedList()
         readGeneration += 1
         isLoading = false
         selectedListID = id
         defaults.set(id, forKey: listKey(accountID))
-        tasks = []; errorMessage = nil; notice = nil; lastSyncedAt = nil
+        errorMessage = nil; notice = nil
+        showSelectedList(holding: shown)
         // The picker already has this account's lists. Fetch the chosen list's
         // tasks directly; explicit and periodic refresh still discover lists.
         Task { await refresh(reloadLists: false) }
@@ -186,6 +253,7 @@ final class GoogleTasksModel {
         } catch {
             guard currentRead(generation, lifecycle: revision, accountID: accountID, access: access) else { return }
             issue = GoogleTasksIssue(error)
+            if heldRows != nil { heldRows = nil }
         }
     }
 
@@ -206,6 +274,12 @@ final class GoogleTasksModel {
 
     func invalidateAccount(_ accountID: String) {
         accountVersions[accountID, default: 0] += 1
+        cachedTasks = cachedTasks.filter { $0.key.accountID != accountID }
+        cachedLists[accountID] = nil
+        // The answers to this account's writes are discarded from here on, so nothing would
+        // ever confirm or restore a row left waiting.
+        pendingCompletions = pendingCompletions.filter { $0.key.accountID != accountID }
+        if heldRows != nil { heldRows = nil }
         if selectedAccountID == accountID {
             readGeneration += 1
             lists = []; tasks = []; isLoading = false; lastSyncedAt = nil
@@ -235,13 +309,53 @@ final class GoogleTasksModel {
 
     func showDestination(accountID: String, lists values: [GoogleTaskList], listID: String, tasks valuesTasks: [GoogleTask]) {
         guard selectedAccountID == accountID else { return }
+        leaveSelectedList()
         readGeneration += 1
         isLoading = false
         lists = values
         selectedListID = listID
+        forgetCachedTasks(at: GoogleTaskLocation(accountID: accountID, listID: listID))
         defaults.set(listID, forKey: listKey(accountID))
         tasks = valuesTasks
         issue = nil
+    }
+
+    /// Remembers the selected list as it is on screen, and returns its rows for the next list to
+    /// hold. A list still waiting for its own first read passes on the rows it holds.
+    @discardableResult
+    private func leaveSelectedList() -> GoogleTaskHeldRows? {
+        guard let location = selectedLocation, let syncedAt = lastSyncedAt else { return heldRows }
+        cachedTasks[location] = CachedTasks(tasks: tasks, syncedAt: syncedAt)
+        cachedLists[location.accountID] = lists
+        guard !openTasks.isEmpty || !completedTasks.isEmpty else { return nil }
+        return GoogleTaskHeldRows(listTitle: selectedList?.title, open: openTasks, completed: completedTasks,
+            parentTitles: taskTitlesByID)
+    }
+
+    /// Draws what is cached for the selected list. With nothing cached, the rows that were on
+    /// screen stay held until the list's first read lands, so the sidebar doesn't blank.
+    private func showSelectedList(holding shown: GoogleTaskHeldRows?) {
+        if let location = selectedLocation, let cached = cachedTasks.removeValue(forKey: location) {
+            tasks = cached.tasks
+            lastSyncedAt = cached.syncedAt
+        } else {
+            tasks = []
+            lastSyncedAt = nil
+            heldRows = shown
+        }
+    }
+
+    /// Rows cached for a list predate any write to it, so they must not be drawn again.
+    func forgetCachedTasks(at location: GoogleTaskLocation) { cachedTasks[location] = nil }
+
+    /// A list left while a write to it was in flight is cached as it was before the write. This
+    /// gives the cached row Google's answer, so going back to the list doesn't draw the old state.
+    func updateCachedTask(_ task: GoogleTask, at location: GoogleTaskLocation) {
+        guard let cached = cachedTasks[location],
+              let index = cached.tasks.firstIndex(where: { $0.id == task.id }) else { return }
+        var rows = cached.tasks
+        rows[index] = task
+        cachedTasks[location] = CachedTasks(tasks: rows, syncedAt: cached.syncedAt)
     }
 
     func listKey(_ accountID: String) -> String { "googleTasks.selectedList." + accountID }
@@ -305,4 +419,14 @@ final class GoogleTasksModel {
         defaults.set(uncertainReferences, forKey: Self.uncertaintyKey)
         defaults.removeObject(forKey: listKey(accountID))
     }
+}
+
+/// Another list's rows as the sidebar last drew them, with the titles subtasks show for parents.
+struct GoogleTaskHeldRows: Equatable {
+    let listTitle: String?
+    let open: [GoogleTask]
+    let completed: [GoogleTask]
+    let parentTitles: [String: String]
+
+    func parentTitle(for task: GoogleTask) -> String? { task.parent.flatMap { parentTitles[$0] } }
 }

@@ -40,7 +40,6 @@ struct MailAnalyticsWorkspace: View {
     private struct Scope: Hashable {
         let accountIDs: [String]
         let address: String?
-        let period: MailAnalyticsPeriod
         let owners: [ObjectIdentifier]
     }
 
@@ -71,8 +70,9 @@ struct MailAnalyticsWorkspace: View {
             } else {
                 MailAnalyticsDashboard(mailbox: mailbox, owners: owners, route: route,
                     selectedAccountID: accountID.isEmpty ? nil : accountID, period: period)
+                    // The date range is left out, so changing it keeps the dashboard and its scroll position.
                     .id(Scope(accountIDs: owners.map(\.account.id), address: route.address,
-                              period: period, owners: owners.map(ObjectIdentifier.init)))
+                              owners: owners.map(ObjectIdentifier.init)))
             }
         }
         .background(Tokens.Surface.muted)
@@ -171,6 +171,14 @@ private struct MailAnalyticsDashboard: View {
     private struct ObservationIdentity: Hashable {
         let reload: UUID
         let calendarContext: AnalyticsCalendarContext
+        let period: MailAnalyticsPeriod
+    }
+
+    /// The spinner, the error and the dashboard replace one another. Only that swap fades.
+    private enum Phase { case loading, failed, loaded }
+
+    private var phase: Phase {
+        if model.isLoading { .loading } else if model.error != nil { .failed } else { .loaded }
     }
 
     var body: some View {
@@ -180,39 +188,49 @@ private struct MailAnalyticsDashboard: View {
                     if model.isLoading {
                         ProgressView("Loading mail analytics…")
                             .frame(maxWidth: .infinity, minHeight: Tokens.Layout.editorMinHeight)
+                            .ternDelayedLoading()
+                            .ternTransition(.fade)
                     } else if let error = model.error {
                         ContentUnavailableView {
                             Label("Analytics unavailable", systemImage: "chart.bar.xaxis")
                         } description: { Text(error) } actions: {
                             Button("Try again") { reload = UUID() }
                         }
+                        .ternTransition(.fade)
                     } else if let snapshot = model.snapshot {
-                        AnalyticsMetricsView(snapshot: snapshot, period: period)
-                        AnalyticsActivityChart(snapshot: snapshot)
-                        AnalyticsMilestonesView(snapshot: snapshot)
-                        if geometry.size.width >= Tokens.Analytics.twoColumnWidth {
-                            HStack(alignment: .top, spacing: Tokens.Space.s3) {
+                        Group {
+                            // A new date range loads over the previous one, so the numbers
+                            // keep the label of the range they were counted for.
+                            AnalyticsMetricsView(snapshot: snapshot, period: model.loadedPeriod ?? period,
+                                isRefreshing: model.isRefreshing)
+                            AnalyticsActivityChart(snapshot: snapshot)
+                            AnalyticsMilestonesView(snapshot: snapshot)
+                            if geometry.size.width >= Tokens.Analytics.twoColumnWidth {
+                                HStack(alignment: .top, spacing: Tokens.Space.s3) {
+                                    people(snapshot: snapshot)
+                                        .frame(maxWidth: .infinity)
+                                    receipts
+                                        .frame(maxWidth: .infinity)
+                                }
+                            } else {
                                 people(snapshot: snapshot)
-                                    .frame(maxWidth: .infinity)
                                 receipts
-                                    .frame(maxWidth: .infinity)
                             }
-                        } else {
-                            people(snapshot: snapshot)
-                            receipts
+                            AnalyticsHistoryView(snapshot: snapshot, model: model, owners: owners)
+                            Text("Drafts, spam and trash are excluded. Emails in multiple accounts count once per account. Dates use this Mac's time zone.")
+                                .font(.caption).foregroundStyle(.secondary)
+                                .padding(.horizontal, Tokens.Space.s1)
                         }
-                        AnalyticsHistoryView(snapshot: snapshot, model: model, owners: owners)
-                        Text("Drafts, spam and trash are excluded. Emails in multiple accounts count once per account. Dates use this Mac's time zone.")
-                            .font(.caption).foregroundStyle(.secondary)
-                            .padding(.horizontal, Tokens.Space.s1)
+                        .ternTransition(.fade)
                     }
                 }
+                .ternAnimation(value: phase, duration: Tokens.Motion.fast)
                 .padding(Tokens.Space.s4)
                 .frame(maxWidth: Tokens.Analytics.contentWidth, alignment: .leading)
                 .frame(maxWidth: .infinity)
             }
         }
-        .task(id: ObservationIdentity(reload: reload, calendarContext: calendarContext)) {
+        .task(id: ObservationIdentity(reload: reload, calendarContext: calendarContext, period: period)) {
             await model.observe(cache: mailbox.cache,
                 query: .init(accountIDs: owners.map(\.account.id), contactAddress: route.address, period: period))
         }

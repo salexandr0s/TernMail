@@ -29,6 +29,36 @@ import Testing
         await mailbox.stop()
     }
 
+    @Test func accountsAddedOrReplacedBeforeTheNetworkStartKeepTheirEnginesStopped() async throws {
+        let cache = try MailCache.inMemory()
+        let account = AccountRecord(id: "replaced", email: "audit@example.invalid", displayName: nil, grantedScopes: [], addedAt: .now)
+        let added = AccountRecord(id: "added", email: "second@example.invalid", displayName: nil, grantedScopes: [], addedAt: .now)
+        // An engine start clears its account's label aliases, so an alias
+        // that still resolves shows that no engine has started.
+        let temporaryID = LabelRules.temporaryID()
+        try await cache.write { tx in
+            for id in [account.id, added.id] {
+                _ = try tx.recordCreatedLabel(temporaryID: temporaryID, realID: "Label_1", accountID: id)
+            }
+        }
+        func resolved(_ accountID: String) async throws -> String {
+            try await cache.read { try $0.resolvedLabelID(temporaryID, accountID: accountID) }
+        }
+        let mailbox = MailboxModel(account: account, cache: cache, gmail: AuditGmail(), outgoingDirectory: FileManager.default.temporaryDirectory)
+        await mailbox.startLocal()
+        // Opening a mailbox can add an account or resume a paused one after
+        // the saved mail shows and before the engines start.
+        await mailbox.addAccount(added, gmail: AuditGmail(.second))
+        await mailbox.replaceAccountRuntime(record: account, gmail: AuditGmail(), syncEnabled: true)
+        #expect(try await resolved(account.id) == "Label_1")
+        #expect(try await resolved(added.id) == "Label_1")
+
+        await mailbox.startNetwork()
+        #expect(try await resolved(account.id) == temporaryID)
+        #expect(try await resolved(added.id) == temporaryID)
+        await mailbox.stop()
+    }
+
     @Test func commandsUseTheOpenMailboxWithoutAFirstResponder() async throws {
         // The test host's scheme uses --ui-audit, so no real account is opened.
         let app = AppModel()

@@ -16,7 +16,7 @@ The existing Google Cloud project must have the [Google Tasks API enabled](https
 
 ## Sync behavior
 
-Tern reads Google Tasks when the sidebar opens, when Tern becomes active, and every 30 seconds while the sidebar is active and Tern is in front. Refresh checks immediately. Changes made in Tern are sent to Google and shown as saved only after Google confirms them. An open editor keeps its original account and list even if the sidebar selection changes.
+Tern reads Google Tasks when Calendar or the sidebar opens, when Tern becomes active, and every 30 seconds while the sidebar is active and Tern is in front. Refresh checks immediately. Tern sends each change to Google. Completing or reopening a task moves it at once and shows it dimmed until Google accepts the change; if Google doesn't, the task goes back where it was and the sidebar shows an error. Additions, edits and deletions are shown as saved only after Google confirms them. An open editor keeps its original account and list even if the sidebar selection changes.
 
 If Google might have received an Add request but its response was lost, Tern checks the account's lists for that task before sending another request. A reference in the task's Google notes identifies repeated additions from the same email or suggestion. Tern hides that reference in its editor and keeps it when notes change. If the result remains uncertain, the sidebar asks you to check Google Tasks before choosing Add Again.
 

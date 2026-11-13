@@ -18,6 +18,12 @@ struct PerformanceScrollSurfaceMarker: View {
 #if TERN_TEST_SUPPORT || TERN_PERFORMANCE
 import AppKit
 
+/// A marker the scroll audit can ask to look for its scroll view again. A
+/// marker looks when it is laid out, which can be before its list exists.
+@MainActor protocol PerformanceScrollSurfaceRegistrant: AnyObject {
+    func registerScrollSurface()
+}
+
 private struct NativeMarker: NSViewRepresentable {
     let name: String
     let isActive: Bool
@@ -26,7 +32,7 @@ private struct NativeMarker: NSViewRepresentable {
     func updateNSView(_ view: MarkerView, context: Context) { view.configure(name: name, active: isActive) }
     static func dismantleNSView(_ view: MarkerView, coordinator: Void) { view.unregister() }
 
-    final class MarkerView: NSView {
+    final class MarkerView: NSView, PerformanceScrollSurfaceRegistrant {
         private var name = ""
         private var active = false
         private weak var registeredScroll: NSScrollView?
@@ -43,17 +49,19 @@ private struct NativeMarker: NSViewRepresentable {
             DispatchQueue.main.async { [weak self] in self?.register() }
         }
 
+        func registerScrollSurface() { register() }
+
         private func register() {
             if active, registeredScroll?.window === window,
                registeredScroll?.identifier == NSUserInterfaceItemIdentifier("tern-performance-scroll-" + name) { return }
-            guard active, let scroll = enclosingScrollView ?? (name == "mailbox" ? nativeListScroll() : nil) else { return }
+            guard active, let scroll = enclosingScrollView ?? nativeListScroll() else { return }
             scroll.identifier = NSUserInterfaceItemIdentifier("tern-performance-scroll-" + name)
             registeredScroll = scroll
         }
 
         /// SwiftUI List hosts its background beside its native table. Find only
         /// an unambiguous table container in the nearest enclosing native subtree,
-        /// whose viewport occupies the marker's own rectangle. Never pick a
+        /// whose viewport covers the marker's own rectangle. Never pick a
         /// rightmost/largest unrelated scroll view elsewhere in the workspace.
         private func nativeListScroll() -> NSScrollView? {
             guard window != nil, bounds.width > 0, bounds.height > 0 else { return nil }
@@ -68,8 +76,10 @@ private struct NativeMarker: NSViewRepresentable {
                     guard scroll.documentView is NSTableView else { return false }
                     let frame = scroll.convert(scroll.bounds, to: nil)
                     let intersection = frame.intersection(marker)
+                    // The table's scroll view can be larger than the list it
+                    // draws: on macOS 26 it runs under the sidebar and the
+                    // toolbar. It has to cover the marker, not match it.
                     return !intersection.isNull && intersection.width * intersection.height >= marker.width * marker.height * 0.9
-                        && abs(frame.width - marker.width) < 4 && abs(frame.height - marker.height) < 4
                 }
                 if matching.count == 1 { return matching[0] }
                 if matching.count > 1 { return nil }

@@ -110,6 +110,28 @@ private let account = "acct"
         #expect(one.map(\.accountID) == [account])
     }
 
+    /// Spotlight lists the Inbox and then the rest of the mail from this read.
+    @Test func threadsListedUnderSeveralLabelsComeOnceEachWithTheFirstLabelFirst() async throws {
+        let cache = try MailCache.inMemory()
+        try await cache.write { tx in
+            try tx.upsertMessages([
+                update("m1", thread: "older-inbox", labels: [SystemLabel.inbox]),
+                update("m2", thread: "sent", labels: [SystemLabel.sent], minutes: 5),
+                update("m3", thread: "newer-inbox", labels: [SystemLabel.inbox], minutes: 10),
+                update("m4", thread: "newest-sent", labels: [SystemLabel.sent], minutes: 15),
+                update("m5", thread: "trash", labels: [SystemLabel.trash], minutes: 20),
+            ])
+            try tx.rebuildThreads(["older-inbox", "sent", "newer-inbox", "newest-sent", "trash"], accountID: account)
+        }
+        let labels = [SystemLabel.inbox, SystemLabel.allMail]
+        let all = try await cache.threadsListed(accountID: account, underEachOf: labels, limit: 10)
+        #expect(all.map(\.id) == ["newer-inbox", "older-inbox", "newest-sent", "sent"])
+        let capped = try await cache.threadsListed(accountID: account, underEachOf: labels, limit: 3)
+        #expect(capped.map(\.id) == ["newer-inbox", "older-inbox", "newest-sent"])
+        let inboxOnly = try await cache.threadsListed(accountID: account, underEachOf: labels, limit: 1)
+        #expect(inboxOnly.map(\.id) == ["newer-inbox"])
+    }
+
     @Test func cachedAccountIDsDropAnAccountOnceItsDataIsDeleted() async throws {
         let cache = try MailCache.inMemory()
         try await cache.write { tx in
@@ -121,6 +143,22 @@ private let account = "acct"
         #expect(try await cache.read { tx in try tx.cachedAccountIDs() } == [account, "other"])
         try await cache.write { tx in try tx.deleteAccountData(accountID: "other") }
         #expect(try await cache.read { tx in try tx.cachedAccountIDs() } == [account])
+    }
+
+    /// A history pass asks about the messages its page names. The lookup
+    /// runs 400 IDs at a time, so the cached ones sit on both sides of a cut.
+    @Test func cachedMessageIDsAmongALongListFindsEveryCachedOne() async throws {
+        let cache = try MailCache.inMemory()
+        try await cache.write { tx in
+            try tx.upsertMessages([
+                update("m0", thread: "t1", labels: []), update("m399", thread: "t1", labels: []),
+                update("m400", thread: "t2", labels: []), update("m800", thread: "t3", labels: []),
+                update("m5", thread: "t1", labels: [], in: "other"),
+            ])
+        }
+        let asked = (0...800).map { "m\($0)" }
+        #expect(try await cache.read { tx in try tx.cachedMessageIDs(among: asked, accountID: account) } == ["m0", "m399", "m400", "m800"])
+        #expect(try await cache.read { tx in try tx.cachedMessageIDs(among: [String](), accountID: account) }.isEmpty)
     }
 
     @Test func trashedMessagesListTheirThreadOnlyUnderTrash() async throws {

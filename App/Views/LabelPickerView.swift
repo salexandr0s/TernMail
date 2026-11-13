@@ -121,24 +121,43 @@ struct MoveToView: View {
     }
 }
 
+/// A row of the filtered list, with its position for the highlight.
+private struct LabelPickerItem: Identifiable, Equatable {
+    enum Kind: Equatable {
+        case label(LabelChoice)
+        case create(String)
+    }
+
+    let index: Int
+    let kind: Kind
+
+    var id: String {
+        switch kind {
+        case .label(let choice): "label:\(choice.id)"
+        case .create: "create"
+        }
+    }
+
+    /// The labels whose names contain `query`, then Create Label when `query` names none of them.
+    static func matching(_ query: String, in choices: [LabelChoice], canCreate: Bool) -> [LabelPickerItem] {
+        var kinds: [Kind]
+        if query.isEmpty {
+            kinds = choices.map(Kind.label)
+        } else {
+            kinds = choices.filter { $0.name.localizedCaseInsensitiveContains(query) }.map(Kind.label)
+            let exists = choices.contains { $0.name.caseInsensitiveCompare(query) == .orderedSame }
+            if canCreate, !exists { kinds.append(.create(query)) }
+        }
+        return kinds.enumerated().map { LabelPickerItem(index: $0.offset, kind: $0.element) }
+    }
+}
+
 /// A filter field over a list of labels that works like a menu: the arrow
 /// keys move the highlight, Return picks it and the pointer highlights too.
 private struct FilteredLabelList: View {
     enum Mark {
         case none
         case check(LabelSelection.State)
-    }
-
-    private enum Item: Identifiable {
-        case label(LabelChoice)
-        case create(String)
-
-        var id: String {
-            switch self {
-            case .label(let choice): "label:\(choice.id)"
-            case .create: "create"
-            }
-        }
     }
 
     let choices: [LabelChoice]
@@ -148,93 +167,152 @@ private struct FilteredLabelList: View {
     let onCreate: ((String) -> Void)?
 
     @State private var filter = ""
+    /// The rows for the current filter. They are rebuilt when the filter or the labels
+    /// change, so moving the pointer over the list does not filter the labels again.
+    @State private var items: [LabelPickerItem]
     @State private var highlighted: Int?
+    /// The list's height with no filter. The popover keeps it while a filter narrows the rows.
+    @State private var unfilteredHeight: CGFloat?
     @FocusState private var isFilterFocused: Bool
+
+    init(
+        choices: [LabelChoice],
+        mark: @escaping (LabelChoice) -> Mark,
+        onPick: @escaping (LabelChoice) -> Void,
+        onCreate: ((String) -> Void)?
+    ) {
+        self.choices = choices
+        self.mark = mark
+        self.onPick = onPick
+        self.onCreate = onCreate
+        _items = State(initialValue: LabelPickerItem.matching("", in: choices, canCreate: onCreate != nil))
+    }
 
     private var trimmedFilter: String {
         filter.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private var items: [Item] {
-        let query = trimmedFilter
-        guard !query.isEmpty else { return choices.map(Item.label) }
-        var items = choices.filter { $0.name.localizedCaseInsensitiveContains(query) }.map(Item.label)
-        let exists = choices.contains { $0.name.caseInsensitiveCompare(query) == .orderedSame }
-        if onCreate != nil, !exists { items.append(.create(query)) }
-        return items
-    }
-
     var body: some View {
-        let items = items
-        VStack(spacing: 0) {
-            TextField("Filter labels", text: $filter)
-                .textFieldStyle(.roundedBorder)
-                .focused($isFilterFocused)
-                .onSubmit {
-                    if let highlighted { pick(items, at: highlighted) }
-                }
-                .onKeyPress(.downArrow) {
-                    move(by: 1, count: items.count)
-                    return .handled
-                }
-                .onKeyPress(.upArrow) {
-                    move(by: -1, count: items.count)
-                    return .handled
-                }
-                .padding(.horizontal, Tokens.Space.s5)
-                .padding(.bottom, Tokens.Space.s3)
-            Divider()
-            if items.isEmpty {
-                Label("No matching labels", systemImage: "magnifyingglass")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(Tokens.Space.s5)
-            } else {
-                list(items)
-            }
-        }
-        .onChange(of: filter) {
-            highlighted = trimmedFilter.isEmpty ? nil : 0
-        }
-        .onAppear { isFilterFocused = true }
-    }
-
-    private func list(_ items: [Item]) -> some View {
         ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(spacing: 0) {
-                    ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
-                        Button {
-                            pick(items, at: index)
-                        } label: {
-                            row(item, isHighlighted: highlighted == index)
-                        }
-                        .buttonStyle(.plain)
-                        .modifier(CheckAccessibility(mark: Self.checkState(item, mark: mark)))
-                        .onHover { if $0 { highlighted = index } }
-                        .id(item.id)
+            VStack(spacing: 0) {
+                TextField("Filter labels", text: $filter)
+                    .textFieldStyle(.roundedBorder)
+                    .focused($isFilterFocused)
+                    .onSubmit {
+                        if let highlighted { pick(at: highlighted) }
+                    }
+                    .onKeyPress(.downArrow) {
+                        move(by: 1, proxy: proxy)
+                        return .handled
+                    }
+                    .onKeyPress(.upArrow) {
+                        move(by: -1, proxy: proxy)
+                        return .handled
+                    }
+                    .padding(.horizontal, Tokens.Space.s5)
+                    .padding(.bottom, Tokens.Space.s3)
+                Divider()
+                VStack(spacing: 0) {
+                    if items.isEmpty {
+                        Label("No matching labels", systemImage: "magnifyingglass")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(Tokens.Space.s5)
+                    } else {
+                        list
                     }
                 }
-                .padding(Tokens.Space.s2)
+                // A filter keeps the unfiltered height, so the popover does not resize on each keystroke.
+                .frame(height: trimmedFilter.isEmpty ? nil : unfilteredHeight, alignment: .top)
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
+                    if trimmedFilter.isEmpty { unfilteredHeight = height }
+                }
             }
-            .frame(maxHeight: Tokens.Popover.maxListHeight)
-            .fixedSize(horizontal: false, vertical: true)
-            .onChange(of: highlighted) {
+            .onChange(of: filter) {
+                rebuildItems()
+                highlighted = trimmedFilter.isEmpty ? nil : 0
+            }
+            .onChange(of: choices) { rebuildItems() }
+            .onChange(of: items) {
+                // Typing highlights the first match, which may be scrolled out of view.
                 if let highlighted, items.indices.contains(highlighted) {
                     proxy.scrollTo(items[highlighted].id)
                 }
             }
+            .onAppear { isFilterFocused = true }
         }
     }
 
-    private func row(_ item: Item, isHighlighted: Bool) -> some View {
+    private var list: some View {
+        ScrollView {
+            LazyVStack(spacing: 0) {
+                ForEach(items) { item in
+                    Button {
+                        pick(at: item.index)
+                    } label: {
+                        LabelPickerRow(kind: item.kind, check: checkState(item), isHighlighted: highlighted == item.index)
+                            .equatable()
+                    }
+                    .buttonStyle(.plain)
+                    .modifier(CheckAccessibility(mark: checkState(item)))
+                    .onHover { if $0 { highlighted = item.index } }
+                    .id(item.id)
+                }
+            }
+            .padding(Tokens.Space.s2)
+        }
+        .frame(maxHeight: Tokens.Popover.maxListHeight)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func rebuildItems() {
+        items = LabelPickerItem.matching(trimmedFilter, in: choices, canCreate: onCreate != nil)
+    }
+
+    private func pick(at index: Int) {
+        guard items.indices.contains(index) else { return }
+        switch items[index].kind {
+        case .label(let choice): onPick(choice)
+        case .create(let name): onCreate?(name)
+        }
+    }
+
+    /// The arrow keys move the highlight and bring it into view. The pointer
+    /// highlights without scrolling, so rows stay still under it.
+    private func move(by step: Int, proxy: ScrollViewProxy) {
+        guard !items.isEmpty else { return }
+        let start = highlighted ?? (step > 0 ? -1 : items.count)
+        let index = min(max(start + step, 0), items.count - 1)
+        highlighted = index
+        proxy.scrollTo(items[index].id)
+    }
+
+    private func checkState(_ item: LabelPickerItem) -> LabelSelection.State? {
+        guard case .label(let choice) = item.kind, case .check(let state) = mark(choice) else { return nil }
+        return state
+    }
+}
+
+/// One row's content. It is equatable, so moving the highlight redraws only the
+/// row it leaves and the row it enters.
+private struct LabelPickerRow: View, Equatable {
+    let kind: LabelPickerItem.Kind
+    /// The checkbox state in Edit Labels. Move to has no checkboxes and passes nil.
+    let check: LabelSelection.State?
+    let isHighlighted: Bool
+
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.kind == rhs.kind && lhs.check == rhs.check && lhs.isHighlighted == rhs.isHighlighted
+    }
+
+    var body: some View {
         let textColor = isHighlighted ? Color(nsColor: .alternateSelectedControlTextColor) : .primary
-        return HStack(spacing: Tokens.Space.s2) {
-            switch item {
+        HStack(spacing: Tokens.Space.s2) {
+            switch kind {
             case .label(let choice):
-                if case .check(let state) = mark(choice) {
-                    Image(systemName: Self.checkbox(state))
+                if let check {
+                    Image(systemName: Self.checkbox(check))
                         .foregroundStyle(isHighlighted ? textColor : .accentColor)
                         .accessibilityHidden(true)
                 }
@@ -267,25 +345,6 @@ private struct FilteredLabelList: View {
             }
         }
         .contentShape(Rectangle())
-    }
-
-    private func pick(_ items: [Item], at index: Int) {
-        guard items.indices.contains(index) else { return }
-        switch items[index] {
-        case .label(let choice): onPick(choice)
-        case .create(let name): onCreate?(name)
-        }
-    }
-
-    private func move(by step: Int, count: Int) {
-        guard count > 0 else { return }
-        let start = highlighted ?? (step > 0 ? -1 : count)
-        highlighted = min(max(start + step, 0), count - 1)
-    }
-
-    private static func checkState(_ item: Item, mark: (LabelChoice) -> Mark) -> LabelSelection.State? {
-        guard case .label(let choice) = item, case .check(let state) = mark(choice) else { return nil }
-        return state
     }
 
     private static func checkbox(_ state: LabelSelection.State) -> String {

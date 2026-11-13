@@ -2,6 +2,7 @@ import Foundation
 import GmailAPI
 import MailStore
 import MessageContent
+import SyncEngine
 
 struct TodayDashboardAccount: Hashable, Sendable {
     let id: String
@@ -14,15 +15,47 @@ struct TodayDashboardContext: Hashable, Sendable {
     let profileID: String?
     let runtime: String
     let accounts: [TodayDashboardAccount]
-    var accountIDs: Set<String> { Set(accounts.map(\.id)) }
+    /// Stored, because the dashboard asks for it once per event and per task.
+    let accountIDs: Set<String>
+
+    init(profileID: String?, runtime: String, accounts: [TodayDashboardAccount]) {
+        self.profileID = profileID; self.runtime = runtime; self.accounts = accounts
+        accountIDs = Set(accounts.map(\.id))
+    }
 }
 
 struct TodayDashboardCalendarRequest: Hashable, Sendable {
-    let context: TodayDashboardContext
-    let interval: DateInterval
-    let timeZone: String
-    let firstWeekday: Int
+    /// What loaded events are shown for. A new `revision` asks for a reload,
+    /// and the events already loaded for the same display stay until it lands.
+    struct Display: Hashable, Sendable {
+        let context: TodayDashboardContext
+        let interval: DateInterval
+        let timeZone: String
+        let firstWeekday: Int
+    }
+
+    let display: Display
     let revision: String
+
+    init(context: TodayDashboardContext, interval: DateInterval, timeZone: String, firstWeekday: Int, revision: String) {
+        display = Display(context: context, interval: interval, timeZone: timeZone, firstWeekday: firstWeekday)
+        self.revision = revision
+    }
+
+    var context: TodayDashboardContext { display.context }
+    var interval: DateInterval { display.interval }
+    var timeZone: String { display.timeZone }
+    var firstWeekday: Int { display.firstWeekday }
+}
+
+/// The calendar panel's lists, prepared when events load or the selected day
+/// changes, so a body pass does not filter and sort the month again.
+struct TodayAgenda: Equatable {
+    var isLoaded = false
+    var hasCalendars = false
+    var monthEvents: [CalendarDisplayEvent] = []
+    var dayEvents: [CalendarDisplayEvent] = []
+    var upcomingEvents: [CalendarDisplayEvent] = []
 }
 
 struct TodayDashboardTask: Identifiable {
@@ -93,6 +126,14 @@ struct TodayCalendarSnapshot: Sendable {
     let unavailableCount: Int
     let omittedCount: Int
     let isStale: Bool
+    /// False when a read of saved events found none for one of the calendars.
+    /// Today keeps what it shows rather than publish that partial read.
+    var isComplete = true
+
+    func withStaleness(_ isStale: Bool) -> Self {
+        Self(events: events, calendarCount: calendarCount, unavailableCount: unavailableCount,
+             omittedCount: omittedCount, isStale: isStale, isComplete: isComplete)
+    }
 
     var coverage: String {
         guard calendarCount + unavailableCount + omittedCount > 0 else {
@@ -139,40 +180,73 @@ enum TodayDashboardSources {
         return snapshot
     }
 
-    static func calendar(app: AppModel, request: TodayDashboardCalendarRequest) async throws -> TodayCalendarSnapshot {
+    /// With `refresh` false this reads saved events only and never reaches the network.
+    static func calendar(app: AppModel, request: TodayDashboardCalendarRequest, refresh: Bool) async throws -> TodayCalendarSnapshot {
         let model = app.calendar
         await model.start()
         guard request.context == context(app: app), !Task.isCancelled else { throw CancellationError() }
         let owners = model.calendars.filter { $0.isVisible && request.context.accountIDs.contains($0.accountID) }
         let selected = Array(owners.prefix(24))
-        var events: [CalendarDisplayEvent] = []
+        let interval = request.interval
         var unavailable = 0
-        var stale = false
-        for owner in selected {
+        var accounts: [String: CalendarAccountLoad] = [:]
+        for (index, owner) in selected.enumerated() {
             guard let engine = model.engines[owner.accountID] else { unavailable += 1; continue }
-            do {
-                let result = try await engine.occurrences(calendarID: owner.calendarID,
-                    start: request.interval.start, end: request.interval.end, refresh: true)
-                guard request.context == context(app: app), model.engines[owner.accountID] === engine,
-                      !Task.isCancelled else { throw CancellationError() }
-                stale = stale || result.isStale || !result.isComplete
-                events += result.events.map { event in
+            accounts[owner.accountID, default: CalendarAccountLoad(engine: engine)].calendars.append((index, owner.calendarID))
+        }
+        // Accounts load side by side. Each account still reads its calendars in order.
+        let loaded = await withTaskGroup(of: [(Int, Result<CalendarOccurrenceResult, any Error>)].self) { group in
+            for account in accounts.values {
+                group.addTask {
+                    var results: [(Int, Result<CalendarOccurrenceResult, any Error>)] = []
+                    for (index, calendarID) in account.calendars {
+                        guard !Task.isCancelled else { break }
+                        do {
+                            results.append((index, .success(try await account.engine.occurrences(calendarID: calendarID,
+                                start: interval.start, end: interval.end, refresh: refresh))))
+                        } catch { results.append((index, .failure(error))) }
+                    }
+                    return results
+                }
+            }
+            var values: [Int: Result<CalendarOccurrenceResult, any Error>] = [:]
+            for await results in group { for (index, result) in results { values[index] = result } }
+            return values
+        }
+        guard request.context == context(app: app), !Task.isCancelled else { throw CancellationError() }
+        var events: [CalendarDisplayEvent] = []
+        var stale = false
+        var complete = true
+        for (index, owner) in selected.enumerated() {
+            guard let engine = accounts[owner.accountID]?.engine else { continue }
+            guard let result = loaded[index], model.engines[owner.accountID] === engine else { throw CancellationError() }
+            switch result {
+            case .success(let value):
+                stale = stale || value.isStale || !value.isComplete
+                complete = complete && value.isComplete
+                events += value.events.map { event in
                     CalendarDisplayEvent(event: event, accountID: owner.accountID, calendarID: owner.calendarID,
                         colorHex: owner.colorHex, canEdit: owner.canWrite,
                         fallbackTimeZoneID: request.timeZone)
                 }
-            } catch is CancellationError { throw CancellationError() }
-            catch {
-                guard request.context == context(app: app), model.engines[owner.accountID] === engine,
-                      !Task.isCancelled else { throw CancellationError() }
-                model.handleCalendarAccessFailure(error, accountID: owner.accountID, calendarID: owner.calendarID)
+            case .failure(let error):
+                if error is CancellationError { throw CancellationError() }
+                // Only the network read reports lost access. A failed read of
+                // saved events leaves that to the refresh that follows it.
+                if refresh { model.handleCalendarAccessFailure(error, accountID: owner.accountID, calendarID: owner.calendarID) }
                 unavailable += 1
+                complete = false
             }
         }
-        guard request.context == context(app: app), !Task.isCancelled else { throw CancellationError() }
         events = CalendarPendingEvents.project(events, operations: model.operations, calendars: selected,
             interval: request.interval, calendar: model.calendar)
         return TodayCalendarSnapshot(events: events, calendarCount: selected.count - unavailable,
-            unavailableCount: unavailable, omittedCount: owners.count - selected.count, isStale: stale)
+            unavailableCount: unavailable, omittedCount: owners.count - selected.count, isStale: stale,
+            isComplete: refresh || complete)
+    }
+
+    private struct CalendarAccountLoad: Sendable {
+        let engine: CalendarSyncEngine
+        var calendars: [(index: Int, id: String)] = []
     }
 }

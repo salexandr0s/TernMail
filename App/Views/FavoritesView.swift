@@ -68,7 +68,8 @@ struct FavoritesView: View {
                     .contentShape(Rectangle())
                     .ternHover()
                     .opacity(showsHeaderControls ? 1 : 0)
-                    .ternAnimation(value: isCollapsed)
+                    // The timing of the other sidebar disclosure chevrons.
+                    .ternAnimation(value: isCollapsed, duration: Tokens.Motion.fast)
                     .ternAnimation(value: showsHeaderControls, duration: Tokens.Motion.fast)
             }
             .buttonStyle(.borderless)

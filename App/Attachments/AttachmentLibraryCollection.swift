@@ -16,6 +16,8 @@ struct AttachmentLibraryCollection: View {
     @FocusState private var gridFocused: Bool
     @FocusState private var listFocused: Bool
     @Namespace private var dragNamespace
+    /// Set when the query changes, so the page that answers it starts at the top.
+    @State private var scrollsToTopOnNextPage = false
 
     private var columns: Int {
         max(1, Int((availableWidth - Tokens.Space.s5 * 2 + Tokens.Space.s4) /
@@ -56,6 +58,8 @@ struct AttachmentLibraryCollection: View {
             return .handled
         }
         .onChange(of: model.pageOffset) { _, _ in anchorID = nil; currentID = nil }
+        // Going back to the page still on screen keeps its scroll position.
+        .onChange(of: model.query) { _, _ in scrollsToTopOnNextPage = !model.isPageReady }
         .onChange(of: viewMode) { _, _ in
             currentID = model.items.first { model.selection.contains($0.id) }?.id
             anchorID = currentID
@@ -78,23 +82,27 @@ struct AttachmentLibraryCollection: View {
     }
 
     private var list: some View {
-        List(selection: $model.selection) {
-            ForEach(model.items) { item in listRow(item) }
-        }
-        .listStyle(.inset(alternatesRowBackgrounds: true))
-        .attachmentDragContainer(model, in: dragNamespace)
-        .contextMenu(forSelectionType: String.self) { ids in
-            if let item = model.items.first(where: { ids.contains($0.id) }) {
-                AttachmentItemMenu(item: item, model: model)
+        ScrollViewReader { reader in
+            List(selection: $model.selection) {
+                ForEach(model.presentedItems) { item in listRow(item) }
             }
-        } primaryAction: { ids in
-            let files = model.items.filter { ids.contains($0.id) }
-            Task { await model.openFiles(files) }
+            .listStyle(.inset(alternatesRowBackgrounds: true))
+            .background { PerformanceScrollSurfaceMarker(name: "attachments", isActive: true) }
+            .attachmentDragContainer(model, in: dragNamespace)
+            .contextMenu(forSelectionType: String.self) { ids in
+                if let item = model.items.first(where: { ids.contains($0.id) }) {
+                    AttachmentItemMenu(item: item, model: model)
+                }
+            } primaryAction: { ids in
+                let files = model.items.filter { ids.contains($0.id) }
+                Task { await model.openFiles(files) }
+            }
+            .focused($listFocused)
+            .scrollContentBackground(.hidden)
+            .onChange(of: model.pagePresentationRevision) { _, _ in showFirstRow(reader) }
+            .accessibilityLabel("Attachments list")
+            .accessibilityHint("Select a file and press Space for Quick Look or Return to open it. Command-click or Shift-click selects several files.")
         }
-        .focused($listFocused)
-        .scrollContentBackground(.hidden)
-        .accessibilityLabel("Attachments list")
-        .accessibilityHint("Select a file and press Space for Quick Look or Return to open it. Command-click or Shift-click selects several files.")
     }
 
     private func listRow(_ item: AttachmentLibraryItem) -> some View {
@@ -117,6 +125,7 @@ struct AttachmentLibraryCollection: View {
                     return .handled
                 }
                 .onModifierKeysChanged(mask: [.shift, .command]) { _, new in heldModifiers = new }
+                .onChange(of: model.pagePresentationRevision) { _, _ in showFirstRow(reader) }
                 .accessibilityLabel("Attachment cards")
                 .accessibilityHint("Use arrow keys to select, Space for Quick Look, Return to open. Command-click or Shift-click selects several files.")
         }
@@ -127,7 +136,7 @@ struct AttachmentLibraryCollection: View {
         return ScrollView {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: Tokens.Layout.attachmentWidth), spacing: Tokens.Space.s4)],
                       spacing: Tokens.Space.s4) {
-                ForEach(model.items) { item in
+                ForEach(model.presentedItems) { item in
                     AttachmentCardCell(item: item, model: model, onClick: { select(item, modifiers: heldModifiers) },
                                        onActivate: { select(item, modifiers: []) }, onOpen: { open(item) },
                                        isKeyboardTarget: gridFocused && keyboardTargetID == item.id)
@@ -140,6 +149,14 @@ struct AttachmentLibraryCollection: View {
             .background { PerformanceScrollSurfaceMarker(name: "attachments", isActive: true) }
         }
         .attachmentDragContainer(model, in: dragNamespace)
+    }
+
+    /// The rows stay in place while a changed query loads, so its page would
+    /// open at the old scroll position. Show that page from its first row.
+    private func showFirstRow(_ reader: ScrollViewProxy) {
+        guard scrollsToTopOnNextPage else { return }
+        scrollsToTopOnNextPage = false
+        if let first = model.items.first { reader.scrollTo(first.id, anchor: .top) }
     }
 
     private func move(_ key: KeyEquivalent, modifiers: EventModifiers, reader: ScrollViewProxy) {

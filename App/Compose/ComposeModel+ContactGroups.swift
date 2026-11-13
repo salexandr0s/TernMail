@@ -8,8 +8,9 @@ extension ComposeModel {
     }
 
     func groupSuggestions(for text: String) async -> [ContactGroupSuggestion] {
-        guard let owner, let store = mailbox.accountStore,
-              let account = try? await store.accounts().first(where: { $0.id == owner.account.id }),
+        // The address lookup for the same text reads the accounts too, so the two share one read.
+        guard let owner,
+              let account = await storedAccountsForSuggestions()?.first(where: { $0.id == owner.account.id }),
               AccountFeature.named(account.enabledFeatures).contains(.contacts),
               GoogleScopes.isCovered(.contacts, by: account.grantedScopes) else { return [] }
         let found = (try? await mailbox.cache.contactGroupSuggestions(accountID: account.id, matching: text)) ?? []

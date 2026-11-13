@@ -39,6 +39,38 @@ import Testing
         #expect(steps == ["SEARCH message USING INDEX message_thread (accountID=? AND threadID=?)"])
     }
 
+    /// Read from `attachment` first, the page's attachment query visits
+    /// every attachment row the account has.
+    @Test func aPagesAttachmentsAreLookedUpFromItsMessages() async throws {
+        let (cache, accountIDs) = try await SyntheticMailbox.make(.init(threads: 40))
+        let accountID = try #require(accountIDs.first)
+        let threadIDs = (0..<3).map { SyntheticMailbox.threadID(account: 0, thread: $0) }
+        let steps: [String] = try await cache.read { tx in
+            try Row.fetchAll(
+                tx.db,
+                sql: "EXPLAIN QUERY PLAN " + MessageListSQL.attachmentsSQL(threadCount: threadIDs.count),
+                arguments: StatementArguments([accountID] + threadIDs)
+            ).map { $0["detail"] }
+        }
+        #expect(steps.first == "SEARCH m USING COVERING INDEX message_thread (accountID=? AND threadID=?)", "\(steps)")
+        #expect(steps.contains("SEARCH a USING INDEX sqlite_autoindex_attachment_1 (accountID=? AND messageID=?)"), "\(steps)")
+    }
+
+    /// Launch asks which accounts have cached rows. Each table answers with
+    /// one index seek per account; without an index that starts with
+    /// `accountID` it would read every row instead.
+    @Test func theCachedAccountWalkSeeksEachTable() async throws {
+        let cache = try MailCache.inMemory()
+        let scans: [String] = try await cache.read { tx in
+            try CacheTransaction.accountTables.flatMap { table in
+                try Row.fetchAll(tx.db, sql: "EXPLAIN QUERY PLAN " + CacheTransaction.nextAccountSQL(table: table), arguments: [""])
+                    .map { $0["detail"] as String }
+                    .filter { !($0.hasPrefix("SEARCH \(table) USING ") && $0.hasSuffix("(accountID>?)")) }
+            }
+        }
+        #expect(scans.isEmpty, "\(scans)")
+    }
+
     @Test func aCombinedListIsTheAccountsListsMerged() async throws {
         let (cache, accountIDs) = try await SyntheticMailbox.make(.init(accounts: 3, threads: 60, spacing: 30))
         var expected: [ThreadRecord] = []

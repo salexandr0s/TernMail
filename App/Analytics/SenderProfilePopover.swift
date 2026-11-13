@@ -40,8 +40,20 @@ struct SenderProfilePopover: View {
                         Label("This account is no longer available.", systemImage: "person.crop.circle.badge.exclamationmark")
                             .font(.callout).foregroundStyle(.secondary)
                     } else if model.isLoading {
-                        ProgressView("Loading sender details…")
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                        // The placeholder draws the rows of the loaded details and the line
+                        // the links section takes when it is empty, so the popover is
+                        // already that tall when the numbers arrive.
+                        VStack(alignment: .leading, spacing: Tokens.Space.s4) {
+                            details(received: 0, sent: 0, coverage: [],
+                                firstReceived: Self.placeholderDate, lastContact: Self.placeholderDate)
+                            SenderProfileLinksView(links: [], compact: true)
+                        }
+                        .redacted(reason: .placeholder)
+                        .allowsHitTesting(false)
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel("Loading sender details")
+                        .ternDelayedLoading()
+                        .ternTransition(.fade)
                     } else if let error = model.error {
                         VStack(alignment: .leading, spacing: Tokens.Space.s2) {
                             Label("Sender details unavailable", systemImage: "exclamationmark.circle")
@@ -49,36 +61,29 @@ struct SenderProfilePopover: View {
                             Text(error).font(.caption).foregroundStyle(.secondary)
                             Button("Try again") { reload = UUID() }
                         }
+                        .ternTransition(.fade)
                     } else if let snapshot = model.snapshot {
-                        VStack(alignment: .leading, spacing: Tokens.Space.s2) {
-                            HStack(alignment: .firstTextBaseline, spacing: Tokens.Space.s2) {
-                                Text("All indexed mail").font(.subheadline.weight(.semibold))
-                                Spacer(minLength: 0)
-                                AnalyticsCoverageLabel(coverage: snapshot.coverage)
-                            }
-                            HStack(spacing: Tokens.Space.s3) {
-                                compactMetric("Received", count: snapshot.receivedCount,
-                                    symbol: "arrow.down.left", tint: Tokens.Analytics.received)
-                                compactMetric("Sent", count: snapshot.sentCount,
-                                    symbol: "arrow.up.right", tint: Tokens.Analytics.sent)
-                            }
+                        details(received: snapshot.receivedCount, sent: snapshot.sentCount,
+                            coverage: snapshot.coverage, firstReceived: snapshot.firstReceivedAt,
+                            lastContact: snapshot.lastContactAt)
+                            .ternTransition(.fade)
+                        if model.didLoadProfileLinks {
+                            SenderProfileLinksView(links: model.profileLinks, compact: true)
+                                .ternTransition(.fade)
+                        } else {
+                            // The numbers are up and the signatures are still being read.
+                            // This holds the line the section takes when it has no links,
+                            // so the popover grows only if some are found.
+                            SenderProfileLinksView(links: [], compact: true)
+                                .redacted(reason: .placeholder)
+                                .allowsHitTesting(false)
+                                .accessibilityHidden(true)
+                                .ternDelayedLoading()
+                                .ternTransition(.fade)
                         }
-                        if snapshot.firstReceivedAt != nil || snapshot.lastContactAt != nil {
-                            VStack(alignment: .leading, spacing: Tokens.Space.s3) {
-                                if let first = snapshot.firstReceivedAt {
-                                    dateRow("First received", date: first)
-                                }
-                                if let last = snapshot.lastContactAt {
-                                    dateRow("Last email", date: last)
-                                }
-                            }
-                            .padding(.horizontal, Tokens.Space.s3)
-                            .padding(.vertical, Tokens.Space.s2)
-                            .background(Tokens.Surface.muted, in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
-                        }
-                        SenderProfileLinksView(links: model.profileLinks, compact: true)
                     }
                 }
+                .ternAnimation(value: phase, duration: Tokens.Motion.fast)
                 .padding(.horizontal, Tokens.Space.s5)
                 .padding(.bottom, Tokens.Space.s5)
             }
@@ -122,8 +127,10 @@ struct SenderProfilePopover: View {
         .task(id: LoadIdentity(accountID: accountID, address: EmailAddress(address: address).normalized,
                               reload: reload, isAvailable: isAvailable, calendarContext: calendarContext)) {
             guard isAvailable else { model.stop(); return }
+            // The counts show as soon as they load. Signature links follow.
             await model.observe(cache: mailbox.cache,
-                query: .init(accountIDs: [accountID], contactAddress: address, period: .allTime))
+                query: .init(accountIDs: [accountID], contactAddress: address, period: .allTime),
+                linksFollow: true)
         }
         .modifier(AnalyticsCalendarRefresh(context: $calendarContext))
         .task(id: copyFeedbackID) {
@@ -154,17 +161,69 @@ struct SenderProfilePopover: View {
                 NSPasteboard.general.replaceContents(with: address)
                 copyFeedbackID = UUID()
             } label: {
-                Image(systemName: copyFeedbackID == nil ? "doc.on.doc" : "checkmark")
+                ZStack {
+                    if copyFeedbackID == nil {
+                        Image(systemName: "doc.on.doc").ternTransition(.fade)
+                    } else {
+                        Image(systemName: "checkmark").ternTransition(.fade)
+                    }
+                }
                     .font(.callout)
                     .frame(width: Tokens.Control.iconButton, height: Tokens.Control.iconButton)
                     .background(Tokens.Surface.muted, in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
             }
                 .buttonStyle(.plain)
                 .foregroundStyle(copyFeedbackID == nil ? Color.secondary : Tokens.Status.success)
+                .ternAnimation(value: copyFeedbackID == nil, duration: Tokens.Motion.fast)
                 .ternHover()
                 .help(copyFeedbackID == nil ? "Copy email address" : "Email address copied")
                 .accessibilityLabel(copyFeedbackID == nil ? "Copy email address" : "Email address copied")
                 .accessibilityIdentifier("sender-copy-address")
+        }
+    }
+
+    /// The unavailable notice, the placeholder, the error and the details replace
+    /// one another, and the links replace their placeholder. Only those swaps fade.
+    private enum Phase: Equatable { case unavailable, loading, failed, loaded(linksReady: Bool) }
+
+    private var phase: Phase {
+        if !isAvailable { .unavailable } else if model.isLoading { .loading }
+        else if model.error != nil { .failed } else { .loaded(linksReady: model.didLoadProfileLinks) }
+    }
+
+    /// Stands in for both dates in the placeholder. It is drawn redacted, never read.
+    private static let placeholderDate = Date(timeIntervalSinceReferenceDate: 0)
+
+    /// The sender's counts and dates. The loading placeholder draws the same rows.
+    private func details(received: Int, sent: Int, coverage: [MailAnalyticsCoverage],
+                         firstReceived: Date?, lastContact: Date?) -> some View {
+        VStack(alignment: .leading, spacing: Tokens.Space.s4) {
+            VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+                HStack(alignment: .firstTextBaseline, spacing: Tokens.Space.s2) {
+                    Text("All indexed mail").font(.subheadline.weight(.semibold))
+                    Spacer(minLength: 0)
+                    AnalyticsCoverageLabel(coverage: coverage)
+                }
+                HStack(spacing: Tokens.Space.s3) {
+                    compactMetric("Received", count: received,
+                        symbol: "arrow.down.left", tint: Tokens.Analytics.received)
+                    compactMetric("Sent", count: sent,
+                        symbol: "arrow.up.right", tint: Tokens.Analytics.sent)
+                }
+            }
+            if firstReceived != nil || lastContact != nil {
+                VStack(alignment: .leading, spacing: Tokens.Space.s3) {
+                    if let firstReceived {
+                        dateRow("First received", date: firstReceived)
+                    }
+                    if let lastContact {
+                        dateRow("Last email", date: lastContact)
+                    }
+                }
+                .padding(.horizontal, Tokens.Space.s3)
+                .padding(.vertical, Tokens.Space.s2)
+                .background(Tokens.Surface.muted, in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
+            }
         }
     }
 

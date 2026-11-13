@@ -38,7 +38,7 @@ struct FollowUpEditor: View {
             }
             .scrollBounceBehavior(.basedOnSize)
             PopupFooter {
-                if isSaving { ProgressView().controlSize(.small).accessibilityLabel("Saving follow-up") }
+                ProgressView().controlSize(.small).accessibilityLabel("Saving follow-up").ternDelayedLoading(isSaving)
                 Button("Cancel") { model.cancelEditor() }
                     .keyboardShortcut(.cancelAction).disabled(isSaving)
                 Button(request.existing == nil ? "Track" : "Save", action: save)

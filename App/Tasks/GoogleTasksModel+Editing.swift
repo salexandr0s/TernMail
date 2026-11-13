@@ -86,6 +86,7 @@ extension GoogleTasksModel {
             // turn the next click into an unreviewed duplicate POST.
             uncertainReferences[request.reference] = accountID
             defaults.set(uncertainReferences, forKey: Self.uncertaintyKey)
+            forgetCachedTasks(at: GoogleTaskLocation(accountID: accountID, listID: destination.id))
             beganInsert = true
             let created = try await client.insertTask(listID: destination.id, draft: draft)
             // The explicit save has already reached Google. Revoking assistant
@@ -135,17 +136,49 @@ extension GoogleTasksModel {
         guard let client = authorizedService(for: accountID), !busyTaskIDs.contains(key), !stopped else { return false }
         let access = accountVersions[accountID, default: 0]
         busyTaskIDs.insert(key)
+        // A change of completion alone draws at once, and the busy row shows it as still being
+        // saved. Any other edit waits for Google.
+        if let isCompleted = update.isCompleted, update == GoogleTaskUpdate(isCompleted: isCompleted) {
+            showPendingCompletion(isCompleted, taskID: task.id, at: target)
+        }
+        forgetCachedTasks(at: target)
         readGeneration += 1
         errorMessage = nil
-        defer { busyTaskIDs.remove(key) }
+        // The row stops waiting when Google answers, whichever way the answer went, and not after
+        // the read that may follow. Dropping the pending completion after a failure puts the row
+        // back as Google last confirmed it. It runs once: by the time the read that follows
+        // returns, the row may be waiting on a later write, which this call must not release.
+        var isWaiting = true
+        func stopWaiting() {
+            guard isWaiting else { return }
+            isWaiting = false
+            busyTaskIDs.remove(key)
+            endPendingCompletion(taskID: task.id, at: target)
+        }
+        defer { stopWaiting() }
         do {
             let updated = try await client.updateTask(listID: listID, taskID: task.id, update: update, etag: task.etag)
             guard validAccount(accountID, access: access) else { return false }
+            // A list read that overlapped the write may predate it. Retire it and read again below.
+            let overlappedRead = isLoading
+            readGeneration += 1
+            var isOnScreen = false
             if selectedAccountID == accountID, selectedListID == listID,
-               let index = tasks.firstIndex(where: { $0.id == task.id }) { tasks[index] = updated }
-            await refresh()
+               let index = tasks.firstIndex(where: { $0.id == task.id }) {
+                tasks[index] = updated
+                isOnScreen = true
+            } else {
+                updateCachedTask(updated, at: target)
+            }
+            stopWaiting()
+            // The response is the task's whole new state. The list is read again only when the
+            // write can have changed more than that row: it retired a read, the task isn't on
+            // screen, or it changed completion on a task whose subtasks the response leaves out.
+            let leavesOutSubtasks = update.isCompleted != nil && tasks.contains { $0.parent == task.id }
+            if overlappedRead || !isOnScreen || leavesOutSubtasks { await refresh() }
             return true
         } catch {
+            stopWaiting()
             guard validAccount(accountID, access: access) else { return false }
             if GoogleTasksIssue(error) == .conflict { onConflict?() }
             guard selectedAccountID == accountID, selectedListID == listID else { return false }
@@ -172,6 +205,7 @@ extension GoogleTasksModel {
         guard let client = authorizedService(for: accountID), !busyTaskIDs.contains(key), !stopped else { return false }
         let access = accountVersions[accountID, default: 0]
         busyTaskIDs.insert(key)
+        forgetCachedTasks(at: target)
         readGeneration += 1
         errorMessage = nil
         defer { busyTaskIDs.remove(key) }

@@ -26,8 +26,15 @@ final class AssistantModel {
             refreshWritingStyleAccess()
         }
     }
-    private(set) var messages: [AssistantMessage] = []
+    /// A message that is shown changes only through `AssistantMessage.edit`.
+    private(set) var messages: [AssistantMessage] = [] {
+        didSet { if hasMessages == messages.isEmpty { hasMessages = !messages.isEmpty } }
+    }
+    /// Changes only when the transcript becomes empty or stops being empty, so
+    /// the composer is not redrawn for every flush of a streaming reply.
+    private(set) var hasMessages = false
     var composerText = ""
+    var hasComposerText: Bool { !composerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     private(set) var isRunning = false
     private(set) var errorMessage: String?
     private(set) var statusText: String?
@@ -67,7 +74,8 @@ final class AssistantModel {
     @ObservationIgnored private let readerSummaryRequests = AssistantSharedRequests<ThreadSummaryRequestKey, ThreadSummaryRequestResult>()
     @ObservationIgnored private let emailExtractionRequests = AssistantSharedRequests<EmailCalendarExtractionService.RequestKey, [EmailCalendarItem]>()
     @ObservationIgnored private var task: Task<Void, Never>?
-    @ObservationIgnored private var activeTextStream: AssistantTextStream?
+    /// Read by tests to know how much of a reply has arrived.
+    @ObservationIgnored private(set) var activeTextStream: AssistantTextStream?
     @ObservationIgnored private var turnID: UUID?
     @ObservationIgnored private var conversationEpoch = 0
     @ObservationIgnored private var retryContext: RetryContext?
@@ -458,7 +466,7 @@ final class AssistantModel {
         activeTextStream?.finish(); activeTextStream = nil
         task?.cancel(); task = nil; turnID = nil
         if let index = messages.lastIndex(where: { $0.state == .streaming }) {
-            messages[index].state = .cancelled
+            messages[index].edit { $0.state = .cancelled }
         }
         isRunning = false; statusText = nil
     }
@@ -771,6 +779,22 @@ final class AssistantModel {
         }
     }
 
+    /// The turn whose latest flush found the chat scope changed.
+    @ObservationIgnored private var scopeRejectedTurn: UUID?
+
+    /// The check for each stream event. The full check rebuilds the access
+    /// context, which is wasted work for every delta: the publish closure runs
+    /// it at each flush, a rejected flush sends the next event through it, and
+    /// it runs again when the stream ends.
+    private func ensureStreaming(_ snapshot: AssistantScopeSnapshot, turn: UUID) throws {
+        if scopeRejectedTurn == turn { return try ensureCurrent(snapshot, turn: turn) }
+        try Task.checkCancellation()
+        guard turnID == turn else {
+            refreshAccess()
+            throw AssistantError.accessChanged
+        }
+    }
+
     /// Navigation is not consent. A retained chat keeps its original scope, but
     /// any lost permission, replaced account, or connection change invalidates it.
     private func isAuthorized(_ snapshot: AssistantScopeSnapshot, in current: AssistantContext) -> Bool {
@@ -832,8 +856,11 @@ final class AssistantModel {
                 var completed: AIResponse?
                 let prefix = messages.first(where: { $0.id == messageID })?.text ?? ""
                 let textStream = AssistantTextStream { [weak self] text in
-                    guard let self, self.turnID == turn, self.isCurrentChatScope(snapshot) else { return }
-                    self.update(messageID) { $0.text = Self.joinReply(prefix, text) }
+                    guard let self, self.turnID == turn else { return }
+                    guard self.isCurrentChatScope(snapshot) else { self.scopeRejectedTurn = turn; return }
+                    // Completion, stop and errors end with a finished stream.
+                    let isFinal = self.activeTextStream?.isFinished != false
+                    self.update(messageID) { $0.setStreamedText(Self.joinReply(prefix, text), isFinal: isFinal) }
                 }
                 activeTextStream = textStream
                 defer {
@@ -842,7 +869,7 @@ final class AssistantModel {
                 }
                 for try await event in provider.respond(AIRequest(model: model, input: input,
                     instructions: instructions + "\n" + budgetInstructions + "\n" + styleInstructions, tools: roundDefinitions)) {
-                    try ensureCurrent(snapshot, turn: turn)
+                    try ensureStreaming(snapshot, turn: turn)
                     switch event {
                     case .textDelta(let delta):
                         guard completed == nil else { throw AIProviderError.malformedResponse(.terminalEnvelope) }
@@ -980,7 +1007,7 @@ final class AssistantModel {
 
     private func update(_ id: UUID, _ change: (inout AssistantMessage) -> Void) {
         guard let index = messages.firstIndex(where: { $0.id == id }) else { return }
-        change(&messages[index])
+        messages[index].edit(change)
     }
 
     private static func mergeResults<Result: Identifiable>(_ incoming: [Result], into retained: inout [Result]) {

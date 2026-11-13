@@ -7,6 +7,9 @@ import SwiftUI
 @MainActor
 final class CalendarGeometryFrames<Region: Hashable> {
     var values: [Region: CGRect] = [:]
+    /// Where the pointer of the drag in progress last was. It moves on every
+    /// mouse event, far more often than the range it gives, so it is not view state.
+    var pointer: CGPoint?
 }
 
 enum CalendarTimelineRegion: Hashable, Sendable { case canvas, allDay, content, viewport }
@@ -41,8 +44,12 @@ enum CalendarTimelineAction {
 struct CalendarTimelineDrag {
     var action: CalendarTimelineAction
     var anchor: Date
-    var pointer: CGPoint
     var range: CalendarEventRange?
+    /// Set when an event is dropped. The preview then stays at the dropped slot
+    /// until the change is written, so the event does not go back to its old
+    /// slot in between.
+    var commit: UUID?
+    var isCommitting: Bool { commit != nil }
 }
 
 extension CalendarTimeGrid {
@@ -55,17 +62,24 @@ extension CalendarTimeGrid {
             isPending: preview.isPending, canEdit: preview.canEdit, fallbackTimeZoneID: calendar.timeZone.identifier)
     }
 
+    /// What the auto-scroll view is given: the edge the drag is held near, while there is a drag.
     var scrollDirection: CGFloat {
-        guard !dragCancelled, let drag, let viewport = frames[.viewport], let canvas = frames[.canvas],
-              canvas.contains(drag.pointer), drag.pointer.x >= viewport.minX + gutter,
-              drag.pointer.x < viewport.maxX else { return 0 }
-        switch drag.action {
+        guard !dragCancelled, let drag, !drag.isCommitting else { return 0 }
+        return autoScroll
+    }
+
+    /// -1 near the top of the hours and 1 near the bottom, for a drag that can change the time of day.
+    private func edgeDirection(of action: CalendarTimelineAction, at pointer: CGPoint) -> CGFloat {
+        guard let viewport = frames[.viewport], let canvas = frames[.canvas],
+              canvas.contains(pointer), pointer.x >= viewport.minX + gutter,
+              pointer.x < viewport.maxX else { return 0 }
+        switch action {
         case .createAllDay: return 0
         case .resizeStart(let event), .resizeEnd(let event): if event.isAllDay { return 0 }
         case .createTimed, .move: break
         }
-        if drag.pointer.y >= viewport.minY, drag.pointer.y < viewport.minY + Tokens.Space.s8 { return -1 }
-        if drag.pointer.y <= viewport.maxY, drag.pointer.y > viewport.maxY - Tokens.Space.s8 { return 1 }
+        if pointer.y >= viewport.minY, pointer.y < viewport.minY + Tokens.Space.s8 { return -1 }
+        if pointer.y <= viewport.maxY, pointer.y > viewport.maxY - Tokens.Space.s8 { return 1 }
         return 0
     }
 
@@ -74,7 +88,8 @@ extension CalendarTimeGrid {
             .updating($pointerIsDown) { _, state, _ in state = true }
             .onChanged { value in
                 guard !dragCancelled else { return }
-                if drag == nil {
+                // A new gesture takes over from a drop that is still being written.
+                if drag == nil || drag?.isCommitting == true {
                     guard action.event?.canEdit != false else { return }
                     let anchor: Date?
                     switch action {
@@ -86,33 +101,50 @@ extension CalendarTimeGrid {
                     case .createTimed: anchor = timedDate(at: value.startLocation)
                     }
                     guard let anchor else { return }
-                    selectedID = action.event?.id
-                    drag = CalendarTimelineDrag(action: action, anchor: anchor, pointer: value.location)
+                    select(action.event?.id)
+                    drag = CalendarTimelineDrag(action: action, anchor: anchor)
                 }
                 updateDrag(at: value.location)
             }
             .onEnded { value in
-                defer { drag = nil; dragCancelled = false }
-                guard !dragCancelled, drag != nil else { return }
+                guard !dragCancelled, let active = drag, !active.isCommitting else {
+                    if drag?.isCommitting != true { drag = nil }
+                    dragCancelled = false
+                    return
+                }
                 updateDrag(at: value.location)
-                guard let drag, let range = drag.range, range.end > range.start else { return }
-                if let source = drag.action.event {
-                    guard source.canEdit, let current = events.first(where: { $0.id == source.id }), current == source,
-                          range != CalendarEventRange(source) else { return }
-                    change(source, range)
-                } else { create(range) }
+                guard let session = drag, let range = session.range, range.end > range.start else { drag = nil; return }
+                guard let source = session.action.event else { drag = nil; create(range); return }
+                guard source.canEdit, let current = events.first(where: { $0.id == source.id }), current == source,
+                      range != CalendarEventRange(source) else { drag = nil; return }
+                commit(source, to: range)
             }
     }
 
+    /// Keeps the preview and the dimmed source where the event was dropped while
+    /// the change is written. They go when `events` shows the change, when the
+    /// change returns without one (the editor opened, or the change was refused)
+    /// or after `Tokens.Calendar.dropHold`.
+    func commit(_ source: CalendarDisplayEvent, to range: CalendarEventRange) {
+        let id = UUID()
+        drag?.commit = id
+        Task {
+            await change(source, range)
+            if drag?.commit == id { drag = nil }
+        }
+    }
+
     func cancelDrag() {
-        guard drag != nil else { return }
+        guard let active = drag else { return }
+        // After the drop there is no gesture left to cancel, only a preview to remove.
+        if active.isCommitting { drag = nil; return }
         dragCancelled = true
         drag?.range = nil
     }
 
     func updateDrag(at point: CGPoint) {
-        guard !dragCancelled, var session = drag else { return }
-        session.pointer = point
+        guard !dragCancelled, var session = drag, !session.isCommitting else { return }
+        geometryFrames.pointer = point
         let timed = timedDate(at: point, allowEndOfDay: true)
         let allDay = allDayDate(at: point)
         switch session.action {
@@ -135,7 +167,11 @@ extension CalendarTimeGrid {
                     : CalendarInteraction.resizing(event, to: $0, startEdge: session.action.isStartEdge, calendar: calendar)
             }
         }
-        drag = session
+        // Most pointer moves stay inside one 15-minute step. Setting state only
+        // on a change keeps them from rebuilding the grid.
+        if session.range != drag?.range { drag = session }
+        let direction = edgeDirection(of: session.action, at: point)
+        if direction != autoScroll { autoScroll = direction }
     }
 
     func allDayDate(at point: CGPoint) -> Date? {

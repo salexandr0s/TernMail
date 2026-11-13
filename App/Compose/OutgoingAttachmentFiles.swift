@@ -11,6 +11,8 @@ final class OutgoingAttachmentFiles {
     private var urls: [Int64: URL] = [:]
     private var generations: [Int64: UUID] = [:]
     private var isClosed = false
+    /// The folder's deletions, each after the one before, off the main actor.
+    private var folderRemoval: Task<Void, Never>?
 
     init(localDraftID: String) {
         folder = FileManager.default.temporaryDirectory
@@ -35,12 +37,12 @@ final class OutgoingAttachmentFiles {
                 try bytes.write(to: url, options: .atomic)
             }.value
         } catch {
-            try? FileManager.default.removeItem(at: isClosed ? folder : directory)
+            discard(directory)
             return nil
         }
         // Removal, cancellation or window close may have happened during the write.
         guard !isClosed, !Task.isCancelled, generations[id] == generation else {
-            try? FileManager.default.removeItem(at: isClosed ? folder : directory)
+            discard(directory)
             return nil
         }
         urls[id] = url
@@ -58,7 +60,26 @@ final class OutgoingAttachmentFiles {
         isClosed = true
         urls = [:]
         generations = [:]
-        try? FileManager.default.removeItem(at: folder)
+        removeFolder()
+    }
+
+    /// Removes what a write left behind: its own directory, or the whole
+    /// folder when the window closed meanwhile.
+    private func discard(_ directory: URL) {
+        if isClosed { removeFolder() } else { try? FileManager.default.removeItem(at: directory) }
+    }
+
+    /// Deletes the folder off the main actor, so a closing window never waits
+    /// for the disk. The folder belongs to this window alone and takes no new
+    /// file once closed. A write still under way asks again when it ends, and
+    /// each deletion waits for the one before, so that file goes too.
+    private func removeFolder() {
+        let folder = folder
+        let previous = folderRemoval
+        folderRemoval = Task.detached(priority: .utility) {
+            await previous?.value
+            try? FileManager.default.removeItem(at: folder)
+        }
     }
 
     /// Imported drafts can carry names a file can't have.

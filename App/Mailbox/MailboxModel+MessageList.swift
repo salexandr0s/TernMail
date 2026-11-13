@@ -1,6 +1,7 @@
 import Foundation
 import MailStore
 import MessageContent
+import Observation
 import SyncEngine
 
 extension MailboxModel {
@@ -17,6 +18,10 @@ extension MailboxModel {
         return nickname?.isEmpty == false ? nickname ?? account.email : account.email
     }
 
+    /// Loading the next page starts once a row this close to the end appears,
+    /// so more rows are ready before the user reaches the last one.
+    static let paginationLead = 40
+
     var listItems: [MessageListItem] {
         let key = listProjectionKey
         if let rows = listProjection.cached(for: key) { return rows }
@@ -25,6 +30,45 @@ extension MailboxModel {
         let rows = MessageListProjection.prepare(listProjectionInput(threads: listedThreads, entries: listEntries, mailboxID: key.mailboxID))
         listProjection.store(rows, for: key)
         return rows
+    }
+
+    /// One projection's rows: their IDs in order and as a set, and each row's state.
+    struct ListRowIndex {
+        let key: MessageListProjection.Key
+        let ordered: [MailListRowID]
+        let set: Set<MailListRowID>
+        let states: [MessageListRowState]
+    }
+
+    /// Row IDs in list order. Selection and keyboard navigation read these
+    /// rather than mapping every row again.
+    var listRowIDs: [MailListRowID] { currentListRowIndex.ordered }
+    var listRowIDSet: Set<MailListRowID> { currentListRowIndex.set }
+    /// The list's rows in order. A page with the same rows in the same order
+    /// returns the same objects, and only the rows that changed are written to.
+    var listRowStates: [MessageListRowState] { currentListRowIndex.states }
+
+    private var currentListRowIndex: ListRowIndex {
+        let key = listProjectionKey
+        if let index = listRowIndex, index.key == key { return index }
+        let items = listItems
+        let index: ListRowIndex
+        if let previous = listRowIndex, previous.ordered.elementsEqual(items.lazy.map(\.id)) {
+            index = ListRowIndex(key: key, ordered: previous.ordered, set: previous.set, states: previous.states)
+        } else {
+            // A row that stays keeps its state object, so its view stays too.
+            var known = Dictionary((listRowIndex?.states ?? []).map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+            let ordered = items.map(\.id)
+            let states = items.map { known.removeValue(forKey: $0.id) ?? MessageListRowState(item: $0) }
+            index = ListRowIndex(key: key, ordered: ordered, set: Set(ordered), states: states)
+        }
+        // Native separators belong to the preceding row's bottom edge.
+        for (offset, item) in items.enumerated() {
+            let nextIsUnread = offset + 1 < items.count && items[offset + 1].thread.isUnread
+            index.states[offset].update(item: item, hidesSeparator: item.thread.isUnread || nextIsUnread)
+        }
+        listRowIndex = index
+        return index
     }
 
     var listProjectionKey: MessageListProjection.Key {
@@ -64,7 +108,8 @@ extension MailboxModel {
     }
 
     func selectListRows(_ rows: Set<MailListRowID>) {
-        let valid = rows.intersection(Set(listItems.map(\.id)))
+        let listed = listRowIDSet
+        let valid = rows.filter { listed.contains($0) }
         let messages = listPreferences.conversations ? [] : valid
         let threads = Set(valid.map(\.threadKey))
         if selectedMessageRows != messages { selectedMessageRows = messages }
@@ -139,7 +184,7 @@ extension MailboxModel {
 
     func selectRow(after leaving: Set<MailListRowID>) {
         guard leaving == selectedListRowIDs else { return }
-        let rows = listItems.map(\.id)
+        let rows = listRowIDs
         guard let first = rows.firstIndex(where: leaving.contains), let last = rows.lastIndex(where: leaving.contains) else { return }
         let above = rows[..<first].last { !leaving.contains($0) }
         let below = rows[(last + 1)...].first { !leaving.contains($0) }
@@ -183,5 +228,27 @@ extension MailboxModel {
             showSnoozeDate(forRows: [row])
         case .none: break
         }
+    }
+}
+
+/// One list row's content. Each row's view observes its own state, so a page
+/// that changes one conversation updates that row and leaves the others alone.
+@MainActor
+@Observable
+final class MessageListRowState: Identifiable {
+    nonisolated let id: MailListRowID
+    private(set) var item: MessageListItem
+    /// Whether the line under this row is hidden: the row or the one after it is unread.
+    private(set) var hidesSeparator = false
+
+    init(item: MessageListItem) {
+        id = item.id
+        self.item = item
+    }
+
+    /// Writes only what differs, so an unchanged row's view isn't asked to update.
+    fileprivate func update(item: MessageListItem, hidesSeparator: Bool) {
+        if self.item != item { self.item = item }
+        if self.hidesSeparator != hidesSeparator { self.hidesSeparator = hidesSeparator }
     }
 }

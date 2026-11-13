@@ -23,7 +23,7 @@ extension MailCache {
     /// Unread counts for every label Gmail listed, by label ID. A queued
     /// change moves them in the same write that moves the list.
     public func unreadCounts(accountID: String) -> AsyncThrowingStream<[String: LabelCounts], any Error> {
-        observe { db in try CacheTransaction(db: db).unreadCounts(accountID: accountID) }
+        observe(region: ObservedTables.unreadCounts) { db in try CacheTransaction(db: db).unreadCounts(accountID: accountID) }
     }
 }
 

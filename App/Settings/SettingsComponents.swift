@@ -11,7 +11,6 @@ struct SettingsEditorSheet<Content: View, Actions: View>: View {
     var onExit: (() -> Void)? = nil
     @ViewBuilder let content: Content
     @ViewBuilder let actions: Actions
-    @State private var contentHeight: CGFloat = Tokens.Layout.settingsHeight
 
     var body: some View {
         if let onExit {
@@ -34,17 +33,10 @@ struct SettingsEditorSheet<Content: View, Actions: View>: View {
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(Tokens.Space.s1)
                         .padding(.trailing, Tokens.Space.s2)
-                        .background {
-                            GeometryReader { geometry in
-                                Color.clear
-                                    .onAppear { contentHeight = ceil(geometry.size.height) }
-                                    .onChange(of: geometry.size.height) { _, height in
-                                        contentHeight = ceil(height)
-                                    }
-                            }
-                        }
                 }
-                .frame(height: min(contentHeight, Tokens.Settings.editorMaxContentHeight))
+                // The scroll view takes its content's height, up to the cap, in the first layout pass.
+                .frame(maxHeight: Tokens.Settings.editorMaxContentHeight)
+                .fixedSize(horizontal: false, vertical: true)
             } else {
                 content
             }

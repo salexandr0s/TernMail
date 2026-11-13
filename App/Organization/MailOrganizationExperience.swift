@@ -14,6 +14,20 @@ struct MailOrganizationExperience: View {
     var requirement: MailOrganizationRequirement? = nil
     var onOpenSettings: (SettingsDestination) -> Void = { _ in }
 
+    /// The page a phase shows. The phases of one stage update the same views in place.
+    private enum Stage {
+        case introduction, progress, review, delivery
+    }
+
+    private var stage: Stage {
+        switch model.phase {
+        case .idle: .introduction
+        case .reading, .analyzing, .paused: .progress
+        case .review: .review
+        case .applying, .queued, .complete: .delivery
+        }
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             ScrollView {
@@ -25,22 +39,26 @@ struct MailOrganizationExperience: View {
                             .padding(Tokens.Space.s4)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .ternSurface()
+                            .ternTransition(.disclosure)
                     }
                     phaseContent
                 }
                 .padding(Tokens.Space.s5)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .ternAnimation(value: model.errorMessage)
             }
             .scrollBounceBehavior(.basedOnSize)
-            // A new phase starts at the top; editing choices preserves review scroll.
-            .id(model.phase)
-            .transition(.opacity)
+            // A new stage starts at the top. A phase change within a stage, or an edit
+            // to the choices, keeps the views on screen and their scroll position.
+            .id(stage)
+            .ternTransition(.fade)
             if model.phase == .review && !model.categories.isEmpty {
                 MailOrganizationReviewFooter(model: model)
+                    .ternTransition(.panel(edge: .bottom))
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .ternAnimation(value: model.phase)
+        .ternAnimation(value: stage)
     }
 
     @ViewBuilder private var phaseContent: some View {

@@ -32,13 +32,7 @@ struct FollowUpSuggestionRequest {
         let identity = [message.record.accountID, message.record.threadID, message.id,
                         normalized(title), normalized(task.owner ?? "")].joined(separator: "\u{0}")
         let digest = SHA256.hash(data: Data(identity.utf8)).map { String(format: "%02x", $0) }.joined()
-        let parser = DateFormatter()
-        parser.locale = Locale(identifier: "en_US_POSIX")
-        parser.calendar = Calendar(identifier: .gregorian)
-        // Deadlines are calendar days encoded at UTC midnight, like Google Tasks.
-        parser.timeZone = TimeZone(secondsFromGMT: 0)
-        parser.dateFormat = "yyyy-MM-dd"
-        parser.isLenient = false
+        let parser = dueDateParser
         let dueAt = task.dueDate.flatMap { text -> Date? in
             guard let date = parser.date(from: text), parser.string(from: date) == text else { return nil }
             return date
@@ -46,6 +40,18 @@ struct FollowUpSuggestionRequest {
         return Self(source: FollowUpSource(record: message.record), title: title,
                     ownerName: task.owner, dueAt: dueAt, acceptanceKey: "summary:\(digest)")
     }
+
+    /// Shared by every suggestion: it is never changed after it is built.
+    private static let dueDateParser: DateFormatter = {
+        let parser = DateFormatter()
+        parser.locale = Locale(identifier: "en_US_POSIX")
+        parser.calendar = Calendar(identifier: .gregorian)
+        // Deadlines are calendar days encoded at UTC midnight, like Google Tasks.
+        parser.timeZone = TimeZone(secondsFromGMT: 0)
+        parser.dateFormat = "yyyy-MM-dd"
+        parser.isLenient = false
+        return parser
+    }()
 }
 
 extension AppModel {

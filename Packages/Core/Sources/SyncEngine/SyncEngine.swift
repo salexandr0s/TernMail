@@ -66,6 +66,10 @@ public actor SyncEngine {
     static let recentQuery = "newer_than:\(CacheHolds.recentDays)d"
     /// Metadata fetched per request group during a full sync.
     static let fullSyncChunk = 25
+    /// A first download stores what it has fetched once this many messages
+    /// wait, or this long after it last stored, whichever comes first.
+    static let fullSyncStoreCount = 100
+    static let fullSyncStoreInterval: TimeInterval = 0.3
     /// How long a complete label listing stays current. Until then a pass
     /// refreshes only the labels its history touched.
     static let labelRefreshInterval: TimeInterval = 5 * 60
@@ -112,6 +116,9 @@ public actor SyncEngine {
     private var pollTask: Task<Void, Never>?
     private var peopleTask: Task<Void, Never>?
     private var addressFoldTask: Task<Void, Never>?
+    /// Whether a pass has ended yet, and the launch work waiting for one to.
+    private var firstPassEnded = false
+    private var firstPassWaiters: [CheckedContinuation<Void, Never>] = []
     /// Wakes the settings lane when Gmail Settings comes on.
     private var settingsAccessTask: Task<Void, Never>?
     /// What the user is doing, from the app. Sets the poll interval.
@@ -245,9 +252,9 @@ public actor SyncEngine {
 
     /// Resumes interrupted sends, syncs now and then on `SyncSchedule`'s
     /// interval for the current activity, and refreshes identities and
-    /// contacts now and every 6 hours. If the write that resumes the sends
-    /// fails, it's tried again in the background, and the rest begins once
-    /// it lands.
+    /// contacts when the first pass ends and every 6 hours after. If the
+    /// write that resumes the sends fails, it's tried again in the
+    /// background, and the rest begins once it lands.
     public func start() async {
         guard !hasStarted, !isStopped else { return }
         hasStarted = true
@@ -301,8 +308,14 @@ public actor SyncEngine {
         scheduleSending()
         requestSync(reason: .poll)
         settingsAccessTask = Task { await wakeSettingsWhenAllowed() }
-        addressFoldTask = Task { await foldPendingAddresses() }
-        peopleTask = Task { [weak self] in
+        // Showing mail needs neither, so both wait for the first pass to end
+        // and then run below the work the user is waiting on.
+        addressFoldTask = Task(priority: .utility) {
+            await waitForFirstPassToEnd()
+            await foldPendingAddresses()
+        }
+        peopleTask = Task(priority: .utility) { [weak self] in
+            await self?.waitForFirstPassToEnd()
             while !Task.isCancelled {
                 await self?.refreshPeople()
                 try? await Task.sleep(for: Self.peopleRefreshInterval)
@@ -337,6 +350,8 @@ public actor SyncEngine {
         let reading = Array(readingLoads.values.map(\.task)) + Array(retiredReadingLoads.values)
         reading.forEach { $0.cancel() }
         background.forEach { $0.cancel() }
+        // Cancelled work still waiting for a first pass must wake to end.
+        releaseFirstPassWaiters()
         let attachmentPass = attachmentIndexPass
         attachmentPass?.cancel()
         let classificationPass = attachmentClassificationPass
@@ -473,6 +488,22 @@ public actor SyncEngine {
         while let running = pass { _ = try? await running.value }
     }
 
+    /// Returns once a pass has ended, whether or not it worked, or the engine
+    /// has stopped. The launch work that mail doesn't wait for starts after
+    /// it, so the first download doesn't share the writer with that work.
+    private func waitForFirstPassToEnd() async {
+        guard !firstPassEnded, !isStopped else { return }
+        await withCheckedContinuation { firstPassWaiters.append($0) }
+    }
+
+    /// Lets the work waiting for the first pass go ahead.
+    private func releaseFirstPassWaiters() {
+        firstPassEnded = true
+        let waiters = firstPassWaiters
+        firstPassWaiters = []
+        for waiter in waiters { waiter.resume() }
+    }
+
     /// Returns whether the pass found changes.
     func joinOrStartPass() async throws -> Bool {
         try Task.checkCancellation()
@@ -486,6 +517,7 @@ public actor SyncEngine {
         let task = Task {
             defer {
                 pass = nil
+                releaseFirstPassWaiters()
                 // Polling counts from here.
                 wake(.poll)
             }
@@ -574,21 +606,36 @@ public actor SyncEngine {
         var gone = Set<String>()
         var fetchedIDs = Set<String>()
         var updates: [CacheTransaction.MessageUpdate] = []
+        // What a first download has fetched and not yet stored, and when it
+        // last stored. The closing transaction stores whatever is left.
+        var unstored: [CacheTransaction.MessageUpdate] = []
+        var storedAt: Date?
         let kept = Set(listed)
         while true {
-            for start in stride(from: 0, to: wanted.count, by: Self.fullSyncChunk) {
-                let chunk = Array(wanted[start..<min(start + Self.fullSyncChunk, wanted.count)])
-                let (fetched, missing) = try await fetchMetadata(chunk)
-                updates += fetched
-                fetchedIDs.formUnion(chunk)
-                gone.formUnion(missing)
-                if !reset {
-                    try await write { tx in
-                        let live = deleted.withLock { ids in fetched.filter { !ids.contains($0.record.id) } }
-                        let threads = try tx.upsertMessages(live)
-                        try tx.rebuildThreads(threads, accountID: accountID)
-                    }
+            do {
+                for start in stride(from: 0, to: wanted.count, by: Self.fullSyncChunk) {
+                    let chunk = Array(wanted[start..<min(start + Self.fullSyncChunk, wanted.count)])
+                    let (fetched, missing) = try await fetchMetadata(chunk)
+                    updates += fetched
+                    fetchedIDs.formUnion(chunk)
+                    gone.formUnion(missing)
+                    guard !reset else { continue }
+                    unstored += fetched
+                    // The first group shows at once. After it a store waits
+                    // for enough messages or enough time, because each one
+                    // makes every open list read and lay out again.
+                    let isDue = storedAt.map {
+                        unstored.count >= Self.fullSyncStoreCount || now().timeIntervalSince($0) >= Self.fullSyncStoreInterval
+                    } ?? true
+                    guard isDue else { continue }
+                    try await storeFetched(unstored)
+                    unstored = []
+                    storedAt = now()
                 }
+            } catch {
+                // A first download that fails still shows what it fetched.
+                if !reset { try? await storeFetched(unstored) }
+                throw error
             }
             let finishedAt = now()
             let remaining = try await write { [gone, fetchedIDs, updates] tx -> Set<String> in
@@ -619,6 +666,19 @@ public actor SyncEngine {
         }
     }
 
+    /// Stores messages a first download has fetched, so they show while the
+    /// rest downloads. A message deleted here since it was fetched stays out.
+    private func storeFetched(_ updates: [CacheTransaction.MessageUpdate]) async throws {
+        guard !updates.isEmpty else { return }
+        let accountID = accountID
+        let deleted = deletedMessageIDs
+        try await write { tx in
+            let live = deleted.withLock { ids in updates.filter { !ids.contains($0.record.id) } }
+            let threads = try tx.upsertMessages(live)
+            try tx.rebuildThreads(threads, accountID: accountID)
+        }
+    }
+
     /// Applies `history.list` from `cursor`, committing each page as it
     /// arrives so a long backlog shows up while it downloads. Returns nil when
     /// Gmail no longer has history that old, otherwise whether anything changed.
@@ -643,7 +703,12 @@ public actor SyncEngine {
             let isLast = pageToken == nil
             let records = page.history ?? []
             sawRecords = sawRecords || !records.isEmpty
-            let cached = try await cache.read { tx in try tx.cachedMessageIDs(accountID: accountID) }
+            // Only the messages whose labels the page changes are looked up.
+            // A page that changes none, as most polls return, reads nothing.
+            let asked = HistoryChanges.labelChangedMessageIDs(in: records)
+            let cached = asked.isEmpty ? [] : try await cache.read { tx in
+                try tx.cachedMessageIDs(among: asked, accountID: accountID)
+            }
             let changes = try HistoryChanges(records: records, cachedMessageIDs: cached)
             // Gmail stamps every page with the mailbox's current history ID,
             // so only the last page may move the cursor there. An earlier
@@ -875,6 +940,14 @@ struct HistoryChanges {
     /// The newest record's ID; nil for a page without records.
     let newestHistoryID: Int64?
 
+    /// The messages `init` asks the cache about: those whose labels a record
+    /// changes. Added and deleted messages are handled whether cached or not.
+    static func labelChangedMessageIDs(in records: [HistoryRecord]) -> Set<String> {
+        Set(records.flatMap { ($0.labelsAdded ?? []) + ($0.labelsRemoved ?? []) }.map(\.message.id))
+    }
+
+    /// - Parameter cachedMessageIDs: The cached messages among
+    ///   `labelChangedMessageIDs(in:)`. Other IDs in it make no difference.
     init(records: [HistoryRecord], cachedMessageIDs: Set<String>) throws {
         let deleted = Set(records.flatMap { $0.messagesDeleted ?? [] }.map(\.message.id))
         var fetch: [String] = []

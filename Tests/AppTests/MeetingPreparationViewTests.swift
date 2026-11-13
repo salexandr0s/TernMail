@@ -249,7 +249,9 @@ import TernAI
                     }, summarize: { try self.report($0) })
             }, readEvent: { $0 }, sourceLinks: { _ in
                 [.init(accountID: "a", calendarID: "calendar", eventID: "review", threadID: "orion", messageID: "m1")]
-            }, sourceTitle: { self.candidate($0.threadID).title }, search: { _, _ in
+            }, sourceTitles: { keys in
+                Dictionary(uniqueKeysWithValues: keys.map { ($0, self.candidate($0.threadID).title) })
+            }, search: { _, _ in
                 let candidate = self.candidate("risks")
                 return [.init(key: candidate.thread, link: candidate.source, title: candidate.title, reason: "Matches your search.",
                     isExcluded: false, isExplicitlyIncluded: false, unavailableMessage: nil)]

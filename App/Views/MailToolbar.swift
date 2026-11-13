@@ -10,6 +10,8 @@ struct MailToolbar: CustomizableToolbarContent {
     let reply: (ReplyKind, SelectedMailQuote?) -> Void
     var isCompact = false
     var foldsReplies = false
+    /// The profiles, while the window is too narrow for their own picker.
+    var foldedProfiles: AccountPreferencesModel?
     /// Hidden while the window shows Calendar or the attachment library. Each
     /// group reads it here because an inner `hidden(false)` would win over one
     /// applied to the whole toolbar.
@@ -30,7 +32,8 @@ struct MailToolbar: CustomizableToolbarContent {
         ToolbarSpacer(.fixed, placement: .primaryAction)
         standardTriage
         ToolbarItem(id: "mail.compactActions", placement: .primaryAction) {
-            MailToolbarActions.CompactActions(mailbox: mailbox, foldsReplies: foldsReplies, reply: reply)
+            MailToolbarActions.CompactActions(mailbox: mailbox, foldsReplies: foldsReplies,
+                profiles: foldedProfiles, reply: reply)
         }
         .mailToolbarVisible(showsCompact)
         ToolbarSpacer(.fixed, placement: .primaryAction)

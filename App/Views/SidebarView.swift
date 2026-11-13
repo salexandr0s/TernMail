@@ -95,6 +95,10 @@ struct SidebarView: View {
         }
         .listStyle(.sidebar)
         .contentMargins(.horizontal, 0, for: .scrollContent)
+        // Favorites that arrive or leave fade, and the rows below move to their place.
+        .ternAnimation(value: mailbox.navigation.favorites.map(\.id))
+        // The Favorites rows open and close in step with the header's chevron.
+        .ternAnimation(value: favoritesCollapsed, duration: Tokens.Motion.fast)
         // A Section can apply its sheet to every row, queuing repeated presentations.
         .sheet(isPresented: $isAddingFavorite) {
             AddFavoriteView(mailbox: mailbox) { favoritesCollapsed = false }

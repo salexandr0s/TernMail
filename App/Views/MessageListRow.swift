@@ -105,8 +105,9 @@ private struct MessageListVisualRow: View, Equatable {
     @Environment(\.backgroundProminence) private var prominence
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.buttonsTakeKeyboardFocus) private var buttonsTakeFocus
+    @Environment(ListSenderPopoverState.self) private var senderPopover: ListSenderPopoverState?
     @State private var isHovered = false
-    @State private var showsSender = false
     @FocusState private var starFocused: Bool
 
     nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
@@ -195,30 +196,35 @@ private struct MessageListVisualRow: View, Equatable {
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilitySummary(labels: labels, date: date))
         .accessibilityAction(named: "Show sender details") {
-            if item.sender != nil { showsSender = true }
+            if let sender = item.sender { showSenderDetails(sender) }
         }
-        .onChange(of: item.id) { _, _ in showsSender = false }
     }
 
     @ViewBuilder private var avatar: some View {
         if let sender = item.sender {
-            Button { showsSender = true } label: {
+            Button { showSenderDetails(sender) } label: {
                 ContactAvatar(accountID: item.id.accountID, address: sender.address, name: sender.name ?? "",
                               cache: mailbox.cache, accounts: mailbox.accountStore, size: avatarSize)
             }
             .buttonStyle(.borderless)
             .help("Show sender details")
             .accessibilityLabel("Show details for \(sender.name ?? sender.address)")
-            .popover(isPresented: $showsSender, arrowEdge: .trailing) {
-                SenderProfilePopover(accountID: item.id.accountID, address: sender.address,
-                                     name: sender.name ?? sender.address, mailbox: mailbox)
-            }
-            // Spam never asks the sender's website for an icon.
-            .logoLookup(item.labels.contains(SystemLabel.spam) || mailbox.selectedLabelID == SystemLabel.spam
-                ? .never : .familiarSenders)
+            // The list's one sender popover points here while it is open for this row.
+            .background { ListSenderAnchor(row: item.id) }
+            .logoLookup(logoLookup)
         } else {
             TernAvatar(name: "", size: avatarSize)
         }
+    }
+
+    /// Spam never asks the sender's website for an icon.
+    private var logoLookup: LogoLookup {
+        item.labels.contains(SystemLabel.spam) || mailbox.selectedLabelID == SystemLabel.spam ? .never : .familiarSenders
+    }
+
+    private func showSenderDetails(_ sender: EmailAddress) {
+        senderPopover?.show(row: item.id, address: sender.address, name: sender.name ?? sender.address,
+                            logoLookup: logoLookup)
     }
 
     private func senderLine(date: String) -> some View {
@@ -254,7 +260,7 @@ private struct MessageListVisualRow: View, Equatable {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.borderless)
-                .focused($starFocused)
+                .focused($starFocused, whileButtonsTakeFocus: buttonsTakeFocus)
                 // Keep the action's space even while hidden, so hover never moves the date.
                 .opacity(showsStar ? 1 : 0)
                 .ternAnimation(value: showsStar, duration: Tokens.Motion.fast)

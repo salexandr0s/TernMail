@@ -66,6 +66,11 @@ import Testing
         for width in [1_280, 960, 720, 1_280] {
             window.setContentSize(NSSize(width: width, height: 760))
             try await expectBoundary()
+            // A sidebar that slid back in has the width it had before, not one the slide left it with.
+            if let pane = try calendarSplit().arrangedSubviews.first, CGFloat(width) >= Tokens.Calendar.compactWidth {
+                #expect(abs(pane.frame.width - Tokens.Calendar.sidebarWidth) <= 1,
+                    "Calendar's sidebar is \(pane.frame.width) points wide at \(width)")
+            }
         }
         let split = try calendarSplit()
         let sidebar = try #require(split.arrangedSubviews.first)
@@ -787,8 +792,8 @@ import Testing
             hiding: ["library.compactOptions"]
         )
         try await expectSharedPositions()
-        try await expectToolbar(in: window, width: 1_280, section: "library.",
-            spacesAfter: ["library.compactOptions"], hiding: ["library.viewMode", "library.sort"])
+        try await expectToolbar(in: window, width: 1_280, section: "library.", spacesAfter: ["library.sort"],
+            hiding: ["library.compactOptions"])
         try await expectSharedPositions()
         try await expectToolbar(in: window, width: 960, section: "library.",
             spacesAfter: ["library.compactOptions"], hiding: ["library.viewMode", "library.sort"])
@@ -828,9 +833,15 @@ import Testing
             hiding: ["mail.compactActions", "mail.compactReplies"]
         )
         try await expectSharedPositions()
+        // A hosted window can start with the sidebar at its minimum width, and
+        // the expanded actions fit beside that one at the default window width.
+        let sidebarWidth = try #require(mailSplit(in: controller.view).arrangedSubviews.first).frame.width
+        let expanded = !WorkspaceToolbarLayout(section: .mail, width: 1_280, sidebars: .init(mail: sidebarWidth)).compactActions
         try await expectToolbar(
-            in: window, width: 1_280, section: "mail.", spacesAfter: ["mail.trash", "mail.compactActions", "mail.compactReplies"],
-            hiding: ["mail.more"]
+            in: window, width: 1_280, section: "mail.",
+            spacesAfter: expanded ? ["mail.trash", "mail.more", "mail.forward"]
+                : ["mail.trash", "mail.compactActions", "mail.compactReplies"],
+            hiding: expanded ? ["mail.compactActions", "mail.compactReplies"] : ["mail.more"]
         )
         try await expectSharedPositions()
         try await expectToolbar(

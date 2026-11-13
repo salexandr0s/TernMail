@@ -99,6 +99,7 @@ enum MailToolbarActions {
     struct CompactActions: View {
         @Bindable var mailbox: MailboxModel
         let foldsReplies: Bool
+        var profiles: AccountPreferencesModel?
         let reply: (ReplyKind, SelectedMailQuote?) -> Void
 
         var body: some View {
@@ -116,6 +117,10 @@ enum MailToolbarActions {
                         Reply(mailbox: mailbox, kind: .forward, title: "Forward", symbol: "arrowshape.turn.up.right", reply: reply)
                     }
                     .labelStyle(.titleAndIcon)
+                }
+                if let profiles {
+                    Divider()
+                    ProfileChoices(model: profiles).pickerStyle(.menu)
                 }
             } label: { Label("More mail actions", systemImage: "ellipsis") }
                 .menuIndicator(.hidden)

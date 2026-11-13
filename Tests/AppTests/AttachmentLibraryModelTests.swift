@@ -73,6 +73,9 @@ import Testing
             await model.loadMore()
         }
         model.search = "invoice-604.pdf"
+        // The last page stays on screen, but commands see no files until the new page loads.
+        #expect(model.items.isEmpty)
+        #expect(model.presentedItems.count == 5)
         let filtered = Task { await model.reload() }
         defer { filtered.cancel() }
         try await waitUntil { model.totalCount == 1 && model.pageOffset == 0 }
@@ -180,6 +183,7 @@ import Testing
 
         model.accountID = "second"
         #expect(model.items.isEmpty)
+        #expect(model.presentedItems.isEmpty)
         #expect(model.totalCount == 0)
         let otherAccount = Task { await model.reload() }
         try await waitUntil { model.items.map(\.messageID) == ["other"] }
@@ -187,6 +191,7 @@ import Testing
         await otherAccount.value
         await mailbox.removeAccount(id: "second")
         #expect(model.items.isEmpty)
+        #expect(model.presentedItems.isEmpty)
         #expect(model.totalCount == 0)
         model.accountID = ""
         let remainingAccount = Task { await model.reload() }

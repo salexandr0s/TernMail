@@ -1,4 +1,6 @@
 import Foundation
+import MailStore
+import MessageContent
 import Testing
 @testable import Tern
 
@@ -43,5 +45,39 @@ import Testing
         var cleared = restored
         cleared.set(false, for: "news@example.com")
         #expect(cleared.storage.isEmpty)
+    }
+
+    /// Remote images load for a remembered sender only once the saved list
+    /// has been read, only for a verified sender, and only while it is listed.
+    @Test func rememberedImageSendersGrantOnlyWhatTheSavedListHolds() async throws {
+        let store = try AccountStore.inMemory()
+        try await store.save(AccountRecord(id: "account", email: "me@example.com", displayName: nil,
+            grantedScopes: [], addedAt: .now))
+        try await store.setImageSenderAllowed(true, address: "News@Example.com", accountID: "account")
+        let verified = SenderImageIdentity(accountID: "account", messageID: "first",
+            from: "News <news@example.com>", verifiedSender: "news@example.com")
+        let unverified = SenderImageIdentity(accountID: "account", messageID: "second",
+            from: "News <news@example.com>", verifiedSender: nil)
+
+        let senders = ImageSenderAllowSet(accountID: "account")
+        #expect(!senders.isKnown)
+        #expect(senders.remembered(verified) == nil)
+        senders.record(true, address: "news@example.com")
+        #expect(senders.remembered(verified) == nil)
+
+        await senders.load(from: store)
+        #expect(senders.isKnown)
+        #expect(senders.remembered(verified) == verified)
+        #expect(senders.remembered(unverified) == nil)
+        let otherAccount = SenderImageIdentity(accountID: "other", messageID: "first",
+            from: "News <news@example.com>", verifiedSender: "news@example.com")
+        #expect(senders.remembered(otherAccount) == nil)
+        senders.record(false, address: "NEWS@example.com")
+        #expect(senders.remembered(verified) == nil)
+
+        let withoutStore = ImageSenderAllowSet(accountID: "account")
+        await withoutStore.load(from: nil)
+        #expect(withoutStore.isKnown)
+        #expect(withoutStore.remembered(verified) == nil)
     }
 }

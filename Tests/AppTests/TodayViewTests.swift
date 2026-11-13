@@ -181,7 +181,7 @@ import Testing
         loadUnread: { _ in TodayUnreadSnapshot(messages: [TodayUnreadMessage(accountID: self.account.id, threadID: "mail", messageID: "unread",
             sender: "Jordan", subject: "Notes for tomorrow’s review", snippet: "I’ve added the latest estimates and a short agenda.", date: self.now, accountTitle: "Work")],
             totalCount: 1, scannedConversationLimitReached: false, messageLimitReached: false) },
-        loadCalendar: { _ in TodayCalendarSnapshot(events: [CalendarDisplayEvent(event: GoogleCalendarEvent(id: "review", summary: "Project review",
+        loadCalendar: { _, _ in TodayCalendarSnapshot(events: [CalendarDisplayEvent(event: GoogleCalendarEvent(id: "review", summary: "Project review",
             start: .init(date: self.now.addingTimeInterval(3600)), end: .init(date: self.now.addingTimeInterval(7200))),
             accountID: self.account.id, calendarID: "work")], calendarCount: 1, unavailableCount: 0, omittedCount: 0, isStale: false) })
 

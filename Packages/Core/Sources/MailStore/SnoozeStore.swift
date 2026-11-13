@@ -104,7 +104,7 @@ extension CacheTransaction {
 extension MailCache {
     /// Snoozed conversations in the cache, the soonest to wake first.
     public func snoozedThreads(accountID: String) -> AsyncThrowingStream<[SnoozedThread], any Error> {
-        observe { db in
+        observe(region: ObservedTables.snoozedThreads) { db in
             try Row.fetchAll(db, sql: """
                 WITH holds AS (
                     SELECT accountID, threadID, wakeAt FROM cacheHold
@@ -123,7 +123,7 @@ extension MailCache {
 
     /// Conversations a snooze brought back that are still in the Inbox.
     public func wokenThreadIDs(accountID: String) -> AsyncThrowingStream<Set<String>, any Error> {
-        observe { db in
+        observe(region: ObservedTables.wokenThreads) { db in
             try String.fetchSet(db, sql: "SELECT threadID FROM wokenThread WHERE accountID = ?", arguments: [accountID])
         }
     }

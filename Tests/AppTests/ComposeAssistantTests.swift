@@ -33,7 +33,8 @@ import TernAI
         fixture.model.prompt = "Answer briefly"
         fixture.model.send()
         try await Self.waitUntil { fixture.model.messages.last?.text.isEmpty == false }
-        await Task.yield()
+        // The tail has to reach the model before the stop, or there is nothing pending to keep.
+        try await Self.waitUntil { fixture.model.activeTextStream?.utf8Count == "First tail".utf8.count }
 
         if revokeAccess {
             fixture.assistant.setAccountEnabled("audit", enabled: false)

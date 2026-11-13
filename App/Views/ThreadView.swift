@@ -17,6 +17,11 @@ struct ThreadView: View {
     /// A conversation window titles itself from this.
     var onDetailChange: ((ThreadDetail) -> Void)? = nil
 
+    #if TERN_TEST_SUPPORT
+    /// Called on each body evaluation with the conversation and whether its reader is active.
+    static var onBodyEvaluation: ((ThreadKey, Bool) -> Void)?
+    #endif
+
     @State private var detail: ThreadDetail?
     @State private var expanded: Set<String> = []
     @State private var initializedExpansion = false
@@ -31,19 +36,21 @@ struct ThreadView: View {
     @State private var calendarNotice: String?
     @State private var calendarReplyBusy = false
     @State private var cancellationReview: EmailCalendarItem?
-    @State private var lastVisibleMessageID: String?
     @State private var primaryBodyReady = false
     @State private var initiallyMissingBodies: Set<String> = []
     @State private var availabilityGeneration: UInt64?
     private struct BodyAvailability { let fetchedAt: Date; let instant: ContinuousClock.Instant }
     @State private var bodyAvailability: [String: BodyAvailability] = [:]
+    /// Inline resources read together with the conversation, for the messages it opens with.
+    @State private var openingResources: [String: InitialMessageResources] = [:]
     @State private var delayedRead = DelayedReadController()
     @State private var selectedMailQuote: SelectedMailQuote?
     @State private var focusedMessageID: String?
-    @State private var hoveredLink: (messageID: String, url: String)?
+    @State private var linkHover = ReaderLinkHover()
     @State private var scrollPosition = ScrollPosition()
     @State private var paging = ReaderPaging()
     @State private var finder = ReaderFindModel()
+    @State private var summaryMotion = ThreadSummaryMotion()
     @FocusState private var readerFocused: Bool
     @AppStorage(ReadingPreferences.orderKey) private var messageOrder = ReadingPreferences.Order.oldestFirst.rawValue
     @AppStorage(ReadingPreferences.markReadKey) private var markReadPolicy = ReadingPreferences.MarkRead.immediately.rawValue
@@ -84,7 +91,20 @@ struct ThreadView: View {
         let delay: Double
         let isVisible: Bool
         let hasDetail: Bool
+        let primaryBodyReady: Bool
         let messageID: String?
+    }
+
+    /// How long the immediate policy waits for the first body before it marks
+    /// the conversation read anyway, for a body that is slow or never arrives.
+    private static let readSettleLimit: Duration = .milliseconds(300)
+
+    /// Only the immediate policy waits for the body, so the body's arrival
+    /// doesn't restart a delayed read.
+    private var readIdentity: ReadIdentity {
+        let waitsForBody = markReadPolicy == ReadingPreferences.MarkRead.immediately.rawValue
+        return ReadIdentity(key: key, policy: markReadPolicy, delay: readDelay, isVisible: isReaderActive,
+            hasDetail: readingDetail != nil, primaryBodyReady: waitsForBody && primaryBodyReady, messageID: selectedMessageID)
     }
 
     private var readingDetail: ThreadDetail? {
@@ -149,16 +169,20 @@ struct ThreadView: View {
             isExpanded: expanded.contains(message.id),
             isFocused: readerFocused && focusedMessageID == message.id,
             isReaderActive: isReaderActive,
-            retainsHiddenBody: retainsHiddenBody && lastVisibleMessageID == message.id,
+            // Read from the unobserved holder: this only matters once the reader is hidden,
+            // and the body runs again when that happens.
+            retainsHiddenBody: retainsHiddenBody && paging.lastVisibleMessageID == message.id,
             bodyLoadFailed: bodyLoadFailed,
             requiredNetwork: availabilityGeneration == interaction?.body && initiallyMissingBodies.contains(message.id),
             bodyAvailableAt: bodyAvailability[message.id]?.instant,
+            initialResources: openingResources[message.id],
             mailbox: mailbox,
             finder: finder,
-            onVisible: { if isReaderActive { lastVisibleMessageID = message.id } },
+            onVisible: { if isReaderActive { paging.lastVisibleMessageID = message.id } },
             onReadable: { tier, readyAt in
                 guard isReaderActive else { return }
                 primaryBodyReady = true
+                ReaderReadiness.shared.markReadable(key)
                 if let generation = interaction?.body {
                     if let readyAt {
                         NavigationPerformance.shared.requiredContentReady(.reader, generation: generation, at: readyAt)
@@ -177,10 +201,7 @@ struct ThreadView: View {
                         threadID: message.record.threadID, messageID: message.id, text: text)
                 }
             },
-            onHoverLink: { url in
-                if let url { hoveredLink = (message.id, url) }
-                else if hoveredLink?.messageID == message.id { hoveredLink = nil }
-            },
+            onHoverLink: { url in linkHover.set(url, from: message.id) },
             onMarkUnreadFromHere: {
                 // This message and every later one, whichever way the list reads.
                 mailbox.markUnread(messageIDs: detail.messages.drop { $0.id != message.id }.map(\.id),
@@ -256,7 +277,7 @@ struct ThreadView: View {
                             }
                             if selectedMessageID == nil {
                             ThreadSummaryView(key: key, detail: detail, assistant: app.assistant,
-                                isActive: isReaderActive) { source in
+                                isActive: isReaderActive, motion: summaryMotion) { source in
                                 guard source.accountID == key.accountID, source.threadID == key.threadID,
                                       let messageID = source.messageID,
                                       detail.messages.contains(where: { $0.id == messageID }) else {
@@ -281,6 +302,7 @@ struct ThreadView: View {
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(Tokens.Space.s4)
+                        .followsThreadSummary(summaryMotion)
                         .background { PerformanceScrollSurfaceMarker(name: "reader", isActive: isReaderActive) }
                     }
                     .scrollPosition($scrollPosition)
@@ -299,10 +321,7 @@ struct ThreadView: View {
                         return .handled
                     }
                     .onKeyPress(.space) { pageDown() }
-                    .overlay(alignment: .bottomLeading) {
-                        linkReadout
-                            .ternAnimation(value: hoveredLink != nil, duration: Tokens.Motion.fast)
-                    }
+                    .overlay(alignment: .bottomLeading) { ReaderLinkReadout(hover: linkHover) }
                     .safeAreaInset(edge: .top, spacing: 0) {
                         if finder.isVisible {
                             ReaderFindBar(model: finder)
@@ -352,7 +371,9 @@ struct ThreadView: View {
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
+                // Saved mail arrives within a few frames. The indicator is for slower loads.
                 ProgressView("Opening conversation…")
+                    .ternDelayedLoading()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
@@ -384,9 +405,10 @@ struct ThreadView: View {
 
     private var readerLifecycleContent: some View {
         readerSceneContent
-        .onChange(of: key) { _, _ in
+        .onChange(of: key) { previous, _ in
             selectedMailQuote = nil
             finder.hide()
+            ReaderReadiness.shared.clear(previous)
         }
         .onChange(of: detail, initial: true) { _, detail in if let detail { onDetailChange?(detail) } }
         .onChange(of: selectedMessageID) { _, _ in selectedMailQuote = nil }
@@ -394,6 +416,7 @@ struct ThreadView: View {
             guard !retain, !isReaderActive else { return }
             detail = nil; hasLoaded = false; primaryBodyReady = false
             bodyAvailability.removeAll()
+            openingResources = [:]
             finder.discardSourceText()
             calendarSuggestions = EmailCalendarModel()
         }
@@ -408,58 +431,83 @@ struct ThreadView: View {
             var loading: Task<Void, Never>?
             var recordedAvailability = false
             defer { loading?.cancel() }
+            @MainActor func publish(_ detail: ThreadDetail?, deliveredAt: ContinuousClock.Instant) {
+                for message in detail?.messages ?? [] {
+                    if let body = message.body, bodyAvailability[message.id]?.fetchedAt != body.fetchedAt {
+                        bodyAvailability[message.id] = BodyAvailability(fetchedAt: body.fetchedAt, instant: deliveredAt)
+                    }
+                }
+                if !recordedAvailability, let messages = detail?.messages, !messages.isEmpty {
+                    initiallyMissingBodies = Set(messages.filter { $0.body == nil }.map(\.id))
+                    availabilityGeneration = interaction?.body
+                    recordedAvailability = true
+                }
+                if !initializedExpansion, let detail, !detail.messages.isEmpty {
+                    expanded = Self.openingExpansion(of: detail, selected: selectedMessageID)
+                    initializedExpansion = true
+                }
+                self.detail = detail
+                hasLoaded = true
+                if detail != nil, let generation = interaction?.header {
+                    NavigationPerformance.shared.contentReady(.readerHeader, cacheTier: .local, generation: generation)
+                }
+                // Detail is published only after unread expansion is captured.
+                if loading == nil, detail != nil {
+                    loading = Task {
+                        // Hydration is independent of visibility. ReadIdentity owns
+                        // automatic read changes after unread expansion is captured.
+                        let opened = await mailbox.open(key, markRead: false)
+                        guard !Task.isCancelled else { return }
+                        bodyLoadFailed = !opened
+                        if opened, let owner = mailbox.account(id: key.accountID) {
+                            do {
+                                try await owner.engine.refreshCalendarInvitations(threadID: key.threadID)
+                            } catch is CancellationError { return }
+                            catch { calendarNotice = "Calendar invitations could not refresh. Showing cached suggestions." }
+                        }
+                    }
+                }
+            }
             do {
+                // One read brings the conversation and the inline resources of
+                // the messages it opens with. Each of those can then prepare
+                // its body at once, without a read of its own first.
+                let known = initializedExpansion ? expanded : nil
+                let selected = selectedMessageID
+                let newestFirst = messageOrder == ReadingPreferences.Order.newestFirst.rawValue
+                let opening = try await mailbox.cache.readingThreadOpening(accountID: key.accountID, threadID: key.threadID) { detail in
+                    Self.openingMessageIDs(in: detail, expanded: known, selected: selected, newestFirst: newestFirst)
+                }
+                guard !Task.isCancelled else { return }
+                let openedAt = ContinuousClock.now
+                openingResources = opening.resources.mapValues { InitialMessageResources(snapshot: $0, deliveredAt: openedAt) }
+                publish(opening.detail, deliveredAt: openedAt)
+                // The observation starts with the conversation as it is now.
+                // That is what the read above returned unless a write came between.
+                var repeatsOpening = true
                 for try await detail in mailbox.threadDetail(key) {
                     guard !Task.isCancelled else { return }
-                    let deliveredAt = ContinuousClock.now
-                    for message in detail?.messages ?? [] {
-                        if let body = message.body, bodyAvailability[message.id]?.fetchedAt != body.fetchedAt {
-                            bodyAvailability[message.id] = BodyAvailability(fetchedAt: body.fetchedAt, instant: deliveredAt)
-                        }
-                    }
-                    if !recordedAvailability, let messages = detail?.messages, !messages.isEmpty {
-                        initiallyMissingBodies = Set(messages.filter { $0.body == nil }.map(\.id))
-                        availabilityGeneration = interaction?.body
-                        recordedAvailability = true
-                    }
-                    if !initializedExpansion, let messages = detail?.messages, !messages.isEmpty {
-                        expanded = ReadingPreferences.initiallyExpanded(ids: messages.map(\.id),
-                            unread: Set(messages.filter(\.isUnread).map(\.id)), selected: selectedMessageID)
-                        initializedExpansion = true
-                    }
-                    self.detail = detail
-                    hasLoaded = true
-                    if detail != nil, let generation = interaction?.header {
-                        NavigationPerformance.shared.contentReady(.readerHeader, cacheTier: .local, generation: generation)
-                    }
-                    // Detail is published only after unread expansion is captured.
-                    if loading == nil, detail != nil {
-                        loading = Task {
-                            // Hydration is independent of visibility. ReadIdentity owns
-                            // automatic read changes after unread expansion is captured.
-                            let opened = await mailbox.open(key, markRead: false)
-                            guard !Task.isCancelled else { return }
-                            bodyLoadFailed = !opened
-                            if opened, let owner = mailbox.account(id: key.accountID) {
-                                do {
-                                    try await owner.engine.refreshCalendarInvitations(threadID: key.threadID)
-                                } catch is CancellationError { return }
-                                catch { calendarNotice = "Calendar invitations could not refresh. Showing cached suggestions." }
-                            }
-                        }
-                    }
+                    defer { repeatsOpening = false }
+                    if repeatsOpening, detail == opening.detail { continue }
+                    publish(detail, deliveredAt: .now)
                 }
             } catch {
                 guard !Task.isCancelled else { return }
                 self.detail = nil
+                openingResources = [:]
                 loadFailed = true
             }
         }
-        .task(id: ReadIdentity(key: key, policy: markReadPolicy, delay: readDelay, isVisible: isReaderActive,
-            hasDetail: readingDetail != nil, messageID: selectedMessageID)) {
+        .task(id: readIdentity) {
             delayedRead.cancel()
             guard isReaderActive, readingDetail != nil else { return }
             if markReadPolicy == ReadingPreferences.MarkRead.immediately.rawValue {
+                // Marking read rewrites the conversation and its list row, so it
+                // follows the first body onto the screen. When the body is ready
+                // the identity changes and this task starts again without the wait.
+                if !primaryBodyReady {
+                    do { try await Task.sleep(for: Self.readSettleLimit) } catch { return }
+                }
                 await mailbox.markConversationRead(key, messageID: selectedMessageID)
             } else if markReadPolicy == ReadingPreferences.MarkRead.delayed.rawValue {
                 delayedRead.schedule(delay: ReadingPreferences.readDelay(readDelay)) { await mailbox.markConversationRead(key, messageID: selectedMessageID) }
@@ -468,16 +516,51 @@ struct ThreadView: View {
         .onDisappear {
             delayedRead.cancel()
             finder.hide()
+            ReaderReadiness.shared.clear(key)
         }
         .onChange(of: isReaderActive, initial: true) { _, active in
-            if !active { delayedRead.cancel(); finder.hide(); selectedMailQuote = nil; hoveredLink = nil; readerFocused = false }
+            if !active {
+                delayedRead.cancel(); finder.hide(); selectedMailQuote = nil; linkHover.clear(); readerFocused = false
+                ReaderReadiness.shared.clear(key)
+                // A hidden reader keeps only its retained body. The next
+                // activation reads these again.
+                if !openingResources.isEmpty { openingResources = [:] }
+            }
             else if readingDetail != nil, let generation = interaction?.header {
                 NavigationPerformance.shared.contentReady(.readerHeader, cacheTier: .retained, generation: generation)
             }
         }
     }
 
+    /// How many of the messages a conversation opens with have their inline
+    /// resources read along with it. Later ones start below the first screen
+    /// and read their own when they are shown. Neighbour prefetch prepares
+    /// the same number.
+    private nonisolated static let openingResourceLimit = 2
+
+    /// The messages a conversation opens with expanded. The opening read and
+    /// the first publication share this, so the read brings resources for the
+    /// messages that will be open.
+    private nonisolated static func openingExpansion(of detail: ThreadDetail, selected: String?) -> Set<String> {
+        ReadingPreferences.initiallyExpanded(ids: detail.messages.map(\.id),
+            unread: Set(detail.messages.filter(\.isUnread).map(\.id)), selected: selected)
+    }
+
+    /// The first expanded messages in reading order. `expanded` is nil until
+    /// the conversation has opened once, and then it is the reader's own choice.
+    private nonisolated static func openingMessageIDs(in detail: ThreadDetail, expanded: Set<String>?, selected: String?,
+                                                      newestFirst: Bool) -> [String] {
+        let expanded = expanded ?? openingExpansion(of: detail, selected: selected)
+        // A message list shows only the message it selected.
+        var shown = detail.messages.map(\.id).filter { selected == nil || $0 == selected }
+        if newestFirst { shown.reverse() }
+        return Array(shown.filter(expanded.contains).prefix(openingResourceLimit))
+    }
+
     var body: some View {
+        #if TERN_TEST_SUPPORT
+        let _ = Self.onBodyEvaluation?(key, isReaderActive)
+        #endif
         readerLifecycleContent
         .task(id: CalendarSuggestionLoadIdentity(detail: readingDetail, storeReady: app.calendar.store != nil,
             access: app.calendar.accessRevision, timeZone: app.calendar.calendar.timeZone.identifier,
@@ -569,24 +652,6 @@ struct ThreadView: View {
         }
         return .handled
     }
-
-    /// The hovered link's destination, over the bottom of the reader like Safari's status bar.
-    @ViewBuilder private var linkReadout: some View {
-        if let url = hoveredLink?.url {
-            Text(url)
-                .font(.callout)
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .padding(.horizontal, Tokens.Space.s2)
-                .padding(.vertical, Tokens.Space.s1)
-                .background(.bar, in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
-                .overlay { RoundedRectangle(cornerRadius: Tokens.Radius.sm).strokeBorder(Tokens.Surface.border, lineWidth: Tokens.Border.hairline) }
-                .padding(Tokens.Space.s2)
-                .allowsHitTesting(false)
-                .accessibilityLabel("Link destination: \(url)")
-                .ternTransition(.fade)
-        }
-    }
 }
 
 /// Where the reader is scrolled, for Space paging.
@@ -604,11 +669,68 @@ private struct ReaderPage: Equatable {
     }
 }
 
-/// Holds the scroll geometry outside SwiftUI state, so scrolling doesn't
+/// Holds what scrolling changes outside SwiftUI state, so scrolling doesn't
 /// rebuild the conversation.
 @MainActor
 private final class ReaderPaging {
     var page = ReaderPage()
+    /// The message that last scrolled into view. A hidden reader keeps that
+    /// message's body.
+    var lastVisibleMessageID: String?
+}
+
+/// The link under the pointer. Only the readout observes it, so moving over
+/// links doesn't rebuild the conversation.
+@MainActor @Observable
+private final class ReaderLinkHover {
+    struct Link: Equatable {
+        let messageID: String
+        let url: String
+    }
+
+    private(set) var link: Link?
+
+    /// A message passes nil when the pointer leaves its link. That clears the
+    /// readout only while the link shown is still that message's.
+    func set(_ url: String?, from messageID: String) {
+        if let url {
+            let hovered = Link(messageID: messageID, url: url)
+            if link != hovered { link = hovered }
+        } else if link?.messageID == messageID {
+            link = nil
+        }
+    }
+
+    func clear() {
+        if link != nil { link = nil }
+    }
+}
+
+/// The hovered link's destination, over the bottom of the reader like Safari's status bar.
+private struct ReaderLinkReadout: View {
+    let hover: ReaderLinkHover
+
+    var body: some View {
+        readout
+            .ternAnimation(value: hover.link != nil, duration: Tokens.Motion.fast)
+    }
+
+    @ViewBuilder private var readout: some View {
+        if let url = hover.link?.url {
+            Text(url)
+                .font(.callout)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .padding(.horizontal, Tokens.Space.s2)
+                .padding(.vertical, Tokens.Space.s1)
+                .background(.bar, in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
+                .overlay { RoundedRectangle(cornerRadius: Tokens.Radius.sm).strokeBorder(Tokens.Surface.border, lineWidth: Tokens.Border.hairline) }
+                .padding(Tokens.Space.s2)
+                .allowsHitTesting(false)
+                .accessibilityLabel("Link destination: \(url)")
+                .ternTransition(.fade)
+        }
+    }
 }
 
 /// The subject, followed by a chip for the Inbox and each user label the

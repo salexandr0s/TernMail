@@ -58,6 +58,9 @@ final class MailboxModel {
     @ObservationIgnored private let snoozeStore: AccountStore?
     var accountStore: AccountStore? { snoozeStore }
     @ObservationIgnored private var isStarted = false
+    /// Whether the accounts' engines may run. The window shows the saved
+    /// mail first, and the engines start after it.
+    @ObservationIgnored private var isNetworkStarted = false
     /// While the search field has text, the list shows its results.
     let search: SearchModel
     let navigation: MailNavigationModel
@@ -119,6 +122,8 @@ final class MailboxModel {
     var listPresentationRevision: Int { Int(truncatingIfNeeded: listDataRevision) }
     private(set) var isListPresentationReady = false
     @ObservationIgnored let listProjection = MessageListProjection()
+    /// The rows of the projection last asked for. Read them through `listRowIDs` and `listRowStates`.
+    @ObservationIgnored var listRowIndex: ListRowIndex?
     var listOwnAddresses: [String: Set<String>] = [:] { didSet { if listOwnAddresses != oldValue { listContextRevision &+= 1 } } }
     var accountPresentation: [String: AccountMailPreferences] = [:] { didSet { if accountPresentation != oldValue { listContextRevision &+= 1 } } }
     var visibleAccountIDs: Set<String>?
@@ -178,7 +183,13 @@ final class MailboxModel {
     /// The label whose deletion waits for confirmation.
     var labelToDelete: LabelRecord?
     /// Choose Date & Time, open for these conversations while set.
-    var snoozeDateTargets: Set<ThreadKey>? { didSet { if snoozeDateTargets == nil { snoozeRowTargets = nil } } }
+    var snoozeDateTargets: Set<ThreadKey>? {
+        didSet { if snoozeDateTargets == nil { snoozeRowTargets = nil } else { snoozeDateRequest += 1 } }
+    }
+    /// Counts the requests for Choose Date & Time. Closing it and asking again
+    /// in the same moment leaves the targets as the list last drew them, so
+    /// the list goes by this count to open it again.
+    private(set) var snoozeDateRequest = 0
     var snoozeRowTargets: Set<MailListRowID>?
     /// Open compose windows, so quitting can store what they show.
     @ObservationIgnored private var composeModels = NSHashTable<ComposeModel>.weakObjects()
@@ -221,10 +232,13 @@ final class MailboxModel {
     func applyAccountPresentation(preferences: [AccountMailPreferences], visibleAccountIDs: Set<String>) {
         let previousSearchIDs = Set(searchedAccounts.map(\.account.id))
         let previousMailboxIDs = Set(selectedAccounts.map(\.account.id))
-        let visibilityChanged = self.visibleAccountIDs != visibleAccountIDs
-        if visibilityChanged { listPages.stop() }
+        let previousPresentedIDs = Set(presentedAccounts.map(\.account.id))
         accountPresentation = Dictionary(preferences.map { ($0.accountID, $0) }, uniquingKeysWith: { _, last in last })
         self.visibleAccountIDs = visibleAccountIDs
+        // Every account shows until the first application, so one that hides
+        // none leaves the list's first read running.
+        let visibilityChanged = previousPresentedIDs != Set(presentedAccounts.map(\.account.id))
+        if visibilityChanged { listPages.stop() }
         var destination = selectedMailbox
         if case .account(let id, _)? = destination, !visibleAccountIDs.contains(id) {
             destination = .combined(SystemLabel.inbox)
@@ -276,7 +290,8 @@ final class MailboxModel {
         otherAccounts.append(added)
         accountsChanged()
         onCreate?(added)
-        if isStarted { await added.start() }
+        if isStarted { await added.startLocal() }
+        if isNetworkStarted { await added.startNetwork() }
     }
 
     /// Rebuilds one account's network runtime while retaining its local setup,
@@ -305,7 +320,10 @@ final class MailboxModel {
             }
         }
         accountsChanged()
-        if isStarted { await replacement.start() }
+        if isStarted { await replacement.startLocal() }
+        // Before the network start no engine runs yet, so the replacement
+        // waits for it like the account it replaces.
+        if isNetworkStarted { await replacement.startNetwork() }
     }
 
     /// Takes an account out of the window and stops it, for its sign-out.
@@ -371,7 +389,15 @@ final class MailboxModel {
         return Set(found ?? [])
     }
 
+    /// Shows the saved mail, then starts every account's engine.
     func start() async {
+        await startNetwork()
+    }
+
+    /// Shows what the cache holds: the navigation, the list and each
+    /// account's labels. It starts no engine, so opening a mailbox runs it
+    /// as soon as the window shows it.
+    func startLocal() async {
         guard !isStopped, !isStarted else { return }
         isStarted = true
         let navigation = navigation
@@ -379,7 +405,30 @@ final class MailboxModel {
         observeThreads()
         await withTaskGroup(of: Void.self) { group in
             for account in accounts {
-                group.addTask { await account.start() }
+                group.addTask { await account.startLocal() }
+            }
+        }
+    }
+
+    /// Starts every account's engine, after the local start. An account
+    /// added or replaced later starts its engine too.
+    func startNetwork() async {
+        await startLocal()
+        guard !isStopped, !isNetworkStarted else { return }
+        isNetworkStarted = true
+        await withTaskGroup(of: Void.self) { group in
+            for account in accounts {
+                group.addTask { await account.startNetwork() }
+            }
+        }
+    }
+
+    /// Reads which accounts have synced before. An empty list words itself
+    /// by that, so opening a mailbox reads it before the window shows it.
+    func restoreSyncState() async {
+        await withTaskGroup(of: Void.self) { group in
+            for account in accounts {
+                group.addTask { await account.restoreSyncState() }
             }
         }
     }
@@ -536,6 +585,9 @@ final class MailboxModel {
             retainUnreadRowsForReading(key)
             listPages.invalidateRetained()
         }
+        // Retained pages are read again after a change, and that read has to
+        // follow the write.
+        defer { if markRead { listPages.invalidateRetained() } }
         do {
             try await owner.engine.openThread(key.threadID, markRead: markRead)
             return true
@@ -1067,7 +1119,15 @@ final class MailboxModel {
         }, onValue: { [weak self] prepared, retained in
             guard let self, !isStopped, selectedMailbox == mailbox, mailboxPageGeneration == generation else { return }
             applyMailboxPage(prepared, retained: retained)
-        }, onError: { [weak self] in self?.selectedAccounts.forEach { $0.cacheReadFailed() } })
+        }, onError: { [weak self] in self?.mailboxPageFailed(generation: generation) })
+    }
+
+    /// A failed read delivers no page, so the empty list stops waiting for
+    /// one and shows the accounts' failure.
+    private func mailboxPageFailed(generation: UInt64) {
+        selectedAccounts.forEach { $0.cacheReadFailed() }
+        guard !isStopped, mailboxPageGeneration == generation, !search.isActive else { return }
+        isListPresentationReady = true
     }
 
     private func applyMailboxPage(_ prepared: PreparedMailListPage, retained: Bool) {
@@ -1086,8 +1146,8 @@ final class MailboxModel {
         }
         isListPresentationReady = true
         listChanged()
-        let validRows = Set(listItems.map(\.id))
-        let retainedRows = selectedMessageRows.intersection(validRows)
+        let validRows = listRowIDSet
+        let retainedRows = selectedMessageRows.filter { validRows.contains($0) }
         if retainedRows != selectedMessageRows { selectedMessageRows = retainedRows }
     }
 
@@ -1107,7 +1167,7 @@ final class MailboxModel {
                 }
             } catch {
                 guard !Task.isCancelled else { return }
-                self?.selectedAccounts.forEach { $0.cacheReadFailed() }
+                self?.mailboxPageFailed(generation: generation)
             }
         }
     }
@@ -1344,7 +1404,7 @@ final class MailboxModel {
     /// selection, stopping at the ends, or the first one when none is selected.
     func selectAdjacentThread(_ offset: Int) {
         if !listPreferences.conversations {
-            let rows = listItems.map(\.id)
+            let rows = listRowIDs
             guard !rows.isEmpty else { return }
             let indexes = rows.indices.filter { selectedMessageRows.contains(rows[$0]) }
             let index = offset > 0 ? min((indexes.last ?? -1) + 1, rows.count - 1) : max((indexes.first ?? 1) - 1, 0)

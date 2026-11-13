@@ -140,6 +140,7 @@ private struct TernSidebarWidthProbe: NSViewRepresentable {
 
     func updateNSView(_ view: Probe, context: Context) {
         view.preferredWidth = width
+        if recordsWidth, !view.recordsWidth { view.restoreAfterLayout() }
         view.recordsWidth = recordsWidth
         view.onMeasure = onMeasure
         view.onReady = onReady
@@ -155,10 +156,19 @@ private struct TernSidebarWidthProbe: NSViewRepresentable {
         private var splitWidth: CGFloat?
         private var windowWidth: CGFloat?
         private var scheduled = false
+        private var laysOutBeforeRestoring = false
 
         override func hitTest(_ point: NSPoint) -> NSView? { nil }
         override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); scheduleMeasurement() }
         override func layout() { super.layout(); scheduleMeasurement() }
+
+        /// A slide that ends frees the column's width, and the split can then
+        /// hand it more. Nobody dragged, so the saved width goes back once the
+        /// split has laid out, and the wider one is never recorded.
+        func restoreAfterLayout() {
+            widthToRestore = preferredWidth
+            laysOutBeforeRestoring = true
+        }
 
         func scheduleMeasurement() {
             guard !scheduled else { return }
@@ -169,6 +179,10 @@ private struct TernSidebarWidthProbe: NSViewRepresentable {
                 scheduled = false
                 guard let window, let divider = EnclosingSplitDivider(of: self),
                       divider.split.bounds.width > 0 else { return }
+                if laysOutBeforeRestoring {
+                    laysOutBeforeRestoring = false
+                    divider.split.layoutSubtreeIfNeeded()
+                }
                 // Keep the dragged width through native split/window resizing
                 // without recording temporary sizes as divider drags.
                 if let previous = splitWidth, abs(previous - divider.split.bounds.width) > 0.5 {

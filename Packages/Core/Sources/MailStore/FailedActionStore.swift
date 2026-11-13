@@ -9,7 +9,7 @@ public enum FailedActionError: Error, Sendable, Equatable {
 
 extension MailCache {
     public func failedActions(accountIDs: [String]) -> AsyncThrowingStream<[PendingAction], any Error> {
-        observe { db in
+        observe(region: ObservedTables.pendingChanges) { db in
             try PendingAction.filter(accountIDs.contains(Column("accountID")) && Column("state") == PendingAction.State.failed.rawValue)
                 .order(Column("id").desc).fetchAll(db)
         }

@@ -100,6 +100,8 @@ private final class MailListSnapshotBudget {
     func release(_ id: UUID) {
         if let entry = entries.removeValue(forKey: id) { bytes -= entry.cost }
     }
+
+    func holds(_ id: UUID) -> Bool { entries[id] != nil }
 }
 
 /// Recent mailboxes remain observed, so returning to one cannot replay a
@@ -111,73 +113,184 @@ final class MailListPageCache {
         let labelID: String
         let limit: Int
         var retainedReadRows: Set<MailListRowID> = []
+
+        /// True for the same mailbox and visit at another page size.
+        func isOtherLimit(of other: Key) -> Bool {
+            limit != other.limit && accountIDs == other.accountIDs && labelID == other.labelID
+                && retainedReadRows == other.retainedReadRows
+        }
     }
+
+    typealias Configuration = @MainActor (MailListPage) -> (MessageListProjection.Input, MessageListProjection.Key)
 
     private final class Entry {
         let id = UUID()
+        let cache: MailCache
+        var configuration: Configuration
         var value: PreparedMailListPage?
+        /// The last prepared page. The next one reuses its unchanged rows.
+        /// Invalidation leaves it alone, and it is never replayed.
+        var reuseBase: PreparedMailListPage?
         var task: Task<Void, Never>?
         var canReplay = true
+        /// True until the first page is prepared. The read a new activation
+        /// would start is then already running.
+        var isLoading = true
+
+        init(cache: MailCache, configuration: @escaping Configuration) {
+            self.cache = cache
+            self.configuration = configuration
+        }
     }
 
     private var entries: [Key: Entry] = [:]
     private var recent: [Key] = []
     private var active: Key?
     private var deliver: ((PreparedMailListPage, Bool) -> Void)?
+    private var fail: (() -> Void)?
     private let capacity = 4
 
-    func activate(_ key: Key, cache: MailCache,
-                  configuration: @escaping @MainActor (MailListPage) -> (MessageListProjection.Input, MessageListProjection.Key),
+    func activate(_ key: Key, cache: MailCache, configuration: @escaping Configuration,
                   onValue: @escaping @MainActor (PreparedMailListPage, Bool) -> Void,
                   onError: @escaping @MainActor () -> Void) {
+        // Loading more of a mailbox changes its key. The larger page reuses
+        // the rows its smaller page already prepared.
+        let seed = entries[key] == nil ? reuseSeed(for: key) : nil
+        if active != key { leaveActive() }
         active = key
         deliver = onValue
+        fail = onError
         recent.removeAll { $0 == key }
         recent.append(key)
-        if let entry = entries[key], entry.canReplay, let value = entry.value {
-            MailListSnapshotBudget.shared.touch(entry.id)
-            onValue(value, true)
+        if let entry = entries[key] {
+            entry.configuration = configuration
+            if entry.canReplay {
+                if let value = entry.value {
+                    MailListSnapshotBudget.shared.touch(entry.id)
+                    onValue(value, true)
+                    return
+                }
+                // The first read for this key is still running and nothing has
+                // invalidated it. Its page goes to the callbacks set above, so
+                // starting the read again would only deliver it later.
+                if entry.isLoading { return }
+            }
+            // An evicted or explicitly invalidated value must get a fresh first
+            // observation value even if no subsequent write changes the mailbox.
+            subscribe(entry, to: key)
             return
         }
-        // An evicted or explicitly invalidated value must get a fresh first
-        // observation value even if no subsequent write changes the mailbox.
-        if entries[key] != nil { remove(key); recent.append(key) }
-        let entry = Entry()
+        let entry = Entry(cache: cache, configuration: configuration)
+        entry.reuseBase = seed
         entries[key] = entry
         while recent.count > capacity { remove(recent.removeFirst()) }
+        subscribe(entry, to: key)
+    }
+
+    /// Starts the entry's observation over. Its first page is read after this call.
+    private func subscribe(_ entry: Entry, to key: Key) {
+        entry.task?.cancel()
+        entry.canReplay = true
+        entry.isLoading = true
+        entry.value = nil
         let retained = Dictionary(grouping: key.retainedReadRows, by: \.accountID)
             .mapValues { Set($0.compactMap(\.messageID)) }
-        let stream = cache.listPage(.mailbox(accountIDs: key.accountIDs, labelID: key.labelID, limit: key.limit,
+        let stream = entry.cache.listPage(.mailbox(accountIDs: key.accountIDs, labelID: key.labelID, limit: key.limit,
             retainingReadMessageIDs: retained))
         entry.task = Task { [weak self, weak entry] in
             do {
                 for try await page in stream {
                     guard !Task.isCancelled, let self, let entry, entries[key] === entry else { return }
-                    let (input, keyConfiguration) = configuration(page)
+                    let (input, keyConfiguration) = entry.configuration(page)
                     let prepared = try await MailListPreparation.shared.prepare(page, input: input,
-                        configuration: keyConfiguration, reusing: entry.value)
+                        configuration: keyConfiguration, reusing: entry.reuseBase)
                     guard !Task.isCancelled, entries[key] === entry else { return }
-                    if entry.canReplay {
-                        entry.value = prepared
-                        MailListSnapshotBudget.shared.claim(entry.id, bytes: prepared.cost) { [weak entry] in entry?.value = nil }
-                    }
+                    store(prepared, in: entry, for: key)
                     if active == key { deliver?(prepared, false) }
                 }
             } catch {
                 guard !Task.isCancelled, let self, let entry, entries[key] === entry else { return }
+                let wasActive = active == key
                 remove(key)
-                if active == key { onError() }
+                if wasActive { fail?() }
             }
         }
     }
 
-    func deactivate() { active = nil; deliver = nil }
+    private func store(_ prepared: PreparedMailListPage, in entry: Entry, for key: Key) {
+        let isFirstPage = entry.isLoading
+        entry.isLoading = false
+        entry.reuseBase = prepared
+        if entry.canReplay { entry.value = prepared }
+        MailListSnapshotBudget.shared.claim(entry.id, bytes: prepared.cost) { [weak self, weak entry] in
+            guard let entry else { return }
+            entry.value = nil
+            // The selected mailbox's model holds these rows too, so its reuse base stays.
+            if let self, let active = self.active, self.entries[active] === entry { return }
+            entry.reuseBase = nil
+        }
+        if isFirstPage { removePagesReplaced(by: key) }
+    }
 
-    /// Before a local mutation, drop retained pages. The selected subscription
-    /// continues, but revisiting another destination must read after the write.
+    /// The largest other page of the same mailbox that has prepared rows.
+    private func reuseSeed(for key: Key) -> PreparedMailListPage? {
+        entries.filter { $0.key.isOtherLimit(of: key) && $0.value.reuseBase != nil }
+            .max { $0.key.limit < $1.key.limit }?.value.reuseBase
+    }
+
+    /// A larger page replaces the pages it grew from. The smallest stays,
+    /// because selecting the mailbox again asks for its first page.
+    private func removePagesReplaced(by key: Key) {
+        let smaller = entries.keys.filter { $0.limit < key.limit && $0.isOtherLimit(of: key) }
+        guard let first = smaller.map(\.limit).min() else { return }
+        for other in smaller where other.limit != first { remove(other) }
+    }
+
+    /// The selected mailbox's model holds the rows of its reuse base. Once the
+    /// mailbox is left, that base is counted against the budget or dropped.
+    private func leaveActive() {
+        guard let active, let entry = entries[active] else { return }
+        // An Unread visit's key lists the rows read during it. Nothing asks
+        // for that key again once the visit moves on.
+        guard active.retainedReadRows.isEmpty else { return remove(active) }
+        if !MailListSnapshotBudget.shared.holds(entry.id) { entry.reuseBase = nil }
+        // A change made while this mailbox was selected left it stale.
+        if !entry.canReplay { scheduleRefresh() }
+    }
+
+    func deactivate() {
+        leaveActive()
+        active = nil
+        deliver = nil
+        fail = nil
+    }
+
+    /// Call before and after a local change. No page read before the latest
+    /// call is replayed. Every subscription continues, and the mailboxes that
+    /// are not selected are read again once the change settles, so returning
+    /// to one finds a page read after the write.
     func invalidateRetained() {
-        for key in Array(entries.keys) where key != active { remove(key) }
-        invalidateActive()
+        for entry in entries.values {
+            entry.canReplay = false
+            entry.value = nil
+        }
+        scheduleRefresh()
+    }
+
+    private var refresh: Task<Void, Never>?
+    /// Long enough for the calls before and after one change to share a read.
+    private static let refreshDelay = Duration.milliseconds(100)
+
+    /// A subscription that began before a change can still deliver a page
+    /// read before it, so each stale entry is subscribed again. A later
+    /// change restarts the wait and marks those entries stale once more.
+    private func scheduleRefresh() {
+        refresh?.cancel()
+        refresh = Task { [weak self] in
+            try? await Task.sleep(for: MailListPageCache.refreshDelay)
+            guard !Task.isCancelled, let self else { return }
+            for (key, entry) in entries where key != active && !entry.canReplay { subscribe(entry, to: key) }
+        }
     }
 
     /// The next activation reads a fresh page, including after a Gmail
@@ -186,14 +299,16 @@ final class MailListPageCache {
         if let active, let entry = entries[active] {
             // Even a pre-mutation read already being prepared must not restore
             // an older replay value after invalidation. A revisit resubscribes.
+            // The reuse base stays, so the budget keeps counting the page.
             entry.canReplay = false
             entry.value = nil
-            MailListSnapshotBudget.shared.release(entry.id)
         }
     }
 
     func stop() {
         deactivate()
+        refresh?.cancel()
+        refresh = nil
         for key in Array(entries.keys) { remove(key) }
     }
 

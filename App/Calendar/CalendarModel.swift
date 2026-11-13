@@ -8,8 +8,14 @@ import SyncEngine
 @MainActor
 @Observable
 final class CalendarModel {
-    var date = Date()
-    var mode: CalendarDisplayMode = .week
+    /// A period or mode change publishes its prepared range in the same update,
+    /// so no view draws the new dates over the previous range's events.
+    var date = Date() {
+        didSet { if date != oldValue { publishPreparedRange() } }
+    }
+    var mode: CalendarDisplayMode = .week {
+        didSet { if mode != oldValue { publishPreparedRange() } }
+    }
     var searchText = ""
     /// Bumped by Find so the window's search field takes focus.
     var searchFocusRequest = 0
@@ -391,7 +397,9 @@ final class CalendarModel {
             didLoadCalendars = true
             // Load a missing visible range before whole-calendar history.
             await reloadOccurrences(refresh: false, refreshIfIncomplete: true)
-            invalidateRangeSnapshots()
+            // The sync below can change any range. Prepared ranges stay
+            // available to show and are checked again when activated.
+            expireRangeSnapshots()
             for owner in calendars where owner.entry.canReadDetails {
                 guard revision == lifecycleRevision else { return }
                 do { try await engines[owner.accountID]?.syncEvents(calendarID: owner.calendarID) }
@@ -402,7 +410,8 @@ final class CalendarModel {
                 do { try await engine.flush() } catch { issues.append("Pending changes are waiting for a connection.") }
             }
             guard revision == lifecycleRevision else { return }
-            invalidateSidebarMonth()
+            // The sidebar reads its month again and keeps its markers meanwhile.
+            invalidateSidebarMonth(keepingSnapshot: true)
             await reloadOccurrences()
             guard revision == lifecycleRevision else { return }
             if !issues.isEmpty { statusText = Set(issues).sorted().joined(separator: " ") }

@@ -28,9 +28,13 @@ extension MeetingPreparationModel {
             }, sourceLinks: { [weak app] captured in
                 guard let store = app?.calendar.store else { throw MeetingPreparationServiceError.sourceUnavailable }
                 return try await store.sourceLinks(accountID: captured.accountID, calendarID: captured.calendarID, eventID: captured.event.id)
-            }, sourceTitle: { [weak app] key in
-                guard let mailbox = app?.mailbox else { return nil }
-                return try await mailbox.cache.read { try $0.thread(id: key.threadID, accountID: key.accountID)?.subject }
+            }, sourceTitles: { [weak app] keys in
+                guard let mailbox = app?.mailbox else { return [:] }
+                return try await mailbox.cache.read { tx -> [ThreadKey: String] in
+                    var titles: [ThreadKey: String] = [:]
+                    for key in keys { titles[key] = try tx.thread(id: key.threadID, accountID: key.accountID)?.subject }
+                    return titles
+                }
             }, search: { [weak app] query, ids in
                 guard let app, let mailbox = app.mailbox else { throw MeetingPreparationServiceError.sourceUnavailable }
                 let parsed = SearchQuery(query), date = Date(), zone = TimeZone.current

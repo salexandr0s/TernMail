@@ -128,6 +128,40 @@ import Testing
         }
     }
 
+    @Test(.timeLimit(.minutes(1)))
+    func neighborsWaitForTheSelectedConversationOrTheLimit() async throws {
+        let readiness = ReaderReadiness()
+        try await withFixtures(count: 1, readiness: readiness) { fixtures, controller, gate in
+            let fixture = fixtures[0], mailbox = fixture.mailbox
+            let before = ContinuousClock.now
+            let readable = controller.update(keys: [fixture.key(3)], accounts: mailbox.accounts, mailbox: mailbox,
+                foreground: fixture.key(1))
+            try await waitUntil { await gate.deadlines.count == 1 }
+            await gate.releaseLatest()
+            // The quiet interval is over, but the selected conversation can't be read yet.
+            try await waitUntil { await gate.deadlines.count == 2 }
+            #expect(try #require(await gate.deadlines.last) >= before.advanced(by: .milliseconds(400)))
+            #expect(await fixture.transport.statistics().requestCounts["body", default: 0] == 0)
+            readiness.markReadable(fixture.key(1))
+            await readable.value
+            try await waitUntil { try await hasPrepared(3, in: fixture) }
+            #expect(await gate.cancellations == 1)
+
+            // A conversation that never becomes readable holds its neighbors only until the limit.
+            readiness.clear(fixture.key(1))
+            let limited = controller.update(keys: [fixture.key(5)], accounts: mailbox.accounts, mailbox: mailbox,
+                foreground: fixture.key(1))
+            try await waitUntil { await gate.deadlines.count == 3 }
+            await gate.releaseLatest()
+            try await waitUntil { await gate.deadlines.count == 4 }
+            #expect(try await body(5, in: fixture) == nil)
+            await gate.releaseLatest()
+            await limited.value
+            try await waitUntil { try await hasPrepared(5, in: fixture) }
+            try await expectNoReadingSideEffects(in: fixture)
+        }
+    }
+
     @MainActor private struct Fixture {
         let mailbox: MailboxModel
         let transport: PerformanceAuditTransport
@@ -142,11 +176,12 @@ import Testing
         }
     }
 
-    private func withFixtures(count: Int,
+    private func withFixtures(count: Int, readiness: ReaderReadiness = ReaderReadiness(),
         run: @MainActor ([Fixture], MessagePrefetchController, PrefetchSettleGate) async throws -> Void) async throws {
         var fixtures: [Fixture] = []
         let gate = PrefetchSettleGate()
-        let controller = MessagePrefetchController(delay: .milliseconds(90), waitUntil: { try await gate.wait(until: $0) })
+        let controller = MessagePrefetchController(delay: .milliseconds(90), readiness: readiness,
+            waitUntil: { try await gate.wait(until: $0) })
         do {
             for _ in 0..<count { fixtures.append(try await makeFixture()) }
             try await run(fixtures, controller, gate)

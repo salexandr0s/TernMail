@@ -100,6 +100,25 @@ extension CalendarModel {
         hasStaleEvents = false
     }
 
+    /// Shows the prepared range for the current date and mode, if there is one.
+    /// `activateRange` still runs afterwards and refreshes it when it is old.
+    func publishPreparedRange() {
+        guard !isStopped, let saved = rangeSnapshots[rangeIdentity] else { return }
+        publish(saved)
+    }
+
+    /// Keeps prepared ranges for showing at once, and marks them unchecked so
+    /// that activating one reads it again. Adjacent preparation replaces an
+    /// unchecked neighbour from the store once the visible range has reloaded.
+    func expireRangeSnapshots() {
+        cancelAdjacentRangePreparation()
+        rangeSnapshots = rangeSnapshots.mapValues {
+            CalendarRangeSnapshot(presentation: $0.presentation, checkedAt: nil, stale: $0.stale, byteCost: $0.byteCost)
+        }
+        completedSearch = nil
+        searchCompletedAt = nil
+    }
+
     func cancelAdjacentRangePreparation() {
         adjacentRangeTask?.task.cancel()
         adjacentRangeTask = nil
@@ -113,12 +132,16 @@ extension CalendarModel {
             owners: calendars.filter(\.isVisible).map(\.id).sorted()), revision: sidebarRevision)
     }
 
+    /// The loaded month is for the month, zone and calendars shown now. The
+    /// revision is left out so a month kept through a refresh still shows.
+    private var sidebarSnapshotIsShown: Bool { sidebarSnapshotRequest?.range == sidebarRequest.range }
+
     var sidebarPresentation: CalendarPresentationSnapshot? {
-        sidebarSnapshotRequest == sidebarRequest ? sidebarSnapshot?.presentation : nil
+        sidebarSnapshotIsShown ? sidebarSnapshot?.presentation : nil
     }
 
     var sidebarHasStaleEvents: Bool {
-        sidebarSnapshotRequest == sidebarRequest && sidebarSnapshot?.stale == true
+        sidebarSnapshotIsShown && sidebarSnapshot?.stale == true
     }
 
     var sidebarEvents: [CalendarDisplayEvent] {
@@ -130,11 +153,16 @@ extension CalendarModel {
             && $0.start < request.range.interval.end && $0.end > request.range.interval.start }
     }
 
-    func invalidateSidebarMonth() {
+    /// Stops the month load and asks for another. A refresh reads the same
+    /// calendars again, so it keeps the loaded month on screen until the next
+    /// one arrives. Every other caller clears it.
+    func invalidateSidebarMonth(keepingSnapshot: Bool = false) {
         activeSidebarTask?.task.cancel()
         activeSidebarTask = nil
-        sidebarSnapshot = nil
-        sidebarSnapshotRequest = nil
+        if !keepingSnapshot {
+            sidebarSnapshot = nil
+            sidebarSnapshotRequest = nil
+        }
         sidebarIsLoading = false
         sidebarRevision += 1
     }
@@ -200,7 +228,7 @@ extension CalendarModel {
             let preparedRanges = loaded
             let preparation = Task.detached(priority: .utility) {
                 try Self.prepareRangeSnapshot(preparedRanges, operations: pending, calendars: allCalendars,
-                    interval: interval, calendar: displayCalendar, buildsTimeAxis: false)
+                    interval: interval, calendar: displayCalendar, buildsTimeAxis: false, describesChips: false)
             }
             let snapshot = await withTaskCancellationHandler { try? await preparation.value }
                 onCancel: { preparation.cancel() }
@@ -219,10 +247,11 @@ extension CalendarModel {
         let displayCalendar = calendar
         let interval = displayInterval
         let buildsTimeAxis = mode == .day || mode == .week
+        let describesChips = mode == .month
         let preparationSpan = TernSignposts.begin(.calendarPreparation)
         let prepared = await Task.detached(priority: .userInitiated) {
             CalendarPresentationSnapshot(events: current, interval: interval, calendar: displayCalendar,
-                buildsTimeAxis: buildsTimeAxis)
+                buildsTimeAxis: buildsTimeAxis, describesChips: describesChips)
         }.value
         guard key == rangeIdentity, events == current, !Task.isCancelled else {
             TernSignposts.cancel(preparationSpan); return
@@ -243,6 +272,7 @@ extension CalendarModel {
         let owners = calendars.filter(\.isVisible)
         let sources = owners.map { ($0, engines[$0.accountID]) }
         let buildsTimeAxis = mode == .day || mode == .week
+        let describesChips = mode == .month
         // Local pending changes belong in the first snapshot. Email source-link
         // reconciliation can wait until after the primary range is visible.
         await reloadOperations(reconcileEmailLinks: false)
@@ -267,7 +297,8 @@ extension CalendarModel {
             let preparationSpan = TernSignposts.begin(.calendarPreparation)
             let preparation = Task.detached(priority: .userInitiated) { () throws -> CalendarRangeSnapshot in
                 try Self.prepareRangeSnapshot(loaded, operations: pending, calendars: allCalendars,
-                    interval: interval, calendar: displayCalendar, buildsTimeAxis: buildsTimeAxis)
+                    interval: interval, calendar: displayCalendar, buildsTimeAxis: buildsTimeAxis,
+                    describesChips: describesChips)
             }
             let snapshot = await withTaskCancellationHandler {
                 try? await preparation.value
@@ -308,6 +339,7 @@ extension CalendarModel {
         guard !sources.isEmpty else { return }
         let pending = operations
         let buildsTimeAxis = mode == .day || mode == .week
+        let describesChips = mode == .month
         let neighbors = [-1, 1].compactMap { offset -> CalendarRangeIdentity? in
             guard let adjacentDate = displayCalendar.date(byAdding: displayMode.component, value: offset, to: date) else { return nil }
             let interval = CalendarRangeIdentity.displayInterval(containing: adjacentDate, mode: displayMode, calendar: displayCalendar)
@@ -322,7 +354,9 @@ extension CalendarModel {
             }
             for neighbor in neighbors {
                 guard isCurrent() else { return }
-                if rangeSnapshots[neighbor] != nil { continue }
+                // A snapshot that is neither checked nor stale was expired by a
+                // refresh, so it is prepared again from what the sync stored.
+                if let saved = rangeSnapshots[neighbor], saved.checkedAt != nil || saved.stale { continue }
                 let loaded = await Self.readRange(sources, interval: neighbor.interval, refresh: false)
                 guard isCurrent() else { return }
                 guard loaded.count == sources.count,
@@ -330,7 +364,8 @@ extension CalendarModel {
                 let span = TernSignposts.begin(.calendarPreparation)
                 let preparation = Task.detached(priority: .utility) {
                     try Self.prepareRangeSnapshot(loaded, operations: pending, calendars: allCalendars,
-                        interval: neighbor.interval, calendar: displayCalendar, buildsTimeAxis: buildsTimeAxis)
+                        interval: neighbor.interval, calendar: displayCalendar, buildsTimeAxis: buildsTimeAxis,
+                        describesChips: describesChips)
                 }
                 let snapshot = await withTaskCancellationHandler { try? await preparation.value }
                     onCancel: { preparation.cancel() }
@@ -344,7 +379,7 @@ extension CalendarModel {
 
     private nonisolated static func prepareRangeSnapshot(_ loaded: [CalendarOwnerRange], operations: [CalendarOperation],
         calendars: [CalendarDisplayCalendar], interval: DateInterval, calendar: Calendar,
-        buildsTimeAxis: Bool) throws -> CalendarRangeSnapshot {
+        buildsTimeAxis: Bool, describesChips: Bool) throws -> CalendarRangeSnapshot {
         var found: [CalendarDisplayEvent] = []
         for item in loaded {
             for event in item.result?.events ?? [] where !event.isCancelled {
@@ -359,7 +394,7 @@ extension CalendarModel {
             interval: interval, calendar: calendar)
         try Task.checkCancellation()
         let presentation = CalendarPresentationSnapshot(events: projected, interval: interval,
-            calendar: calendar, buildsTimeAxis: buildsTimeAxis)
+            calendar: calendar, buildsTimeAxis: buildsTimeAxis, describesChips: describesChips)
         let encodedBytes = (try? JSONEncoder().encode(projected.map(\.event)).count) ?? 0
         let references = presentation.days.reduce(0) { $0 + (presentation.day($1)?.events.count ?? 0) }
         let cost = encodedBytes * 2 + projected.count * 512 + references * 512 + presentation.days.count * 256
@@ -414,7 +449,9 @@ extension CalendarModel {
                 ? "Some calendar changes need review in Calendar activity."
                 : operations.contains(where: { $0.status == .queued || $0.status == .running })
                     ? "Calendar changes are waiting to sync."
-                    : snapshot.stale ? "Showing cached events. Some calendars could not be checked." : "Calendars are up to date."
+                    : snapshot.stale ? "Showing cached events. Some calendars could not be checked."
+                        // A range kept through a refresh has no check time until it is read again.
+                        : snapshot.checkedAt == nil ? "Not updated yet" : "Calendars are up to date."
     }
 
     private func remember(_ snapshot: CalendarRangeSnapshot, for key: CalendarRangeIdentity) {

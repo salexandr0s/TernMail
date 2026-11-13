@@ -27,6 +27,7 @@ extension FollowUpsModel {
             guard isCurrent(epoch) else { return }
             let threads = Set(snapshot.messages.map(\.record.threadID))
             var reads: [String: FollowUpThreadSnapshot] = [:]
+            var checks: [String: FollowUpReplyCheckState] = [:]
             for entry in items where threads.contains(entry.record.threadID) {
                 guard isCurrent(epoch), visibleAccountIDs().contains(entry.record.accountID),
                       canReadAccount(entry.record.accountID) else { continue }
@@ -34,10 +35,11 @@ extension FollowUpsModel {
                 do {
                     let read = try await threadSnapshot(for: entry, cached: &reads)
                     guard isCurrent(epoch), visibleAccountIDs().contains(entry.record.accountID) else { return }
-                    await reconcileReply(entry, snapshot: read, store: store, epoch: epoch)
-                } catch { if isCurrent(epoch) { replyCheckStates[entry.id] = .unavailable } }
+                    await reconcileReply(entry, snapshot: read, store: store, epoch: epoch, checks: &checks)
+                } catch { if isCurrent(epoch) { checks[entry.id] = .unavailable } }
             }
             guard isCurrent(epoch) else { return }
+            publishReplyChecks(checks)
             await refresh(checkReminders: false)
             await evaluateReminders(preloaded: reads)
         } catch is CancellationError {} catch {
@@ -56,6 +58,7 @@ extension FollowUpsModel {
             let active = try await store.commitmentEntries(accountIDs: visibleAccountIDs().subtracting(removedAccounts), includeClosed: false)
             guard isCurrent(epoch) else { return }
             var reads = preloaded
+            var checks: [String: FollowUpReplyCheckState] = [:]
             // Bound each pass and rotate through the rest on subsequent ticks.
             // Already-delivered reminders still reconcile later replies.
             let candidates = active.filter { $0.reminders.contains { $0.kind == .noReply && $0.receivedReplyMessageID == nil } }
@@ -68,12 +71,14 @@ extension FollowUpsModel {
                     do {
                         let read = try await threadSnapshot(for: entry, cached: &reads)
                         guard isCurrent(epoch) else { return }
-                        await reconcileReply(entry, snapshot: read, store: store, epoch: epoch)
-                    } catch { if isCurrent(epoch) { replyCheckStates[entry.id] = .unavailable } }
+                        await reconcileReply(entry, snapshot: read, store: store, epoch: epoch, checks: &checks)
+                    } catch { if isCurrent(epoch) { checks[entry.id] = .unavailable } }
                 }
                 reconciliationOffset = (offset + min(20, candidates.count)) % candidates.count
             }
-            guard isCurrent(epoch), notificationPermission == .allowed else { return }
+            guard isCurrent(epoch) else { return }
+            publishReplyChecks(checks)
+            guard notificationPermission == .allowed else { return }
             let due = try await store.dueCommitmentReminders(accountIDs: visibleAccountIDs().subtracting(removedAccounts), now: now())
             for entry in due {
                 for reminder in entry.reminders {
@@ -97,22 +102,34 @@ extension FollowUpsModel {
         let key = Self.threadKey(entry.record)
         if let value = cached[key] { return value }
         guard canReadAccount(entry.record.accountID) else { throw FollowUpModelError.unavailable }
-        replyCheckStates[entry.id] = .checking
+        // A row that already shows a result keeps it until this read finishes,
+        // so a recheck does not flip it to "Checking for replies" and back.
+        if replyCheckStates[entry.id] == nil { replyCheckStates[entry.id] = .checking }
         let value = try await loadThread(entry.record.accountID, entry.record.threadID)
         guard value.accountID == entry.record.accountID, value.threadID == entry.record.threadID else { throw FollowUpModelError.invalidSource }
         cached[key] = value
         return value
     }
 
-    private func reconcileReply(_ entry: CommitmentEntry, snapshot: FollowUpThreadSnapshot, store: AccountStore, epoch: Int) async {
+    /// Publishes one pass of reply checks with a single assignment, and only
+    /// when a result differs, so observers update once per pass and not twice
+    /// per thread.
+    private func publishReplyChecks(_ checks: [String: FollowUpReplyCheckState]) {
+        guard !checks.isEmpty else { return }
+        let merged = replyCheckStates.merging(checks) { _, latest in latest }
+        if merged != replyCheckStates { replyCheckStates = merged }
+    }
+
+    private func reconcileReply(_ entry: CommitmentEntry, snapshot: FollowUpThreadSnapshot, store: AccountStore, epoch: Int,
+                                checks: inout [String: FollowUpReplyCheckState]) async {
         guard isCurrent(epoch), !removedAccounts.contains(entry.record.accountID),
               visibleAccountIDs().contains(entry.record.accountID), canReadAccount(entry.record.accountID),
               let reminder = entry.reminders.first(where: { $0.kind == .noReply && $0.receivedReplyMessageID == nil }) else { return }
         guard snapshot.messages.contains(where: { $0.id == reminder.baselineMessageID }) else {
-            replyCheckStates[entry.id] = .unavailable
+            checks[entry.id] = .unavailable
             return
         }
-        replyCheckStates[entry.id] = .checked(snapshot.checkedAt)
+        checks[entry.id] = .checked(snapshot.checkedAt)
         guard let reply = Self.reply(in: snapshot, to: entry.record, reminder: reminder) else { return }
         do {
             let changed = try await store.recordCommitmentReply(accountID: entry.record.accountID, commitmentID: entry.record.id,

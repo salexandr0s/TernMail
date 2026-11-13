@@ -98,7 +98,7 @@ import Testing
             accountID: work.accountID, accountName: work.accountName)
         try await capture(VStack(alignment: .leading, spacing: Tokens.Space.s2) {
             Text("Schedule").font(.headline).padding(.horizontal, Tokens.Space.s4)
-            CalendarScheduleView(date: start, calendar: calendar, events: [event, allDay], selectedID: .constant(nil),
+            CalendarScheduleView(date: start, calendar: calendar, events: [event, allDay], select: { _ in },
                 create: { _ in }, edit: { _ in }, delete: { _ in }, duplicate: { _ in })
                 .frame(height: 280)
             Text("Search results").font(.headline).padding(.horizontal, Tokens.Space.s4)

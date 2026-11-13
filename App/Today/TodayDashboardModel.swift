@@ -10,7 +10,7 @@ import SyncEngine
 @MainActor @Observable
 final class TodayDashboardModel {
     let tasks: GoogleTasksModel
-    var selectedDate = Date()
+    var selectedDate = Date() { didSet { prepareAgenda() } }
     private(set) var calendarLoading = false
     private(set) var calendarError: String?
     private(set) var unreadLoading = false
@@ -18,13 +18,16 @@ final class TodayDashboardModel {
     private var unreadSnapshot: TodayUnreadSnapshot?
     private var unreadContext: TodayDashboardContext?
     private var taskContext: TodayDashboardContext?
+    private var taskRefreshes = 0
     private var calendarSnapshot: TodayCalendarSnapshot?
-    private var completedCalendarRequest: TodayDashboardCalendarRequest?
+    private var completedCalendarDisplay: TodayDashboardCalendarRequest.Display?
+    private var preparedAgenda = TodayAgenda()
     @ObservationIgnored private let contextProvider: @MainActor () -> TodayDashboardContext
     @ObservationIgnored private let calendarProvider: @MainActor () -> Calendar
     @ObservationIgnored private let calendarRevision: @MainActor () -> String
     @ObservationIgnored private let loadUnread: @MainActor (TodayDashboardContext) async throws -> TodayUnreadSnapshot
-    @ObservationIgnored private let loadCalendar: @MainActor (TodayDashboardCalendarRequest) async throws -> TodayCalendarSnapshot
+    /// The flag is `refresh`: false reads saved events only, true asks the network.
+    @ObservationIgnored private let loadCalendar: @MainActor (TodayDashboardCalendarRequest, Bool) async throws -> TodayCalendarSnapshot
     @ObservationIgnored private let openMail: @MainActor (MailLink) -> Void
     @ObservationIgnored private let openCalendarEvent: @MainActor (CalendarDisplayEvent, TodayDashboardContext) async -> Void
     @ObservationIgnored private var active = false
@@ -32,6 +35,7 @@ final class TodayDashboardModel {
     @ObservationIgnored private var unreadGeneration = 0
     @ObservationIgnored private var calendarLoad: (id: UUID, request: TodayDashboardCalendarRequest, task: Task<Void, Never>)?
     @ObservationIgnored private var openTask: Task<Void, Never>?
+    @ObservationIgnored private var displayInterval: (key: DisplayIntervalKey, interval: DateInterval)?
 
     convenience init(app: AppModel) {
         self.init(tasks: app.tasks, context: { [weak app] in
@@ -44,9 +48,9 @@ final class TodayDashboardModel {
         }, loadUnread: { [weak app] context in
             guard let app else { throw CancellationError() }
             return try await TodayDashboardSources.unread(app: app, context: context)
-        }, loadCalendar: { [weak app] request in
+        }, loadCalendar: { [weak app] request, refresh in
             guard let app else { throw CancellationError() }
-            return try await TodayDashboardSources.calendar(app: app, request: request)
+            return try await TodayDashboardSources.calendar(app: app, request: request, refresh: refresh)
         }, openMail: { [weak app] in app?.mailURLs.openConversation($0) }, openEvent: { [weak app] event, context in
             guard let app else { return }
             await app.calendar.openEvent(accountID: event.accountID, calendarID: event.calendarID, eventID: event.event.id,
@@ -58,7 +62,7 @@ final class TodayDashboardModel {
          calendar: @escaping @MainActor () -> Calendar = { .autoupdatingCurrent },
          calendarRevision: @escaping @MainActor () -> String = { "0" },
          loadUnread: @escaping @MainActor (TodayDashboardContext) async throws -> TodayUnreadSnapshot,
-         loadCalendar: @escaping @MainActor (TodayDashboardCalendarRequest) async throws -> TodayCalendarSnapshot,
+         loadCalendar: @escaping @MainActor (TodayDashboardCalendarRequest, Bool) async throws -> TodayCalendarSnapshot,
          openMail: @escaping @MainActor (MailLink) -> Void = { _ in },
          openEvent: @escaping @MainActor (CalendarDisplayEvent, TodayDashboardContext) async -> Void = { _, _ in }) {
         self.tasks = tasks; contextProvider = context; calendarProvider = calendar; self.calendarRevision = calendarRevision
@@ -69,23 +73,20 @@ final class TodayDashboardModel {
     var calendar: Calendar { calendarProvider() }
     var calendarRequest: TodayDashboardCalendarRequest {
         let calendar = calendar
-        let days = CalendarLayout.monthDays(containing: selectedDate, calendar: calendar)
-        let start = days.first ?? calendar.startOfDay(for: selectedDate)
-        let last = days.last ?? start
-        let gridEnd = calendar.date(byAdding: .day, value: 1, to: last) ?? last.addingTimeInterval(86400)
-        let upcomingEnd = calendar.date(byAdding: .day, value: 7, to: calendar.startOfDay(for: selectedDate)) ?? gridEnd
-        return TodayDashboardCalendarRequest(context: context, interval: DateInterval(start: start, end: max(gridEnd, upcomingEnd)),
+        return TodayDashboardCalendarRequest(context: context, interval: displayInterval(in: calendar),
             timeZone: calendar.timeZone.identifier, firstWeekday: calendar.firstWeekday, revision: calendarRevision())
     }
-    var monthEvents: [CalendarDisplayEvent] {
-        guard completedCalendarRequest == calendarRequest else { return [] }
-        return calendarSnapshot?.events.filter { context.accountIDs.contains($0.accountID) } ?? []
-    }
-    var dayEvents: [CalendarDisplayEvent] { events(inNextDays: 1) }
-    var upcomingEvents: [CalendarDisplayEvent] { events(inNextDays: 7) }
-    var calendarIsStale: Bool { completedCalendarRequest == calendarRequest && (calendarSnapshot?.isStale == true || calendarError != nil) }
-    var hasLoadedCalendar: Bool { completedCalendarRequest == calendarRequest && calendarSnapshot != nil }
-    var hasAvailableCalendars: Bool { hasLoadedCalendar && (calendarSnapshot?.calendarCount ?? 0) > 0 }
+    /// Loaded events stay through a new revision. Only another display, such as
+    /// another profile, account set, month or time zone, hides them.
+    private var showsCompletedCalendar: Bool { completedCalendarDisplay == calendarRequest.display }
+    /// The prepared lists, compared with the live display once per read.
+    var agenda: TodayAgenda { showsCompletedCalendar ? preparedAgenda : TodayAgenda() }
+    var monthEvents: [CalendarDisplayEvent] { agenda.monthEvents }
+    var dayEvents: [CalendarDisplayEvent] { agenda.dayEvents }
+    var upcomingEvents: [CalendarDisplayEvent] { agenda.upcomingEvents }
+    var calendarIsStale: Bool { showsCompletedCalendar && (calendarSnapshot?.isStale == true || calendarError != nil) }
+    var hasLoadedCalendar: Bool { agenda.isLoaded }
+    var hasAvailableCalendars: Bool { agenda.hasCalendars }
     var calendarCoverageWarning: String? {
         guard hasLoadedCalendar, let snapshot = calendarSnapshot else { return nil }
         var warnings: [String] = []
@@ -99,21 +100,28 @@ final class TodayDashboardModel {
         return warnings.isEmpty ? nil : warnings.joined(separator: " ")
     }
     var calendarCoverage: String {
-        guard completedCalendarRequest == calendarRequest else { return "Calendar data has not loaded for this date and profile." }
+        guard showsCompletedCalendar else { return "Calendar data has not loaded for this date and profile." }
         let coverage = calendarSnapshot?.coverage ?? "Calendar data is unavailable."
         return calendarError == nil ? coverage : coverage + " These events may be out of date."
     }
     var hasLoadedUnread: Bool { unreadContext == context && unreadSnapshot != nil }
     var hasLoadedTasks: Bool { taskContext == context }
+    /// True while a refresh is on its way to loading this profile's tasks,
+    /// including the account reads that come before the tasks model starts loading.
+    var tasksLoading: Bool { taskRefreshes > 0 }
     var unreadMessages: [TodayUnreadMessage] { unreadContext == context ? unreadSnapshot?.messages ?? [] : [] }
     var unreadTotalCount: Int? { unreadContext == context ? unreadSnapshot?.totalCount : nil }
     var unreadCoverage: String {
+        let context = context
         guard !context.accountIDs.isEmpty else { return "No mail accounts are available in this profile." }
         guard unreadContext == context else { return "Cached unread inbox mail has not loaded for this profile." }
         return unreadSnapshot?.coverage ?? "Cached unread inbox mail is unavailable."
     }
 
-    var taskAccounts: [AccountRecord] { tasks.accounts.filter { context.accountIDs.contains($0.id) } }
+    var taskAccounts: [AccountRecord] {
+        let ids = context.accountIDs
+        return tasks.accounts.filter { ids.contains($0.id) }
+    }
     var selectedTaskAccountID: String? { tasks.selectedAccountID.flatMap { context.accountIDs.contains($0) ? $0 : nil } }
     var selectedTaskListID: String? { selectedTaskAccountID == nil ? nil : tasks.selectedListID }
     var taskLists: [GoogleTaskList] { selectedTaskAccountID == nil ? [] : tasks.lists }
@@ -129,6 +137,8 @@ final class TodayDashboardModel {
         guard !Task.isCancelled else { return }
         active = true
         let captured = context, revision = generation
+        taskRefreshes += 1
+        defer { taskRefreshes -= 1 }
         async let unread: Void = refreshUnread(expectedGeneration: revision)
         async let events: Void = refreshCalendar(expectedGeneration: revision)
         await tasks.refreshAccounts()
@@ -149,14 +159,24 @@ final class TodayDashboardModel {
         }
         calendarLoad?.task.cancel()
         let id = UUID(), revision = generation
-        calendarLoading = true; calendarError = nil
+        // An error about events that are still shown stays until this load settles it.
+        calendarLoading = true
+        if completedCalendarDisplay != request.display { calendarError = nil }
         let task = Task { [weak self] in
             guard let self else { return }
             defer { if calendarLoad?.id == id { calendarLoading = false; calendarLoad = nil } }
             do {
-                let snapshot = try await loadCalendar(request)
+                // Saved events first, so the agenda never waits for the network.
+                let saved = try? await loadCalendar(request, false)
                 guard active, revision == generation, request == calendarRequest, !Task.isCancelled else { return }
-                calendarSnapshot = snapshot; completedCalendarRequest = request
+                if let saved, saved.isComplete {
+                    // Staleness is the network's call. Until it answers, keep what this display already said.
+                    let wasStale = completedCalendarDisplay == request.display && calendarSnapshot?.isStale == true
+                    show(saved.withStaleness(wasStale), for: request.display)
+                }
+                let snapshot = try await loadCalendar(request, true)
+                guard active, revision == generation, request == calendarRequest, !Task.isCancelled else { return }
+                show(snapshot, for: request.display); calendarError = nil
             } catch is CancellationError {} catch {
                 guard active, revision == generation, request == calendarRequest, !Task.isCancelled else { return }
                 calendarError = "Couldn't update the calendar. Try refreshing."
@@ -171,12 +191,13 @@ final class TodayDashboardModel {
         active = true
         unreadGeneration += 1
         let read = unreadGeneration, revision = generation, captured = context
-        unreadLoading = true; unreadError = nil
+        unreadLoading = true
+        if unreadContext != captured { unreadError = nil }
         defer { if read == unreadGeneration { unreadLoading = false } }
         do {
             let snapshot = try await loadUnread(captured)
             guard active, read == unreadGeneration, revision == generation, captured == context, !Task.isCancelled else { return }
-            unreadSnapshot = snapshot; unreadContext = captured
+            unreadSnapshot = snapshot; unreadContext = captured; unreadError = nil
         } catch is CancellationError {} catch {
             guard active, read == unreadGeneration, revision == generation, captured == context, !Task.isCancelled else { return }
             unreadError = "Couldn't read cached inbox mail. Try refreshing."
@@ -188,11 +209,19 @@ final class TodayDashboardModel {
         await refreshUnread()
     }
 
+    /// Stops loading while Today is hidden or Tern is inactive. The last content
+    /// stays, so the page comes back as it was. Every getter still compares it
+    /// with the live context, so another profile or runtime never sees it.
     func stop() {
         active = false; generation += 1; unreadGeneration += 1
         calendarLoad?.task.cancel(); calendarLoad = nil; openTask?.cancel(); openTask = nil
         calendarLoading = false; unreadLoading = false
-        calendarSnapshot = nil; completedCalendarRequest = nil; unreadSnapshot = nil; unreadContext = nil; taskContext = nil
+    }
+
+    /// Stops and drops everything loaded, for sign-out and a cache reset.
+    func reset() {
+        stop()
+        show(nil, for: nil); unreadSnapshot = nil; unreadContext = nil; taskContext = nil
         calendarError = nil; unreadError = nil
     }
 
@@ -231,15 +260,58 @@ final class TodayDashboardModel {
     }
 
     private func valid(_ row: TodayDashboardTask) -> Bool {
-        taskContext == context && row.capturedContext == context && context.accountIDs.contains(row.location.accountID)
+        let context = context
+        return taskContext == context && row.capturedContext == context && context.accountIDs.contains(row.location.accountID)
             && tasks.selectedLocation == row.location && tasks.openTasks.contains(row.task)
     }
-    private func events(inNextDays count: Int) -> [CalendarDisplayEvent] {
-        let start = calendar.startOfDay(for: selectedDate)
-        guard let end = calendar.date(byAdding: .day, value: count, to: start) else { return [] }
-        return monthEvents.filter { $0.start < end && $0.end > start }.sorted {
-            if $0.start != $1.start { return $0.start < $1.start }
-            return $0.id < $1.id
+
+    private func show(_ snapshot: TodayCalendarSnapshot?, for display: TodayDashboardCalendarRequest.Display?) {
+        calendarSnapshot = snapshot; completedCalendarDisplay = display
+        prepareAgenda()
+    }
+
+    /// Runs when events load and when the selected day changes. The lists are
+    /// for the display they were loaded for; `agenda` hides them from any other.
+    private func prepareAgenda() {
+        var agenda = TodayAgenda()
+        if let snapshot = calendarSnapshot, let display = completedCalendarDisplay {
+            let calendar = calendar, ids = display.context.accountIDs
+            let start = calendar.startOfDay(for: selectedDate)
+            let month = snapshot.events.filter { ids.contains($0.accountID) }
+            func events(inNextDays count: Int) -> [CalendarDisplayEvent] {
+                guard let end = calendar.date(byAdding: .day, value: count, to: start) else { return [] }
+                return month.filter { $0.start < end && $0.end > start }.sorted {
+                    if $0.start != $1.start { return $0.start < $1.start }
+                    return $0.id < $1.id
+                }
+            }
+            agenda = TodayAgenda(isLoaded: true, hasCalendars: snapshot.calendarCount > 0, monthEvents: month,
+                                 dayEvents: events(inNextDays: 1), upcomingEvents: events(inNextDays: 7))
         }
+        // The same lists are not published again, so a reload that brings the same events redraws nothing.
+        if agenda != preparedAgenda { preparedAgenda = agenda }
+    }
+
+    /// The month grid plus the seven days after the selected day. Remembered,
+    /// because every calendar getter compares the loaded display with this one.
+    private func displayInterval(in calendar: Calendar) -> DateInterval {
+        let key = DisplayIntervalKey(date: selectedDate, calendar: calendar, timeZone: calendar.timeZone.identifier,
+                                     firstWeekday: calendar.firstWeekday)
+        if let displayInterval, displayInterval.key == key { return displayInterval.interval }
+        let days = CalendarLayout.monthDays(containing: selectedDate, calendar: calendar)
+        let start = days.first ?? calendar.startOfDay(for: selectedDate)
+        let last = days.last ?? start
+        let gridEnd = calendar.date(byAdding: .day, value: 1, to: last) ?? last.addingTimeInterval(86400)
+        let upcomingEnd = calendar.date(byAdding: .day, value: 7, to: calendar.startOfDay(for: selectedDate)) ?? gridEnd
+        let interval = DateInterval(start: start, end: max(gridEnd, upcomingEnd))
+        displayInterval = (key, interval)
+        return interval
+    }
+
+    private struct DisplayIntervalKey: Equatable {
+        let date: Date
+        let calendar: Calendar
+        let timeZone: String
+        let firstWeekday: Int
     }
 }

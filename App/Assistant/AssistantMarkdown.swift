@@ -3,13 +3,15 @@ import Foundation
 /// Foundation supplies CommonMark block identities. No HTML or URL is executed,
 /// and input/block limits keep an unusually large reply from stalling the view.
 enum AssistantMarkdown {
-    enum Kind: Equatable { case paragraph, heading, code, rule, table, diagram }
-    struct Row: Identifiable {
+    enum Kind: Equatable, Sendable { case paragraph, heading, code, rule, table, diagram }
+    struct Row: Identifiable, Equatable, Sendable {
         let id: Int
         let isHeader: Bool
         var cells: [AttributedString]
     }
-    struct Block: Identifiable {
+    /// Equal blocks skip their view's body, and a streaming reply is parsed
+    /// off the main actor, so a block is a plain value that can cross actors.
+    struct Block: Identifiable, Equatable, Sendable {
         let id: Int
         var kind = Kind.paragraph
         var text = AttributedString()

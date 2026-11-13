@@ -33,7 +33,7 @@ struct AssistantView: View {
                 }
             }
             AssistantScopeNotice(model: model)
-            AssistantComposer(model: model, setup: setupPrompt, canSubmit: canSubmit, isFocused: $isComposerFocused,
+            AssistantComposer(model: model, setup: setupPrompt, isFocused: $isComposerFocused,
                               onSubmit: submit, onSettings: { showsSettings = true }, onSetup: performSetupAction)
                 .padding(Tokens.Space.s3)
                 .frame(maxWidth: Tokens.Assistant.contentWidth)
@@ -115,9 +115,10 @@ struct AssistantView: View {
         return nil
     }
 
+    /// Read when a message is submitted, never in `body`, so typing does not
+    /// redraw the conversation. The composer enables its own send button.
     private var canSubmit: Bool {
-        setupPrompt == nil && !model.hasPendingScopeChange
-            && !model.composerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        setupPrompt == nil && !model.hasPendingScopeChange && model.hasComposerText
     }
 
     /// The composer takes focus once, as soon as it can be used.
@@ -144,7 +145,7 @@ struct AssistantView: View {
     /// Esc closes the sidebar unless the composer holds a message or an unfinished
     /// input-method entry. The detached window stays open, like any window.
     private func closeOnEscape() -> KeyPress.Result {
-        guard let onClose, model.composerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        guard let onClose, !model.hasComposerText else {
             return .ignored
         }
         if let editor = NSApp.keyWindow?.firstResponder as? NSTextInputClient, editor.hasMarkedText() { return .ignored }

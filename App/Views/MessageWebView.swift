@@ -49,39 +49,57 @@ struct MessageWebView: NSViewRepresentable {
         return coordinator
     }
 
-    func makeNSView(context: Context) -> ContentSizedWebView {
+    /// A message view that has loaded nothing and serves nothing: its own
+    /// private data store, page scripts off, and both scheme handlers closed
+    /// until `assign` gives them one message's resources.
+    static func makeUnassignedView() -> ContentSizedWebView {
         let configuration = WKWebViewConfiguration()
         configuration.defaultWebpagePreferences.allowsContentJavaScript = false
         configuration.websiteDataStore = .nonPersistent()
-        configuration.userContentController.add(context.coordinator, contentWorld: .defaultClient, name: "ternHeight")
-        configuration.userContentController.add(context.coordinator, contentWorld: .defaultClient, name: "ternReading")
-        configuration.setURLSchemeHandler(InlineResourceHandler(resources: resources), forURLScheme: InlineResourceMap.scheme)
-        configuration.setURLSchemeHandler(RemoteImageHandler(scope: resources.scope, enabled: allowsRemoteImages,
-            allowedURLs: remoteImageURLs),
-            forURLScheme: RemoteImageResourceURL.scheme)
-        configureScripts(configuration.userContentController, revision: 1)
-        if let blocker {
-            configuration.userContentController.add(blocker)
-        }
+        configuration.setURLSchemeHandler(InlineResourceHandler(), forURLScheme: InlineResourceMap.scheme)
+        configuration.setURLSchemeHandler(RemoteImageHandler(scope: "", enabled: false), forURLScheme: RemoteImageResourceURL.scheme)
         let view = ContentSizedWebView(frame: .zero, configuration: configuration)
+        view.allowsMagnification = false
+        return view
+    }
+
+    func makeNSView(context: Context) -> ContentSizedWebView {
+        let view = MessageWebViewWarmup.takeMessageView()
+        assign(view, to: context.coordinator)
+        return view
+    }
+
+    /// Makes an unassigned view this message's: its resources, its scripts
+    /// and its first load. A spare can still be loading its empty page; that
+    /// load stops first, so no script installed here runs in it.
+    func assign(_ view: ContentSizedWebView, to coordinator: Coordinator) {
+        if view.isLoading { view.stopLoading() }
+        let configuration = view.configuration
+        let controller = configuration.userContentController
+        controller.add(coordinator, contentWorld: .defaultClient, name: "ternHeight")
+        controller.add(coordinator, contentWorld: .defaultClient, name: "ternReading")
+        (configuration.urlSchemeHandler(forURLScheme: InlineResourceMap.scheme) as? InlineResourceHandler)?.assign(resources)
+        (configuration.urlSchemeHandler(forURLScheme: RemoteImageResourceURL.scheme) as? RemoteImageHandler)?
+            .update(scope: resources.scope, enabled: allowsRemoteImages, allowedURLs: remoteImageURLs)
+        configureScripts(controller, revision: 1)
+        if let blocker {
+            controller.add(blocker)
+        }
         #if TERN_TEST_SUPPORT || TERN_PERFORMANCE
         ReaderLayoutDiagnostics.shared?.register(view)
         #endif
         NavigationPerformance.shared.increment(.webViewCreated)
-        MessageWebViewWarmup.messageViewCreated()
         if forcesLightAppearance { view.appearance = NSAppearance(named: .aqua) }
-        view.navigationDelegate = context.coordinator
-        view.allowsMagnification = false
-        view.onWidthChange = { [weak coordinator = context.coordinator, weak view] in
+        view.navigationDelegate = coordinator
+        view.onWidthChange = { [weak coordinator, weak view] in
             guard let view else { return }
             coordinator?.measure(view)
         }
-        view.onOpenLink = { [weak coordinator = context.coordinator] url, behind in coordinator?.open(url, behind: behind) }
+        view.onOpenLink = { [weak coordinator] url, behind in coordinator?.open(url, behind: behind) }
         view.onAddSelectionToTasks = onAddSelectionToTasks
-        context.coordinator.setActive(isActive, in: view)
-        context.coordinator.load(html, in: view)
+        coordinator.setActive(isActive, in: view)
+        coordinator.load(html, in: view)
         onCreate(view)
-        return view
     }
 
     func updateNSView(_ view: ContentSizedWebView, context: Context) {
@@ -110,6 +128,7 @@ struct MessageWebView: NSViewRepresentable {
         ReaderLayoutDiagnostics.shared?.recordRenderer(view, phase: .dismantle)
         #endif
         coordinator.onDismantle(view)
+        MessageWebViewWarmup.messageViewDismantled(view)
         view.stopLoading()
         view.configuration.userContentController.removeScriptMessageHandler(forName: "ternHeight", contentWorld: .defaultClient)
         view.configuration.userContentController.removeScriptMessageHandler(forName: "ternReading", contentWorld: .defaultClient)
@@ -206,6 +225,10 @@ struct MessageWebView: NSViewRepresentable {
         private var isMeasuring = false
         private var measureAgain = false
         private var interruptedLoad = false
+        /// Reloads of the current page after its process ended.
+        private var recoveries = 0
+        /// A page that ends its process on every load stays blank after this many tries.
+        private static let recoveryLimit = 2
 
         func setActive(_ active: Bool, in view: WKWebView) {
             (view.configuration.urlSchemeHandler(forURLScheme: RemoteImageResourceURL.scheme) as? RemoteImageHandler)?
@@ -266,6 +289,7 @@ struct MessageWebView: NSViewRepresentable {
             revision += 1
             reportedReadable = false
             needsHeightReport = true
+            recoveries = 0
             #if TERN_TEST_SUPPORT || TERN_PERFORMANCE
             if let view = view as? ContentSizedWebView {
                 ReaderLayoutDiagnostics.shared?.recordRenderer(view, phase: .load,
@@ -307,6 +331,18 @@ struct MessageWebView: NSViewRepresentable {
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             measure(webView)
+        }
+
+        /// The page's process ended, by a crash or because the system took it
+        /// back, and the view is blank. The same message loads again: now, or
+        /// when its hidden reader is next shown.
+        func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+            guard let loadedHTML, recoveries < Self.recoveryLimit else { return }
+            recoveries += 1
+            TernLog.ui.event("messageWebViewReloadedAfterProcessEnded")
+            reportedReadable = false
+            needsHeightReport = true
+            if isActive { webView.loadHTMLString(loadedHTML, baseURL: nil) } else { interruptedLoad = true }
         }
 
         func measure(_ webView: WKWebView) {
@@ -356,12 +392,12 @@ struct MessageWebView: NSViewRepresentable {
             #if TERN_TEST_SUPPORT || TERN_PERFORMANCE
             acceptHeightWithDiagnostics(measured, in: message.webView, source: .script, requestEpoch: nil)
             #else
-            acceptHeight(measured)
+            acceptHeight(measured, in: message.webView)
             #endif
         }
 
         @discardableResult
-        private func acceptHeight(_ measured: Double) -> (previous: CGFloat, published: Bool)? {
+        private func acceptHeight(_ measured: Double, in webView: WKWebView?) -> (previous: CGFloat, published: Bool)? {
             guard isActive, measured.isFinite, measured > 0 else { return nil }
             needsHeightReport = false
             NavigationPerformance.shared.increment(.heightReport)
@@ -370,6 +406,7 @@ struct MessageWebView: NSViewRepresentable {
             if published { height.wrappedValue = measured }
             if !reportedReadable {
                 reportedReadable = true
+                MessageWebViewWarmup.messageViewBecameReadable(webView)
                 if isActive { onReadable(false) }
             }
             return (previous, published)
@@ -379,7 +416,7 @@ struct MessageWebView: NSViewRepresentable {
         private func acceptHeightWithDiagnostics(_ measured: Double, in webView: WKWebView?,
                                                  source: ReaderLayoutDiagnostics.HeightSource,
                                                  requestEpoch: ReaderLayoutDiagnostics.Epoch?) {
-            let accepted = acceptHeight(measured)
+            let accepted = acceptHeight(measured, in: webView)
             guard let view = webView as? ContentSizedWebView else { return }
             ReaderLayoutDiagnostics.shared?.recordRenderer(view, phase: .height,
                 documentRevision: revision, active: isActive, readable: reportedReadable,
@@ -516,6 +553,11 @@ final class ContentSizedWebView: WKWebView {
     @objc private func copyLink() {
         guard let hoveredLink else { return }
         NSPasteboard.general.replaceContents(with: hoveredLink.absoluteString)
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if let window { MessageWebViewWarmup.noteReaderWindow(window) }
     }
 
     override func scrollWheel(with event: NSEvent) {

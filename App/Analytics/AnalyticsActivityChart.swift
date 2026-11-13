@@ -5,21 +5,35 @@ import SwiftUI
 
 struct AnalyticsActivityChart: View {
     let snapshot: MailAnalyticsSnapshot
+    /// The start of the selected bucket, not the exact date under the pointer.
     @State private var selectedDate: Date?
     @State private var showsTable: Bool
 
     init(snapshot: MailAnalyticsSnapshot, selectedDate: Date? = nil, showsTable: Bool = false) {
         self.snapshot = snapshot
-        _selectedDate = State(initialValue: selectedDate)
+        _selectedDate = State(initialValue: selectedDate.flatMap { Self.bucket(containing: $0, in: snapshot.buckets)?.date })
         _showsTable = State(initialValue: showsTable)
     }
 
-    private var selectedBucket: MailAnalyticsBucket? {
-        guard let selectedDate else { return nil }
-        return snapshot.buckets.last { $0.date <= selectedDate }
+    private static func bucket(containing date: Date, in buckets: [MailAnalyticsBucket]) -> MailAnalyticsBucket? {
+        buckets.last { $0.date <= date }
+    }
+
+    /// Charts writes the exact date under the pointer. Storing the start of its
+    /// bucket means a move within one bar changes nothing, so the chart isn't rebuilt.
+    private var selection: Binding<Date?> {
+        Binding(
+            get: { selectedDate },
+            set: { date in
+                let start = date.flatMap { Self.bucket(containing: $0, in: snapshot.buckets)?.date }
+                if start != selectedDate { selectedDate = start }
+            })
     }
 
     var body: some View {
+        // Looked up once per update. A stored date from another date range still
+        // resolves to the bucket that contains it, or to none.
+        let selected = selectedDate.flatMap { Self.bucket(containing: $0, in: snapshot.buckets) }
         VStack(alignment: .leading, spacing: Tokens.Space.s2) {
             HStack(alignment: .center, spacing: Tokens.Space.s3) {
                 VStack(alignment: .leading, spacing: Tokens.Space.s1) {
@@ -51,12 +65,17 @@ struct AnalyticsActivityChart: View {
                     description: Text("Choose another date range or load more history."))
                     .frame(height: Tokens.Analytics.chartHeight - Tokens.Space.s16)
             } else {
-                Group {
-                    if showsTable { valuesTable } else { plot }
+                ZStack {
+                    if showsTable {
+                        valuesTable.ternTransition(.fade)
+                    } else {
+                        plot(selected: selected?.date).ternTransition(.fade)
+                    }
                 }
                 .frame(height: Tokens.Analytics.chartHeight)
+                .ternAnimation(value: showsTable, duration: Tokens.Motion.fast)
                 Divider()
-                selectionSummary
+                selectionSummary(selected)
                     .frame(minHeight: Tokens.Space.s6, alignment: .center)
             }
         }
@@ -65,11 +84,15 @@ struct AnalyticsActivityChart: View {
         .analyticsPanel()
     }
 
-    private var plot: some View {
-        Chart(snapshot.buckets, id: \.date) { bucket in
-            bar(bucket, count: bucket.receivedCount, direction: "Received")
-            bar(bucket, count: bucket.sentCount, direction: "Sent")
-            if selectedBucket?.date == bucket.date {
+    private func plot(selected: Date?) -> some View {
+        // Worked out once per update. The marks would otherwise repeat it for every bucket.
+        let axis = yAxis
+        let ticks = xTicks
+        return Chart(snapshot.buckets, id: \.date) { bucket in
+            let label = bucketLabel(bucket.date)
+            bar(bucket, count: bucket.receivedCount, direction: "Received", label: label, selected: selected)
+            bar(bucket, count: bucket.sentCount, direction: "Sent", label: label, selected: selected)
+            if selected == bucket.date {
                 RuleMark(x: .value("Selected period", bucket.date, unit: snapshot.bucketUnit.calendarComponent))
                     .foregroundStyle(Color.secondary.opacity(Tokens.Opacity.outline))
                     .lineStyle(StrokeStyle(lineWidth: Tokens.Border.hairline, dash: [Tokens.Space.s1]))
@@ -78,10 +101,10 @@ struct AnalyticsActivityChart: View {
         }
         .chartForegroundStyleScale(["Received": Tokens.Analytics.received, "Sent": Tokens.Analytics.sent])
         .chartLegend(.hidden)
-        .chartYScale(domain: 0...yMaximum)
+        .chartYScale(domain: 0...axis.maximum)
         .chartXScale(range: .plotDimension(padding: Tokens.Space.s2))
         .chartYAxis {
-            AxisMarks(position: .leading, values: Array(stride(from: 0, through: yMaximum, by: yStep))) { value in
+            AxisMarks(position: .leading, values: Array(stride(from: 0, through: axis.maximum, by: axis.step))) { value in
                 AxisGridLine(stroke: StrokeStyle(lineWidth: Tokens.Border.hairline))
                     .foregroundStyle(Tokens.Surface.border.opacity(Tokens.Opacity.outline))
                 AxisValueLabel {
@@ -92,7 +115,7 @@ struct AnalyticsActivityChart: View {
             }
         }
         .chartXAxis {
-            AxisMarks(values: xTicks) { value in
+            AxisMarks(values: ticks) { value in
                 AxisValueLabel(anchor: xTickAnchor(value.as(Date.self)), verticalSpacing: Tokens.Space.s2) {
                     if let date = value.as(Date.self) {
                         Text(axisLabel(date)).font(.caption2).foregroundStyle(Color.secondary)
@@ -100,18 +123,19 @@ struct AnalyticsActivityChart: View {
                 }
             }
         }
-        .chartXSelection(value: $selectedDate)
+        .chartXSelection(value: selection)
         .accessibilityLabel("Sent and received emails over time")
     }
 
-    private func bar(_ bucket: MailAnalyticsBucket, count: Int, direction: String) -> some ChartContent {
+    private func bar(_ bucket: MailAnalyticsBucket, count: Int, direction: String,
+                     label: String, selected: Date?) -> some ChartContent {
         BarMark(x: .value("Period", bucket.date, unit: snapshot.bucketUnit.calendarComponent),
                 y: .value("Emails", count), width: .ratio(Tokens.Analytics.barWidthRatio))
             .foregroundStyle(by: .value("Direction", direction))
             .position(by: .value("Direction", direction))
             .cornerRadius(Tokens.Space.s0_5)
-            .opacity(selectedBucket == nil || selectedBucket?.date == bucket.date ? 1 : Tokens.Opacity.disabled)
-            .accessibilityLabel("\(bucketLabel(bucket.date)), \(direction.lowercased())")
+            .opacity(selected == nil || selected == bucket.date ? 1 : Tokens.Opacity.disabled)
+            .accessibilityLabel("\(label), \(direction.lowercased())")
             .accessibilityValue(count.formatted())
     }
 
@@ -124,9 +148,9 @@ struct AnalyticsActivityChart: View {
         .accessibilityElement(children: .combine)
     }
 
-    private var selectionSummary: some View {
+    private func selectionSummary(_ selected: MailAnalyticsBucket?) -> some View {
         HStack(spacing: Tokens.Space.s3) {
-            if !showsTable, let bucket = selectedBucket {
+            if !showsTable, let bucket = selected {
                 selectedSummary(bucket)
                 Button {
                     selectedDate = nil
@@ -203,12 +227,14 @@ struct AnalyticsActivityChart: View {
         .padding(.horizontal, Tokens.Space.s2)
     }
 
-    private var yStep: Int {
+    /// The Y axis step and its top value, from one pass over the buckets.
+    private var yAxis: (step: Int, maximum: Int) {
         let peak = snapshot.buckets.map { max($0.receivedCount, $0.sentCount) }.max() ?? 0
         let target = max(1, Double(peak) / 4)
         let scale = pow(10, floor(log10(target)))
-        let step = [1.0, 2, 5, 10].first { $0 * scale >= target } ?? 10
-        return max(1, Int(step * scale))
+        let factor = [1.0, 2, 5, 10].first { $0 * scale >= target } ?? 10
+        let step = max(1, Int(factor * scale))
+        return (step, max(step, Int(ceil(Double(peak) / Double(step))) * step))
     }
 
     private var xTicks: [Date] {
@@ -224,11 +250,6 @@ struct AnalyticsActivityChart: View {
         if date == snapshot.buckets.first?.date { return .topLeading }
         if date == snapshot.buckets.last?.date { return .topTrailing }
         return .top
-    }
-
-    private var yMaximum: Int {
-        let peak = snapshot.buckets.map { max($0.receivedCount, $0.sentCount) }.max() ?? 0
-        return max(yStep, Int(ceil(Double(peak) / Double(yStep))) * yStep)
     }
 
     private var bucketHeading: String {

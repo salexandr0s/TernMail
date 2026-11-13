@@ -83,6 +83,52 @@ import WebKit
         view.subviews.flatMap { [$0] + nativeDescendants(of: $0) }
     }
 
+    @Test(.timeLimit(.minutes(1))) func aStepRequestedBeforeTheTypedQueryIsSearchedLandsOnTheSecondMatch() async throws {
+        let finder = ReaderFindModel()
+        let height = HeightValue()
+        let coordinator = MessageWebView.Coordinator(height: Binding(get: { height.value }, set: { height.value = $0 }))
+        coordinator.onReadable = { _ in finder.didBecomeReadable("message") }
+        let configuration = WKWebViewConfiguration()
+        configuration.defaultWebpagePreferences.allowsContentJavaScript = false
+        configuration.websiteDataStore = .nonPersistent()
+        configuration.userContentController.add(coordinator, contentWorld: .defaultClient, name: "ternHeight")
+        configuration.userContentController.addUserScript(WKUserScript(source: MessageWebView.sizingScript(revision: 1),
+            injectionTime: .atDocumentEnd, forMainFrameOnly: true, in: .defaultClient))
+        let view = ContentSizedWebView(frame: NSRect(x: 0, y: 0, width: 400, height: 180), configuration: configuration)
+        let window = NSWindow(contentRect: view.frame, styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = view
+        // Background-only: never activate the app or make this window key.
+        window.orderBack(nil)
+        defer { finder.hide(); view.stopLoading(); window.close() }
+        view.navigationDelegate = coordinator
+        finder.order = ["message"]
+        finder.register(view, for: "message")
+        coordinator.load(MessageDocument.render(plainText: "The first needle comes before the second needle.").html, in: view)
+        finder.show()
+        finder.query = "needle"
+        // Typing, then Return before the typing pause has passed.
+        finder.queryChanged()
+        finder.find(forward: true)
+        let matchesBeforeSelection = """
+            (() => {
+              const selection = getSelection();
+              if (!selection || selection.rangeCount === 0 || selection.toString() !== 'needle') return -1;
+              const before = document.createRange();
+              before.selectNodeContents(document.body);
+              before.setEnd(selection.getRangeAt(0).startContainer, selection.getRangeAt(0).startOffset);
+              return before.toString().split('needle').length - 1;
+            })()
+            """
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        var found = -1
+        repeat {
+            found = (try? await view.evaluateJavaScript(matchesBeforeSelection, in: nil, contentWorld: .defaultClient) as? Int) ?? -1
+            if found != 1 { try await Task.sleep(for: .milliseconds(20)) }
+        } while found != 1 && ContinuousClock.now < deadline
+        #expect(found == 1, "Return has to step past the match the typed query selects")
+        #expect(!finder.cameUpEmpty)
+    }
+
     @Test func anInactiveRetainedRendererDoesNotLoadOrMeasureChangedContent() async throws {
         let height = HeightValue()
         let coordinator = MessageWebView.Coordinator(height: Binding(get: { height.value }, set: { height.value = $0 }))
@@ -259,6 +305,114 @@ import WebKit
         let foreignLoaded = try await view.callAsyncJavaScript(script, arguments: ["source": foreignURL.absoluteString], in: nil, contentWorld: .defaultClient)
         #expect((ownLoaded as? Bool) == true)
         #expect((foreignLoaded as? Bool) == false)
+    }
+
+    @Test(.timeLimit(.minutes(1))) func aSpareHoldsOnlyTheEmptyPageAndServesNothingUntilAMessageTakesIt() async throws {
+        let spare = MessageWebViewWarmup.makeSpareForTesting()
+        let other = MessageWebViewWarmup.makeSpareForTesting()
+        defer { spare.stopLoading(); other.stopLoading() }
+        #expect(!spare.configuration.websiteDataStore.isPersistent)
+        #expect(spare.configuration.websiteDataStore !== other.configuration.websiteDataStore)
+        #expect(!spare.configuration.defaultWebpagePreferences.allowsContentJavaScript)
+        try await waitFor { !spare.isLoading }
+        let page = try await spare.evaluateJavaScript(
+            "document.body.childNodes.length + '|' + document.querySelector('meta[http-equiv]').content",
+            in: nil, contentWorld: .defaultClient) as? String
+        #expect(page == "0|default-src 'none'")
+
+        let png = try #require(Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="))
+        let resources = InlineResourceMap(resources: [.init(contentID: "logo", partID: "1", mimeType: "image/png", data: png)])
+        let own = try #require(resources.url(for: "logo"))
+        let image = try #require(URL(string: "https://images.example.com/photo.png"))
+        let inline = try #require(spare.configuration.urlSchemeHandler(forURLScheme: InlineResourceMap.scheme) as? InlineResourceHandler)
+        let remote = try #require(spare.configuration.urlSchemeHandler(forURLScheme: RemoteImageResourceURL.scheme) as? RemoteImageHandler)
+        #expect(inline.resources == nil)
+        let early = SchemeRequest(own)
+        inline.webView(spare, start: early)
+        #expect(early.failures == 1)
+        #expect(early.responses == 0)
+        let earlyRemote = SchemeRequest(try #require(RemoteImageResourceURL.make(image, scope: resources.scope)))
+        remote.webView(spare, start: earlyRemote)
+        #expect(earlyRemote.failures == 1)
+
+        inline.assign(resources)
+        let served = SchemeRequest(own)
+        inline.webView(spare, start: served)
+        #expect(served.responses == 1)
+        #expect(served.finished == 1)
+        // A view that has a message's map never takes another message's.
+        let foreign = InlineResourceMap(resources: [.init(contentID: "logo", partID: "1", mimeType: "image/png", data: png)])
+        inline.assign(foreign)
+        let refused = SchemeRequest(try #require(foreign.url(for: "logo")))
+        inline.webView(spare, start: refused)
+        #expect(refused.failures == 1)
+        #expect(inline.resources == resources)
+    }
+
+    @Test(.timeLimit(.minutes(1))) func aSpareTakenWhileItsEmptyPageLoadsShowsOnlyItsMessageAndNeverGoesBack() async throws {
+        let blocker = try #require(await RemoteContentBlocker.ruleList())
+        _ = MessageWebViewWarmup.takeMessageView()
+        MessageWebViewWarmup.refillNowForTesting()
+        let view = MessageWebViewWarmup.takeMessageView()
+        #expect(view.isLoading)
+        #expect(!MessageWebViewWarmup.holdsForTesting(view))
+
+        let height = HeightValue()
+        let firstHeight = HeightValue()
+        let text = String(repeating: "This message is far taller than an empty page. ", count: 15)
+        let reader = MessageWebView(html: MessageDocument.render(plainText: text).html, blocker: blocker,
+            height: Binding(get: { height.value }, set: { height.value = $0 }),
+            onReadable: { _ in if firstHeight.value == 0 { firstHeight.value = height.value } })
+        let coordinator = reader.makeCoordinator()
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 100), styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = view; window.orderFront(nil)
+        defer { view.stopLoading(); window.close() }
+        reader.assign(view, to: coordinator)
+        try await waitFor { firstHeight.value > 0 }
+        // The empty page is about 16 points tall. Its height must never be reported as the message's.
+        #expect(firstHeight.value > 100)
+        let shown = try await view.evaluateJavaScript("document.body.innerText", in: nil, contentWorld: .defaultClient) as? String
+        #expect(shown?.contains("far taller than an empty page") == true)
+
+        MessageWebView.dismantleNSView(view, coordinator: coordinator)
+        MessageWebViewWarmup.refillNowForTesting()
+        #expect(!MessageWebViewWarmup.holdsForTesting(view))
+        let next = MessageWebViewWarmup.takeMessageView()
+        #expect(next !== view)
+        #expect(next.configuration.websiteDataStore !== view.configuration.websiteDataStore)
+    }
+
+    @Test(.timeLimit(.minutes(1))) func aMessageLoadsAgainAfterItsWebProcessEndsAtOnceOrWhenItsReaderReturns() async throws {
+        let blocker = try #require(await RemoteContentBlocker.ruleList())
+        let height = HeightValue()
+        let loads = HeightValue()
+        let text = String(repeating: "This message comes back after its process ends. ", count: 15)
+        let reader = MessageWebView(html: MessageDocument.render(plainText: text).html, blocker: blocker,
+            height: Binding(get: { height.value }, set: { height.value = $0 }),
+            onReadable: { retained in if !retained { loads.value += 1 } })
+        let coordinator = reader.makeCoordinator()
+        let view = MessageWebView.makeUnassignedView()
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 100), styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = view; window.orderFront(nil)
+        defer { view.stopLoading(); window.close() }
+        reader.assign(view, to: coordinator)
+        try await waitFor { loads.value == 1 && !view.isLoading }
+
+        // A shown reader loads its message again at once.
+        coordinator.webViewWebContentProcessDidTerminate(view)
+        #expect(view.isLoading)
+        try await waitFor { loads.value == 2 && !view.isLoading }
+
+        // A hidden reader waits until it is shown.
+        coordinator.setActive(false, in: view)
+        coordinator.webViewWebContentProcessDidTerminate(view)
+        #expect(!view.isLoading)
+        coordinator.setActive(true, in: view)
+        try await waitFor { loads.value == 3 && !view.isLoading }
+
+        // A page that keeps ending its process is not loaded forever.
+        coordinator.webViewWebContentProcessDidTerminate(view)
+        #expect(!view.isLoading)
     }
 
     @Test func zeroDeltaGestureWaitsForMovementAndKeepsItsAxisThroughMomentum() {
@@ -494,6 +648,18 @@ private struct ReaderColors: Decodable {
         pending?.didFailWithError(URLError(.resourceUnavailable))
         pending = nil
     }
+}
+
+@MainActor private final class SchemeRequest: NSObject, @preconcurrency WKURLSchemeTask {
+    let request: URLRequest
+    private(set) var failures = 0
+    private(set) var responses = 0
+    private(set) var finished = 0
+    init(_ url: URL) { request = URLRequest(url: url) }
+    func didReceive(_ response: URLResponse) { responses += 1 }
+    func didReceive(_ data: Data) {}
+    func didFinish() { finished += 1 }
+    func didFailWithError(_ error: any Error) { failures += 1 }
 }
 
 @MainActor private func waitFor(_ condition: () -> Bool) async throws {

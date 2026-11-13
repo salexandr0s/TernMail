@@ -59,11 +59,17 @@ final class AccountMailbox {
     @ObservationIgnored var onUnreadCountChange: (() -> Void)?
     /// Keeps the app out of App Nap while this account syncs or sends.
     @ObservationIgnored var activityGuard: SyncActivityGuard?
+    /// The senders this account lets load remote images. It lives and dies with the account object.
+    @ObservationIgnored let imageSenders: ImageSenderAllowSet
 
     @ObservationIgnored private let cache: MailCache
     @ObservationIgnored private var isStopped = false
     @ObservationIgnored private var tasks: [Task<Void, Never>] = []
     @ObservationIgnored private var wakeObserver: (any NSObjectProtocol)?
+    /// The local start. The network start waits for it.
+    @ObservationIgnored private var localStart: Task<Void, Never>?
+    @ObservationIgnored private var hasReadSyncState = false
+    @ObservationIgnored private var isNetworkStarted = false
     /// Engine settings go in the order they were made.
     @ObservationIgnored private var control: Task<Void, Never>?
 
@@ -72,6 +78,7 @@ final class AccountMailbox {
     /// it, snoozes, identity refresh and contact sync are unavailable.
     init(account: AccountRecord, cache: MailCache, gmail: any GmailService, outgoingDirectory: URL, snoozeStore: AccountStore?, syncEnabled: Bool = true) {
         self.account = account
+        imageSenders = ImageSenderAllowSet(accountID: account.id)
         self.syncEnabled = syncEnabled
         self.cache = cache
         let people = (gmail as? GmailClient).map { PeopleClient(session: $0.session) }
@@ -92,11 +99,56 @@ final class AccountMailbox {
         snoozeKeeper = snoozeStore.map { SnoozeKeeper(engine: engine, accounts: $0) }
     }
 
+    /// Shows the saved mail, then starts syncing.
     func start() async {
-        // The engine clears old aliases on startup. Migrate saved icons first.
-        await LabelAppearance.shared.reconcile(using: cache)
-        hasSyncedOnce = (try? await cache.syncState(accountID: account.id)) != nil
+        await startLocal()
+        await startNetwork()
+    }
+
+    /// Shows what the cache holds: labels, the outbox and snoozes. It starts
+    /// no engine, so the window can show it before anything syncs.
+    func startLocal() async {
+        if localStart == nil {
+            guard !isStopped else { return }
+            localStart = Task { [weak self] in await self?.observeCache() }
+        }
+        await localStart?.value
+    }
+
+    /// Starts the engine and the snooze keeper. The local start always ends
+    /// first, so saved label icons are migrated before the engine clears
+    /// old aliases.
+    func startNetwork() async {
+        await startLocal()
+        guard syncEnabled, !isStopped, !isNetworkStarted else { return }
+        isNetworkStarted = true
+        // Snoozes that came due while the Mac slept wake when it does.
+        wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            // Delivered on the main queue, as requested above.
+            MainActor.assumeIsolated { self?.checkSnoozes() }
+        }
+        await engine.start()
         guard !isStopped else { return }
+        await snoozeKeeper?.start()
+    }
+
+    /// Reads whether this account has ever finished a sync. An empty list
+    /// says "Downloading mail…" only for an account that hasn't, so opening
+    /// a mailbox reads this before the window shows it. Only the first call
+    /// reads.
+    func restoreSyncState() async {
+        guard !hasReadSyncState else { return }
+        hasReadSyncState = true
+        // A sync that finished during the read has already set the flag.
+        if (try? await cache.syncState(accountID: account.id)) != nil { hasSyncedOnce = true }
+    }
+
+    private func observeCache() async {
+        guard !isStopped else { return }
+        // The streams start first, so the sidebar's labels and counts don't
+        // wait for the reads below.
         let labelStream = cache.labels(accountID: account.id)
         let outboxStream = cache.outbox(accountID: account.id)
         let snoozedStream = cache.snoozedThreads(accountID: account.id)
@@ -145,17 +197,11 @@ final class AccountMailbox {
                 await onMailSync?(notification)
             }
         })
-        // Snoozes that came due while the Mac slept wake when it does.
-        wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
-            forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
-        ) { [weak self] _ in
-            // Delivered on the main queue, as requested above.
-            MainActor.assumeIsolated { self?.checkSnoozes() }
-        }
-        guard syncEnabled else { return }
-        await engine.start()
+        // Does nothing when opening the mailbox already read it.
+        await restoreSyncState()
         guard !isStopped else { return }
-        await snoozeKeeper?.start()
+        // The engine clears old aliases on startup. Migrate saved icons first.
+        await LabelAppearance.shared.reconcile(using: cache)
     }
 
     /// Stops the keeper, the streams and then the engine, since the keeper

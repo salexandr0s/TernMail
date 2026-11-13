@@ -8,7 +8,7 @@ scenario="${2:-all}"
 variant="${3:-normal}"
 case "$event_count" in 100|1000) ;; *) echo 'Usage: benchmark-navigation.sh [100|1000] [all|workspace-only|reader-only|scroll-only]' >&2; exit 2 ;; esac
 case "$scenario" in all|workspace-only|reader-only|scroll-only) ;; *) echo 'Scenario must be all, workspace-only, reader-only, or scroll-only.' >&2; exit 2 ;; esac
-case "$variant" in normal|fixed-key-loop) ;; *) echo 'Variant must be normal or fixed-key-loop.' >&2; exit 2 ;; esac
+case "$variant" in normal|fixed-key-loop|unattended) ;; *) echo 'Variant must be normal, fixed-key-loop or unattended.' >&2; exit 2 ;; esac
 build_root="${TERN_PERFORMANCE_BUILD_DIR:-/tmp/tern-performance-audit-build}"
 audit_bundle_id="${TERN_PERFORMANCE_BUNDLE_ID:-dev.tern.performance}"
 report_dir="${TERN_PERFORMANCE_REPORT_DIR:-$HOME/Library/Containers/$audit_bundle_id/Data/tmp}"
@@ -50,6 +50,8 @@ pathlib.Path(sys.argv[1] + '.current.json').unlink(missing_ok=True)
 PY
 audit_variant_args=()
 if [ "$variant" = fixed-key-loop ]; then audit_variant_args+=(--performance-fixed-key-loop); fi
+# Unattended runs compare two builds when nobody can bring the app to the front.
+if [ "$variant" = unattended ]; then audit_variant_args+=(--performance-unattended); fi
 if [ -n "${TERN_PERFORMANCE_START_FILE:-}" ]; then audit_variant_args+=("--performance-start-file=$TERN_PERFORMANCE_START_FILE"); fi
 /usr/bin/python3 "$task_root/scripts/performance-process-memory.py" "$run_dir" \
     "$build_root/Build/Products/Release/Tern.app/Contents/MacOS/Tern" \

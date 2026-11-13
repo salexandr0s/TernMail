@@ -38,6 +38,37 @@ import Testing
         #expect(model.error == nil)
     }
 
+    @Test func linksThatFollowTheCountsArriveAndASenderWithoutSignaturesStillFinishes() async throws {
+        let cache = try MailCache.inMemory()
+        try await cache.write { tx in
+            try tx.upsertMessages([Self.message(account: "a", id: "a1"), Self.message(account: "b", id: "b1")])
+            try tx.saveBodies([MessageBodyRecord(accountID: "a", messageID: "a1",
+                html: "<div class='gmail_signature'><a href='https://github.com/alex'>GitHub</a></div>",
+                plainText: nil, fetchedAt: .now)])
+        }
+        let model = MailAnalyticsModel()
+        let first = Task {
+            await model.observe(cache: cache, query: .init(accountIDs: ["a"],
+                contactAddress: "alex@example.invalid", period: .allTime), linksFollow: true)
+        }
+        defer { first.cancel(); model.stop() }
+        try await waitUntil { model.didLoadProfileLinks }
+        #expect(model.snapshot?.receivedCount == 1)
+        #expect(model.profileLinks.map(\.link.kind) == [.github])
+
+        // No body is stored for this account's message, so there is nothing to read.
+        // The links must still be reported as loaded, or their placeholder never goes.
+        let second = Task {
+            await model.observe(cache: cache, query: .init(accountIDs: ["b"],
+                contactAddress: "alex@example.invalid", period: .allTime), linksFollow: true)
+        }
+        defer { second.cancel() }
+        first.cancel()
+        try await waitUntil { model.snapshot?.coverage.first?.accountID == "b" && model.didLoadProfileLinks }
+        #expect(model.profileLinks.isEmpty)
+        #expect(model.error == nil)
+    }
+
     @Test func failedAndPausedAccountsDoNotPreventOtherHistoryFromLoading() async throws {
         let mailbox = try await historyMailbox()
         var requests: [(String, Bool)] = []

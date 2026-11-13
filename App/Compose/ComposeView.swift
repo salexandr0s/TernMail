@@ -43,19 +43,25 @@ struct ComposeView: View {
     private let onMove: (Handoff) -> Void
     /// Asks this view's model before the window closes.
     private let closer: ComposeWindowCloser
+    /// The window's keys typed while this draft loads or moves. They are
+    /// typed into the field the cursor starts in.
+    private let typeAhead: ComposeTypeAhead?
 
     init(localDraftID: String, mailbox: MailboxModel, isEdited: Binding<Bool>, handoff: Handoff? = nil,
-         closer: ComposeWindowCloser, onMove: @escaping (Handoff) -> Void) {
+         closer: ComposeWindowCloser, typeAhead: ComposeTypeAhead? = nil, onMove: @escaping (Handoff) -> Void) {
         _model = State(initialValue: ComposeModel(localDraftID: localDraftID, mailbox: mailbox, senderChange: handoff?.senderChange))
         _isEdited = isEdited
         restoredFocus = handoff?.focus
         self.closer = closer
+        self.typeAhead = typeAhead
         self.onMove = onMove
     }
 
     var body: some View {
         Group {
-            if model.phase == .loading {
+            // The form shows as soon as the draft is read. It takes no edits
+            // until the draft's sender is stored, which `isEditable` covers.
+            if model.phase == .loading, model.activity == nil {
                 if let error = model.storeError {
                     VStack(spacing: Tokens.Space.s4) {
                         TernEmptyState(title: "Couldn't Open This Draft", systemImage: "exclamationmark.triangle",
@@ -65,11 +71,20 @@ struct ComposeView: View {
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    ProgressView("Opening message…")
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    Color.clear
                 }
             } else {
                 form
+            }
+        }
+        .overlay {
+            // Over the form, so nothing moves when it shows or goes.
+            if let waiting = model.waitingText {
+                ProgressView(waiting)
+                    .padding(Tokens.Space.s4)
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
+                    .ternDelayedLoading()
+                    .allowsHitTesting(false)
             }
         }
         .background(Tokens.Surface.primary)
@@ -98,11 +113,14 @@ struct ComposeView: View {
         .onChange(of: model.isEditable) { _, isEditable in
             if !isEditable { composeAssistant?.clear(); showsAssistant = false }
         }
+        .modifier(ComposeTypeAheadPhases(model: model, typeAhead: typeAhead))
         .task(id: model.phase) {
             switch model.phase {
             case .loading, .moving: break
             case .open: await placeFocus()
-            case .closed: dismiss()
+            case .closed:
+                typeAhead?.drop()
+                dismiss()
             case .moved(let localDraftID):
                 onMove(Handoff(localDraftID: localDraftID, focus: lastFocus, senderChange: model.copySenderChange))
             }
@@ -178,7 +196,12 @@ struct ComposeView: View {
     /// A copy made by a move starts where the cursor was, so the next Tab
     /// goes where it would have gone without the move.
     private func placeFocus() async {
-        guard !hasPlacedFocus, let draft = model.draft else { return }
+        guard !hasPlacedFocus, let draft = model.draft else {
+            // Open again after a move that didn't happen. Keys typed
+            // meanwhile go to the field that kept the cursor, if one did.
+            typeAhead?.release(waitingForCursor: false)
+            return
+        }
         hasPlacedFocus = true
         // Let the fields and editor join the window first.
         await Task.yield()
@@ -191,7 +214,27 @@ struct ComposeView: View {
         } else {
             model.editor?.focus()
         }
+        // Only the field above was sent the cursor, so the keys typed before
+        // the window could take them go there, in the order they were typed.
+        typeAhead?.release(waitingForCursor: true)
     }
+}
 
+/// Keeps the window's type-ahead in step with its draft. It is a modifier of
+/// its own so the view's body stays quick to type-check.
+private struct ComposeTypeAheadPhases: ViewModifier {
+    let model: ComposeModel
+    let typeAhead: ComposeTypeAhead?
 
+    func body(content: Content) -> some View {
+        content
+            .onChange(of: model.phase) { _, phase in
+                // The fields take no typing during a move. The copy types what was typed meanwhile.
+                if phase == .moving { typeAhead?.hold() }
+            }
+            .onChange(of: model.storeError) { _, error in
+                // A draft that can't be read never gets a cursor.
+                if error != nil, model.phase == .loading { typeAhead?.drop() }
+            }
+    }
 }

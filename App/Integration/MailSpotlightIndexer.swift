@@ -75,7 +75,7 @@ final class MailSpotlightIndexer {
         queued = []
         let current = generation
         removal.requestAll()
-        enqueue { [weak self] in
+        enqueue(priority: .utility) { [weak self] in
             guard let self, current == generation, isEnabled else { return }
             guard await finishPendingRemoval() else { return }
             for accountID in app?.mailbox?.accounts.map(\.account.id) ?? [] {
@@ -89,7 +89,7 @@ final class MailSpotlightIndexer {
     func mailSynced(accountID: String) {
         guard allowsIndexing, isEnabled, queued.insert(accountID).inserted else { return }
         let current = generation
-        enqueue { [weak self] in
+        enqueue(priority: .utility) { [weak self] in
             guard let self, current == generation else { return }
             queued.remove(accountID)
             guard isEnabled else { return }
@@ -146,10 +146,12 @@ final class MailSpotlightIndexer {
         }
     }
 
-    /// Runs `work` after every pass queued before it.
-    private func enqueue(_ work: @escaping @MainActor () async -> Void) {
+    /// Runs `work` after every pass queued before it. Index passes ask for
+    /// utility priority, so they run behind the mail on screen. Removals
+    /// keep the caller's priority.
+    private func enqueue(priority: TaskPriority? = nil, _ work: @escaping @MainActor () async -> Void) {
         let previous = tail
-        tail = Task {
+        tail = Task(priority: priority) {
             await previous?.value
             await work()
         }
@@ -196,19 +198,11 @@ final class MailSpotlightIndexer {
     }
 
     /// The Inbox, then the most recent conversations outside Trash and Spam,
-    /// up to `accountLimit`.
+    /// up to `accountLimit`, in one cache read.
     nonisolated private static func listedThreads(accountID: String, cache: MailCache) async throws -> [ThreadRecord] {
-        var threads: [ThreadRecord] = []
-        var seen = Set<String>()
-        for labelID in [SystemLabel.inbox, SystemLabel.allMail] where threads.count < accountLimit {
-            for try await page in cache.threads(accountID: accountID, labelID: labelID, limit: accountLimit) {
-                for thread in page where threads.count < accountLimit && seen.insert(thread.id).inserted {
-                    threads.append(thread)
-                }
-                break
-            }
-        }
-        return threads
+        try await cache.threadsListed(
+            accountID: accountID, underEachOf: [SystemLabel.inbox, SystemLabel.allMail], limit: accountLimit
+        )
     }
 
     /// The display name of each conversation's latest sender, when it has one.

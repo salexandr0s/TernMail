@@ -60,6 +60,15 @@ locally stored message selection, and sustained scrolling. Reports retain failur
 timeouts separately from successful percentiles. A scenario with missing content
 or missing visibility probes must not be reported as passing.
 
+The script takes a third argument, the variant. `unattended` passes
+`--performance-unattended`: the benchmark window goes in front of other apps'
+windows and the run no longer requires the app to be active or its window to be
+key. Use it to compare two builds when nobody is at the Mac to bring the app to
+the front. The report records `unattended: true` and the validator rejects it,
+so these timings never count as acceptance. Set `TERN_PERFORMANCE_REPORT_DIR`
+to a folder the sandboxed app can write and the caller can read, such as one
+under `~/Downloads`, when the caller may not read the app's container.
+
 For a normal Debug or Release launch, `--navigation-report=<absolute-path>` enables a
 local JSON report. Use a writable location in the app's container, such as
 `~/Library/Containers/dev.tern.mail/Data/tmp/navigation.json` (expand `~` before
@@ -89,7 +98,12 @@ state and WebKit child processes are measured separately from these byte caches.
 Calendar keeps the displayed range and prepares complete, locally stored adjacent
 ranges in one background task. Adjacent preparation makes no network requests.
 Each window retains three reader sessions and at most two hidden message WebKit
-views. Minimized or fully occluded windows suspend automatic reader activity.
+views. The app also keeps one spare message WebKit view that no message has used.
+It has its own non-persistent data store and has loaded only an empty page, so its
+WebKit child process is already running when the next message takes it. A new
+spare is built once that message has laid out and input has paused for a second.
+Minimized or fully occluded windows suspend automatic reader activity and release
+the spare, and memory pressure releases it until the next message opens.
 
 Account removal, disposable-cache reset, permission changes, content revisions,
 and rendering-policy changes invalidate the relevant cached values. Hidden
@@ -589,3 +603,244 @@ The user reported that the app felt much faster after reopening it. This is
 manual feedback, not another timing sample. Work is paused at their request;
 the remaining performance targets and hover appearance need subsequent feedback
 or measurement before claiming completion.
+
+## Smoothness pass, 13 November 2026
+
+This pass covers `bed7ebd4..1f4b12b1` on `fix/smoothness-pass`. It changed how
+the views observe the store, how a message opens, how the lists and the calendar
+redraw, and what fits at each window width.
+
+The numbers in this table come from the hosted Debug-Testing app with synthetic
+data. Each was taken by the tests or probes of the change it belongs to, before
+and after that change on the same Mac. They are not acceptance results.
+
+| Measurement | Before | After |
+| --- | --- | --- |
+| Main-thread block when a message opens its web view | 46–56 ms | 1.2–1.8 ms with the spare view |
+| Time to a message's first reported height | 107–128 ms | 14–17 ms with the spare view |
+| Row factory runs when one conversation is starred, 61-row page | 61 | 0 |
+| Body runs of an untouched retained reader on a selection change | 1 | 0 |
+| Calendar grid body runs on a selection click | 1 | 0 |
+| Pasted-image PNG encoding on the main actor | 240–2,758 ms | 0 ms, encoded off the main actor |
+| Width a week needs before it scrolls sideways | 736 pt | 512 pt |
+
+### Layout at each width
+
+The synthetic app captured its own window in-process, through
+`Tests/AppTests/ReadmeScreenshots.swift` with extra sizes that were not
+committed, and each image was read: Mail at 720, 1,100 and 1,500 points; the
+week at 720, 960 and 1,500; the day at 720; the month at 720, 900, 960 and
+1,500; Today at 720 and 1,500; Waiting for at 1,100; the week in dark Increase
+Contrast at 960; and the Tasks panel and the assistant at 1,500. The week fit at
+720 points without a sideways scroll, and the toolbar folded its controls with
+none left in the overflow menu.
+
+The month view had one flaw. At 720 points a chip kept its time and cut the
+title to two or three letters. A chip now drops the time when the title beside
+it would get less than 48 points (`1f4b12b1`), and every chip in a month changes
+at the same cell width.
+
+These are still images. The Favorites animation, the dimmed task row, the
+summary's landing, the spare web view's refill and the week swipe were not
+watched in motion.
+
+### A message body that stayed blank
+
+One of twelve capture runs timed out after 15 seconds waiting for the selected
+message's body. It was the first run of a fresh process, the cause was not
+found, and the eleven runs after it passed. A blank body is what a web content
+process that ended leaves behind, and the reader did not handle that case on
+`main` either. The message view now loads its message again, at once when its
+reader is shown and otherwise when it is next shown (`bbff9047`). Whether that
+case caused the failed run is unknown.
+
+### `main` against the branch
+
+Two optimized `TERN_PERFORMANCE` builds ran back to back on this Mac: `main` at
+`bed7ebd4` and the branch at `1f4b12b1`. The `main` build carries the code of
+`47eb9bbd` uncommitted, six files under `App/Performance`, `App/LaunchMode.swift`
+and `scripts/`, so that it accepts the unattended variant. Each scope ran once
+per build with `bash scripts/benchmark-navigation.sh 100 <scope> unattended`,
+`main` first, after three minutes without keyboard or pointer input. Unattended
+timings compare two builds and cannot pass the acceptance targets, and with one
+run per build a difference of a few milliseconds is noise.
+
+All 200 mode switches and both sets of 100 selections completed on both builds
+with no failures and no unexpected native input.
+
+| Measurement | `main` p50 / p95 / p99 | Branch p50 / p95 / p99 |
+| --- | --- | --- |
+| Warm switch to Calendar | 401 / 494 / 713 ms | 257 / 362 / 394 ms |
+| Warm switch to Mail | 374 / 502 / 634 ms | 255 / 337 / 370 ms |
+| Stored message needing preparation, readable | 750 / 1,691 / 1,859 ms | 401 / 533 / 704 ms |
+| Stored message needing preparation, header | 231 / 445 / 538 ms | 218 / 271 / 299 ms |
+| Retained message, readable | 117 / 144 / 149 ms | 117 / 138 / 153 ms |
+| Retained message, header and row proxy | 85 / 105 / 107 ms | 88 / 110 / 123 ms |
+
+Mode switches and stored messages are faster on the branch; retained messages
+are unchanged. The branch still misses the targets: a return to a mode or to a
+rendered email has a 100 ms p95 target, and a stored message 200 ms. Final physical footprint was
+259 MB on `main` and 257 MB on the branch after the workspace run, and 312 MB
+and 306 MB after the reader run.
+
+Sustained scrolling, 30 seconds a surface, by the display-link callback proxy.
+The first run of this scope could not find the mailbox list on either build, and
+the Mac came back into use during the branch's turn. The lookup was fixed
+(`e4024a71`, applied to the `main` build as well) and the scope ran three more
+times per build, each after 150 seconds without input. The ranges cover the
+three runs:
+
+| Surface | `main` | Branch |
+| --- | --- | --- |
+| Mailbox | 1,701–1,708 callbacks, 12.3–12.5% delayed, 2 stalls of 100 ms or more, longest gap 378–448 ms | 1,736–1,741 callbacks, 12.9–14.3% delayed, 2 stalls, longest gap 129–135 ms |
+| Reader, 20 messages | 1,635–1,638 callbacks, 5.7–5.9% delayed, no stall | 1,635–1,637 callbacks, 5.7% delayed, no stall |
+| Reader, 100 messages | 1,628–1,638 callbacks, 6.8–6.9% delayed, no stall | 1,630–1,632 callbacks, 6.9–7.0% delayed, no stall |
+| Calendar | 1,787–1,789 callbacks, at most 0.1% delayed, no stall | 1,787–1,789 callbacks, 0.1% delayed, no stall |
+| Attachments | Surface not found | Surface not found |
+
+Scrolling is the same on both builds: the changes up to `1f4b12b1` did not make
+it smoother, and the mailbox and the reader exceed the 1% budget for delayed
+callbacks. The next section covers what was then found in the mailbox. The
+first run had shown 18 and 73 stalls in the reader on `main` and none on the
+branch. The three later runs showed none on either build, so that difference did
+not come from the pass. The branch's longest mailbox gap was shorter in all
+three runs. No run found the attachment surface. The benchmark's mail has no
+files, so the library was empty, and only the card layout carried the scroll
+marker. Since `d03d9f6d` the list layout is marked too, and since `a09c69a4` the
+audit stores 300 synthetic files before that scroll. The list's figures are
+under "`main` against the branch's last build" below. The reports are in
+`~/Downloads/tern-benchmark/main` and `~/Downloads/tern-benchmark/branch`,
+outside this repository.
+
+### What delayed the mailbox scroll
+
+`sample` recorded the branch build's main thread every millisecond for 18
+seconds of the mailbox scroll. About a quarter of the samples were in work that
+had nothing to do with drawing rows: 9.2% under
+`NSHostingView.preferencesDidChange()`, where the window worked out its focus
+again, 6.4% rebuilding the toolbar's menus, and much of the layout pass those
+two forced. The app's own code was under 1%.
+
+Each row's star button had a focus binding, so that the star stays visible while
+it has keyboard focus. A focus binding registers its view with the window, and
+rows registering and leaving as they scrolled changed the window's focus list on
+almost every frame. Buttons take keyboard focus only while Keyboard navigation
+is on in System Settings, so a row now binds the star's focus only then. With
+the setting off, as it was for every run here, the same profile shows 0.1% and
+0.0% in those two places, and hosting-view layout falls from 36.8% to 18.0% of
+the samples. With the setting on, the binding and its cost remain.
+
+Two stalls of 100 ms or more were left in every run. Each row also carried two
+popovers, for the snooze date and for the sender, that are closed almost all the
+time. In a trial build where a row had a popover only while it was open, the
+stalls did not appear in any of three runs. The trial was not kept: its snooze
+popover stayed closed when it was asked for in the same moment it had closed.
+
+Since `40daeb8e` the list has one snooze popover and one sender popover, pointed
+at the row that asked. The missed opening had a plain cause. A request made in
+the frame a popover closed went from set to cleared to set again before the view
+was drawn, so the view saw no change. Each request now differs from the one
+before it. The sender popover on every row had the same fault and then ignored
+every later request for that row. Two unattended runs of this build showed 1.1%
+and 1.8% delayed callbacks, with one stall of 101 ms in the first and none in
+the second. A third run took a click from the person at the Mac and is left out.
+In the same two runs the reader showed 6.7–8.0% and 9.0–9.7% delayed callbacks,
+above the 5.7% and 6.9–7.0% measured earlier in the day. `main` was not run
+alongside those two. It was later; see "`main` against the branch's last build".
+
+| Build | Runs | Delayed callbacks | Stalls of 100 ms or more | p95 gap | Longest gap |
+| --- | --- | --- | --- | --- | --- |
+| Branch at `1f4b12b1` | 3 | 12.9–14.3% | 2 in each | 27.4–27.8 ms | 129–135 ms |
+| Star focus bound only when buttons take focus | 3 | 1.5–1.9% | 2 in each | 20.1–20.3 ms | 122–135 ms |
+| Trial: popovers only while open | 2 | 2.4% and 12.9% | None | 21.4 and 27.2 ms | 90 and 51 ms |
+| Trial: both, with the binding removed | 1 | 1.5% | None | 20.0 ms | 67 ms |
+| One popover of each kind for the list (`40daeb8e`) | 2 | 1.1% and 1.8% | One of 101 ms, then none | 17.3 and 19.4 ms | 101 and 51 ms |
+
+The two popover runs disagree on delayed callbacks. The profile of that build
+matched the profile before it, so the popovers do not explain the delayed
+callbacks, and the 2.4% run, which began right after its build, is not
+comparable with the others.
+
+The reader was sampled the same way during its 20-message scroll. Hosting-view
+layout took 47% of the main thread's samples, the lazy stack's sizing about 15%
+and the creation of message web views, with the start of their web content
+processes, about 7%. The focus work was 1.4%. Each message keeps its own web
+view by design, so the reader's scrolling was left as it was, at 5–7% delayed
+callbacks.
+
+The Tasks rows and the sidebar's disclosure rows bind focus per row in the same
+way. Their lists were not measured.
+
+### `main` against the branch's last build
+
+The scroll scope ran again late in the day on `main` at `bed7ebd4` and on the
+branch's code as of `a09c69a4`, the two builds taking turns. A run counts here
+only if it took no keyboard or pointer input, kept the foreground and ran with
+the screen unlocked. Two runs of `main` and two of the branch met that. One of
+the branch's two was the `normal` variant, the only run of this pass that the
+benchmark counts as attended. Whether anyone watched it was not recorded. The
+two runs at `40daeb8e` from the section above are in the branch column as well.
+
+| Surface | `main`, 2 runs | Branch, 3 unattended runs and the attended one |
+| --- | --- | --- |
+| Mailbox | 8.1% and 11.2% delayed, 2 and 3 stalls of 100 ms or more, longest gap 417 and 760 ms | 1.1%, 1.8% and 1.3% delayed, attended 1.5%; one stall of 101 ms in the first run and none after; longest gap 50–101 ms |
+| Reader, 20 messages | 5.8% and 5.9% delayed, no stall | 6.7%, 8.0% and 6.4% delayed, attended 6.7%; no stall |
+| Reader, 100 messages | 7.1% and 8.1% delayed, no stall | 9.0%, 9.7% and 8.0% delayed, attended 8.1% with one stall of 100 ms |
+| Calendar | 0.2% delayed, no stall | 0.1% delayed, no stall |
+| Attachments | Not measured: no files to scroll | 0.6% delayed over 1,781 callbacks, attended 0.1% over 1,789; no stall |
+
+The mailbox is where the pass shows. Its delayed callbacks fell from 8–11% to
+1–2%, and the gaps of 400 ms and more are gone. The calendar and the attachment
+list are inside the 1% budget. The mailbox is close to it and the reader is
+well outside.
+
+The reader measured a little worse on the branch: about one point more delayed
+callbacks at 20 messages, and between nothing and two and a half points more at
+100. The cause was not found. Nine earlier runs of four builds of the branch,
+the star-focus build among them, showed 5.2–6.0% and 6.6–7.5%. What changed
+after them is the mail list's popovers and the benchmark's scroll marker, and
+none of it is reader code. Six runs are too few to rule out the machine, and
+a discarded branch run, described below, showed 5.3%.
+
+A later pair of runs sampled the main thread during the 20-message scroll on
+both builds. The list popovers, the mail rows and the scroll marker took no
+samples in the branch's profile, and that profile matches the one taken before
+those commits. In the same pair the 100-message scroll, which was not sampled,
+showed 7.0% on the branch and 7.5% on `main`. The sampled scroll showed 10.0%
+and 10.4%, and the mailbox 1.3% and 14.5%. So the reader's difference in the
+table is more likely variation between runs than the build.
+
+The mode switches ran once more on the branch's last build, unattended, with no
+run of `main` beside it. All 200 completed: 208 / 317 / 332 ms to Calendar and
+203 / 305 / 352 ms to Mail (p50 / p95 / p99), against 257 / 362 / 394 ms and
+255 / 337 / 370 ms at `1f4b12b1`. They still miss the 100 ms target. The main
+actor was held for 100 ms or more in 203 of 256 heartbeat samples, so the time
+goes to work on the main thread after the content is ready. That work was not
+profiled.
+
+Six more runs were discarded. Three took a click or a key press. Three lost the
+foreground when the person came back to the Mac. The mailbox finished in three
+of the branch's discarded runs and showed 5.4%, 10.4% and 10.7% delayed
+callbacks. The reader in the one of them that reached it showed 5.3% and 7.0%.
+So the mailbox figures above describe a Mac nobody is using. Whether the
+pointer over the list or the other apps' work made the difference is unknown:
+every counted run had the pointer wherever it was left, and a row redraws when
+the pointer enters or leaves it.
+
+The hosted suite ran on the same code with the screen unlocked: 1,008 of 1,010
+tests passed. `SplitDividerHandleTests`' interrupted-drag test and
+`TodayViewTests`' snooze-and-complete test failed. Each suite then passed alone,
+twice. The same two failed in the full run at `14cfd33f`. Both passed in the
+full run at `cf6caf31` before it, and no Today or divider file has changed
+since, so they fail now and then in a full run and not because of a later
+change.
+
+### Not measured in this pass
+
+The app with real mail was not launched, so launch time on the real cache and
+Keychain path is unmeasured. The one attended run covered scrolling only; the
+mode switches and message selections have no attended run, so their timings
+still do not count toward acceptance. Scrolling with the pointer resting on the
+list, which is how a person scrolls, was not measured. Motion was read from
+still images and tests and was not watched. Instruments was not used; frame
+hitches are known only through the callback proxy.

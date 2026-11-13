@@ -8,7 +8,13 @@ import TernAI
 @MainActor @Observable
 final class ComposeAssistantModel {
     var prompt = ""
-    private(set) var messages: [AssistantMessage] = []
+    /// A message that is shown changes only through `AssistantMessage.edit`.
+    private(set) var messages: [AssistantMessage] = [] {
+        didSet { if hasMessages == messages.isEmpty { hasMessages = !messages.isEmpty } }
+    }
+    /// Changes only when the chat starts or is cleared, so the bar is not
+    /// redrawn for every flush of a streaming reply.
+    private(set) var hasMessages = false
     private(set) var proposal: ComposeAssistantProposal?
     private(set) var isRunning = false
     private(set) var errorMessage: String?
@@ -23,7 +29,8 @@ final class ComposeAssistantModel {
     @ObservationIgnored private var previousSuggestion: ComposeAssistantProposal?
     @ObservationIgnored private var undoContext: (before: ComposeAssistantContext, after: ComposeAssistantContext)?
     @ObservationIgnored private var task: Task<Void, Never>?
-    @ObservationIgnored private var activeTextStream: AssistantTextStream?
+    /// Read by tests to know how much of a reply has arrived.
+    @ObservationIgnored private(set) var activeTextStream: AssistantTextStream?
     @ObservationIgnored private var turnID: UUID?
     @ObservationIgnored private var lastRequest: String?
     @ObservationIgnored private var contextSources: [UUID: ComposeDroppedFile] = [:]
@@ -47,7 +54,12 @@ final class ComposeAssistantModel {
     }
     var isLoadingContextFiles: Bool { contextAttachments.contains(where: \.isLoading) }
     var hasContextFileErrors: Bool { contextAttachments.contains { $0.errorMessage != nil } }
-    var canAsk: Bool { !isRunning && availabilityMessage == nil && !isLoadingContextFiles && !hasContextFileErrors }
+    var canAsk: Bool { canAsk(availabilityMessage: availabilityMessage) }
+    /// `canAsk` for a view that has read `availabilityMessage` already. Reading
+    /// it asks the assistant about the draft's account each time.
+    func canAsk(availabilityMessage: String?) -> Bool {
+        !isRunning && availabilityMessage == nil && !isLoadingContextFiles && !hasContextFileErrors
+    }
     var canAddContextFiles: Bool { compose.isEditable && !isRunning }
     var preservesInlineImages: Bool { proposalContext?.hasInlineImages == true }
     var proposalStatusMessage: String? {
@@ -112,7 +124,7 @@ final class ComposeAssistantModel {
     func stop() {
         activeTextStream?.finish(); activeTextStream = nil
         task?.cancel(); task = nil; turnID = nil; isRunning = false; statusText = nil
-        if let index = messages.lastIndex(where: { $0.state == .streaming }) { messages[index].state = .cancelled }
+        if let index = messages.lastIndex(where: { $0.state == .streaming }) { messages[index].edit { $0.state = .cancelled } }
     }
 
     func clear() {
@@ -260,6 +272,21 @@ final class ComposeAssistantModel {
         }
     }
 
+    /// The turn whose latest flush found the session or the draft changed.
+    @ObservationIgnored private var scopeRejectedTurn: UUID?
+
+    /// The check for each stream event. The publish closure runs the full
+    /// check at each flush, a rejected flush sends the next event through it,
+    /// and it runs again when the stream ends.
+    private func validateStreaming(_ session: ComposeAssistantSession, turn: UUID) throws {
+        if scopeRejectedTurn == turn { return try validate(session, turn: turn) }
+        try Task.checkCancellation()
+        guard turnID == turn else {
+            refreshAccess()
+            throw AssistantError.accessChanged
+        }
+    }
+
     private func run(request: String, context: ComposeAssistantContext, session: ComposeAssistantSession,
                      turn: UUID, messageID: UUID) async {
         // Publish only a complete, paired transcript. Interrupted read-only work can be retried safely.
@@ -301,9 +328,15 @@ final class ComposeAssistantModel {
                 var completed: AIResponse?
                 let prefix = messages.first { $0.id == messageID }?.text ?? ""
                 let textStream = AssistantTextStream { [weak self] text in
-                    guard let self, self.turnID == turn, session.isValid(), self.compose.isEditable,
-                          session.scope.accountIDs == Set([self.compose.draft?.accountID].compactMap { $0 }) else { return }
-                    self.update(messageID) { $0.text = Self.join(prefix, text) }
+                    guard let self, self.turnID == turn else { return }
+                    guard session.isValid(), self.compose.isEditable,
+                          session.scope.accountIDs == Set([self.compose.draft?.accountID].compactMap { $0 }) else {
+                        self.scopeRejectedTurn = turn
+                        return
+                    }
+                    // Completion, stop and errors end with a finished stream.
+                    let isFinal = self.activeTextStream?.isFinished != false
+                    self.update(messageID) { $0.setStreamedText(Self.join(prefix, text), isFinal: isFinal) }
                 }
                 activeTextStream = textStream
                 defer {
@@ -312,7 +345,7 @@ final class ComposeAssistantModel {
                 }
                 for try await event in session.provider.respond(.init(model: session.model, input: input,
                     instructions: instructions + "\n" + budget, tools: definitions)) {
-                    try validate(session, turn: turn)
+                    try validateStreaming(session, turn: turn)
                     switch event {
                     case .textDelta(let delta):
                         guard completed == nil else { throw AIProviderError.invalidResponse }
@@ -404,7 +437,7 @@ final class ComposeAssistantModel {
         task = nil; turnID = nil; isRunning = false; statusText = nil
     }
     private func update(_ id: UUID, _ change: (inout AssistantMessage) -> Void) {
-        if let index = messages.firstIndex(where: { $0.id == id }) { change(&messages[index]) }
+        if let index = messages.firstIndex(where: { $0.id == id }) { messages[index].edit(change) }
     }
     private func checkHistory(_ input: [AIJSON]) throws {
         guard input.count <= 160, try AIJSON.array(input).encoded().count <= AssistantModel.maximumHistoryBytes else { throw AssistantError.historyLimit }

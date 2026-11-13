@@ -256,8 +256,11 @@ struct VisibleContentProbe: NSViewRepresentable {
         }
 
         var isVisibleContent: Bool {
-            guard isActive, NSApp?.isActive == true, let window, window.isVisible, !window.isMiniaturized,
-                  window.isKeyWindow || window.isMainWindow,
+            // An unattended benchmark run cannot make its app active; it still
+            // needs a visible, unoccluded window.
+            let inFront = LaunchMode.current.performance.unattended
+                || (NSApp?.isActive == true && (window?.isKeyWindow == true || window?.isMainWindow == true))
+            guard isActive, inFront, let window, window.isVisible, !window.isMiniaturized,
                   window.occlusionState.contains(.visible), !visibleRect.isEmpty,
                   !isHiddenOrHasHiddenAncestor, satisfiesSelectedRowRequirement else { return false }
             var current: NSView? = self

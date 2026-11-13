@@ -5,6 +5,8 @@ enum TernTransition {
     case disclosure
     case fade
     case panel(edge: Edge)
+    /// A notice in the window's corner: it rises a little as it fades in and fades out in place.
+    case toast
 
     var transition: AnyTransition {
         switch self {
@@ -16,6 +18,10 @@ enum TernTransition {
             .opacity
         case .panel(let edge):
             .move(edge: edge).combined(with: .opacity)
+        case .toast:
+            .asymmetric(
+                insertion: .offset(y: Tokens.Space.s2).combined(with: .opacity),
+                removal: .opacity)
         }
     }
 }

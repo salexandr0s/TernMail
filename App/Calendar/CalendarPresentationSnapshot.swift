@@ -31,7 +31,38 @@ struct CalendarPresentationSnapshot: Sendable {
     let dayActivities: [Date: DayActivity]
     private let buckets: [Date: Day]
 
-    init(events: [CalendarDisplayEvent], interval: DateInterval, calendar: Calendar, buildsTimeAxis: Bool) {
+    /// The dates a timeline card shows and reads to VoiceOver.
+    struct CardDates: Sendable {
+        let start: String
+        let range: String
+    }
+
+    /// What an event's formatted dates were made from. Events at the same time
+    /// share an entry, and a view that holds a newer copy of an event finds
+    /// none and formats its own.
+    private struct DatesKey: Hashable, Sendable {
+        let start: Date
+        let end: Date
+        let isAllDay: Bool
+        let isPending: Bool
+
+        init(_ event: CalendarDisplayEvent) {
+            start = event.start
+            end = event.end
+            isAllDay = event.isAllDay
+            isPending = event.isPending
+        }
+    }
+
+    private let cardDates: [DatesKey: CardDates]
+    private let chipDates: [DatesKey: String]
+
+    /// - Parameters:
+    ///   - buildsTimeAxis: True for the day and week grids. Their timed events
+    ///     are cards and their all-day events are chips.
+    ///   - describesChips: True for the month grid, where every event is a chip.
+    init(events: [CalendarDisplayEvent], interval: DateInterval, calendar: Calendar, buildsTimeAxis: Bool,
+         describesChips: Bool = false) {
         self.interval = interval
         self.calendar = calendar
         self.events = events
@@ -39,6 +70,24 @@ struct CalendarPresentationSnapshot: Sendable {
         dayActivities = Self.makeDayActivities(events: events, days: days, calendar: calendar)
         let axis = buildsTimeAxis ? CalendarTimeAxis(days: days, calendar: calendar) : nil
         timeAxis = axis
+        // Formatting dates is the costly part of a card's or chip's body, and
+        // the tooltip and VoiceOver label they go into are rarely read. Format
+        // them here, once per snapshot and mostly off the main actor.
+        var cards: [DatesKey: CardDates] = [:]
+        var chips: [DatesKey: String] = [:]
+        for event in events {
+            let key = DatesKey(event)
+            if buildsTimeAxis, !event.isAllDay {
+                if cards[key] == nil {
+                    cards[key] = CardDates(start: CalendarEventDateDescription.cardStart(event, calendar: calendar),
+                                           range: CalendarEventDateDescription.cardRange(event, calendar: calendar))
+                }
+            } else if buildsTimeAxis || describesChips, chips[key] == nil {
+                chips[key] = CalendarEventDateDescription.chip(event, timeZone: calendar.timeZone)
+            }
+        }
+        cardDates = cards
+        chipDates = chips
         var byDay: [Date: [CalendarDisplayEvent]] = [:]
         // Sort once, then distribute in that order. The end of an all-day event
         // is exclusive, including across 23/25-hour daylight-saving days.
@@ -84,6 +133,18 @@ struct CalendarPresentationSnapshot: Sendable {
     }
 
     func day(_ day: Date) -> Day? { buckets[calendar.startOfDay(for: day)] }
+
+    /// The dates prepared for an event's card, if they were formatted in this calendar.
+    func cardDates(for event: CalendarDisplayEvent, calendar: Calendar) -> CardDates? {
+        guard matches(calendar) else { return nil }
+        return cardDates[DatesKey(event)]
+    }
+
+    /// The date text prepared for an event's chip, if it was formatted in this time zone.
+    func chipDates(for event: CalendarDisplayEvent, timeZone: TimeZone) -> String? {
+        guard calendar.timeZone == timeZone else { return nil }
+        return chipDates[DatesKey(event)]
+    }
 
     func agenda(on day: Date, calendar: Calendar) -> [CalendarDisplayEvent]? {
         guard covers([day], calendar: calendar) else { return nil }

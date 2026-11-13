@@ -83,7 +83,7 @@ extension MailCache {
     /// Resource changes are independent of read/star metadata. The revision
     /// is computed on the database reader, never while SwiftUI lays out mail.
     public func readingResources(messageID: String, accountID: String) -> AsyncThrowingStream<ReadingResourceSnapshot, any Error> {
-        observe { db in
+        observe(region: ObservedTables.readingResources) { db in
             ReadingResourceSnapshot(resources: try CacheTransaction(db: db).mimeResources(messageID: messageID, accountID: accountID))
         }
     }

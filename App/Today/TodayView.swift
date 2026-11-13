@@ -2,44 +2,45 @@ import MailStore
 import SwiftUI
 
 struct TodayView: View {
-    @Bindable var model: TodayModel
-    @Bindable var dashboard: TodayDashboardModel
+    let model: TodayModel
+    let dashboard: TodayDashboardModel
     let isActive: Bool
     var automaticFollowUps: AutomaticFollowUpCoordinator? = nil
-    @Environment(\.openWindow) private var openWindow
     @State private var windowVisible = false
+    /// Whether the calendar fits beside the work column. The page learns the
+    /// window's width only through this, so a resize redraws it at the threshold alone.
+    @State private var isWide = true
     @State private var snoozeRequest: TodaySnoozeRequest?
     @State private var calendarExpanded = false
+    @State private var visibility = TodayRowVisibility()
 
     private var isPresented: Bool { isActive && windowVisible }
 
     var body: some View {
-        let now = MinuteClock.shared.now
-        let projection = model.projection(now: now)
-        GeometryReader { geometry in
-            let wide = geometry.size.width >= Tokens.Today.twoColumnMinWidth
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: Tokens.Space.s6) {
-                    header
-                    feedback
-                    if wide {
-                        HStack(alignment: .top, spacing: Tokens.Today.columnGap) {
-                            workColumn(projection, now: now).frame(maxWidth: .infinity)
-                            TodayCalendarPanel(dashboard: dashboard, query: query)
-                                .frame(width: Tokens.Today.calendarWidth)
-                        }
-                    } else {
-                        compactCalendar
-                        workColumn(projection, now: now)
+        ScrollView {
+            VStack(alignment: .leading, spacing: Tokens.Space.s6) {
+                TodayHeader(model: model, dashboard: dashboard, isPresented: isPresented)
+                TodayFeedback(model: model)
+                if isWide {
+                    HStack(alignment: .top, spacing: Tokens.Today.columnGap) {
+                        workColumn.frame(maxWidth: .infinity)
+                        TodayCalendarPanel(dashboard: dashboard, query: query)
+                            .frame(width: Tokens.Today.calendarWidth)
                     }
+                } else {
+                    compactCalendar
+                    workColumn
                 }
-                .frame(maxWidth: Tokens.Today.contentWidth, alignment: .leading)
-                .padding(wide ? Tokens.Today.pageInset : Tokens.Today.compactInset)
-                .frame(maxWidth: .infinity, alignment: .top)
             }
-            .scrollBounceBehavior(.basedOnSize)
+            .frame(maxWidth: Tokens.Today.contentWidth, alignment: .leading)
+            .padding(isWide ? Tokens.Today.pageInset : Tokens.Today.compactInset)
+            .frame(maxWidth: .infinity, alignment: .top)
         }
+        .scrollBounceBehavior(.basedOnSize)
+        .onGeometryChange(for: Bool.self) { $0.size.width >= Tokens.Today.twoColumnMinWidth } action: { isWide = $0 }
         .background(Tokens.Surface.muted)
+        .background(TodayAcknowledgement(model: model, visibility: visibility, isActive: isPresented))
+        .background(TodayClock(model: model, isPresented: isPresented))
         .background(ReaderWindowVisibility { visible in
             windowVisible = visible
             if !visible { model.endVisit(); dashboard.stop() }
@@ -62,27 +63,12 @@ struct TodayView: View {
         }
     }
 
-    private var header: some View {
-        HStack(alignment: .center, spacing: Tokens.Space.s4) {
-            VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-                Text("Today").font(.largeTitle.weight(.semibold))
-                Text(MinuteClock.shared.now.formatted(date: .complete, time: .omitted))
-                    .font(.callout).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer(minLength: 0)
-            if model.isLoading || dashboard.calendarLoading || dashboard.unreadLoading || dashboard.tasks.isLoading {
-                ProgressView().controlSize(.small).accessibilityLabel("Updating dashboard")
-            }
-            Button("Refresh", systemImage: "arrow.clockwise") {
-                Task { await model.refresh(); await dashboard.refresh() }
-            }
-            .controlSize(.regular).help("Refresh Today")
-            .accessibilityIdentifier("today-refresh")
-        }
-    }
-
     private var query: String { model.searchText.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    private var workColumn: some View {
+        TodayWorkColumn(model: model, dashboard: dashboard, automaticFollowUps: automaticFollowUps,
+            visibility: visibility, query: query, snoozeRequest: $snoozeRequest)
+    }
 
     private var compactCalendar: some View {
         DisclosureGroup(isExpanded: $calendarExpanded) {
@@ -98,170 +84,6 @@ struct TodayView: View {
             }
         }
         .accessibilityIdentifier("today-calendar-disclosure")
-    }
-
-    private func isOwed(_ row: TodayRow) -> Bool {
-        model.filter == .briefing && row.entry.record.status == .open && row.entry.record.direction == .owedByMe
-    }
-
-    private func workColumn(_ projection: TodayProjection, now: Date) -> some View {
-        LazyVStack(alignment: .leading, spacing: Tokens.Space.s5) {
-            TodayTasksPanel(dashboard: dashboard, query: query)
-            let owed = projection.rows.filter(isOwed)
-            if !owed.isEmpty {
-                TodayDashboardSection(title: "I owe", symbol: "person.crop.circle", count: owed.count,
-                                      countLabel: "commitments shown") {
-                    LazyVStack(spacing: 0) {
-                        ForEach(owed) { row in
-                            presentedRow(row, now: now)
-                            if row.id != owed.last?.id { Divider() }
-                        }
-                    }
-                }
-                .accessibilityIdentifier("today-owed")
-            }
-            followUps(projection, now: now)
-            TodayUnreadPanel(dashboard: dashboard, query: query)
-        }
-    }
-
-    private func followUps(_ projection: TodayProjection, now: Date) -> some View {
-        TodayDashboardSection(title: "Follow-up emails", symbol: "clock.arrow.circlepath",
-                              count: model.hasLoadedEntries ? projection.rows.filter { !isOwed($0) }.count : nil,
-                              countLabel: "follow-ups shown") {
-            filter
-            if let automaticFollowUps { automaticStatus(automaticFollowUps) }
-            content(projection, now: now)
-            Divider()
-            TodayCoverageNote(summary: "From synced mail and your tracked conversations.",
-                details: automaticFollowUps?.coverageMessage ?? "Automatic and manually tracked follow-ups. Mail that has not synced is not included.",
-                label: "Follow-up coverage")
-                .accessibilityIdentifier("today-coverage")
-        }
-        .accessibilityIdentifier("today-follow-ups")
-    }
-
-    private var filter: some View {
-        Picker("Today", selection: $model.filter) {
-            Text("Briefing").tag(TodayFilter.briefing)
-            Text("Snoozed").tag(TodayFilter.snoozed)
-        }
-        .pickerStyle(.segmented).labelsHidden().fixedSize(horizontal: true, vertical: false)
-        .accessibilityLabel("Today filter")
-        .accessibilityIdentifier("today-filter")
-    }
-
-    @ViewBuilder private func automaticStatus(_ coordinator: AutomaticFollowUpCoordinator) -> some View {
-        let errors = [coordinator.errorMessage, coordinator.draftErrorMessage].compactMap { $0 }
-        if coordinator.isChecking || !errors.isEmpty {
-            VStack(alignment: .leading, spacing: Tokens.Space.s2) {
-                if coordinator.isChecking {
-                    TodayLoadingStatus("Checking synced conversations…")
-                }
-                if !errors.isEmpty {
-                    TodayInlineWarning(errors.joined(separator: "\n")) {
-                        Task {
-                            if coordinator.stopped { await coordinator.start() }
-                            else { await coordinator.preferencesChanged() }
-                        }
-                    }
-                    .disabled(coordinator.isChecking)
-                    .accessibilityIdentifier("today-automatic-follow-ups-error")
-                }
-            }
-        }
-    }
-
-    @ViewBuilder private var feedback: some View {
-        if let error = model.historyError {
-            message(error, identifier: "today-history-error")
-        }
-        if let error = model.followUps.errorMessage {
-            message(error, identifier: "today-error")
-        }
-    }
-
-    private func message(_ text: String, identifier: String) -> some View {
-        TodayInlineWarning(text) {
-            Task { await model.refresh() }
-        }
-        .disabled(model.isLoading)
-        .accessibilityIdentifier(identifier)
-    }
-
-    @ViewBuilder private func content(_ projection: TodayProjection, now: Date) -> some View {
-        if model.isLoading && !model.hasLoadedEntries {
-            TodayLoadingStatus("Loading tracked work…")
-        } else if projection.rowCount == 0 {
-            TodayCompactState(title: emptyTitle, symbol: model.filter == .snoozed ? "moon.zzz" : "checklist",
-                message: emptyMessage)
-                .accessibilityIdentifier("today-empty")
-                .modifier(TodayPresentationAcknowledgement(model: model, rows: [], isActive: isPresented))
-        } else {
-            LazyVStack(alignment: .leading, spacing: Tokens.Space.s4) {
-                ForEach(projection.sections) { section in
-                    let rows = section.rows.filter { !isOwed($0) }
-                    if !rows.isEmpty {
-                        VStack(alignment: .leading, spacing: Tokens.Space.s2) {
-                            HStack(spacing: Tokens.Space.s2) {
-                                Text(section.title).font(.subheadline.weight(.semibold))
-                                Text(rows.count, format: .number).font(.caption.monospacedDigit())
-                            }
-                            .foregroundStyle(.secondary)
-                            .accessibilityElement(children: .combine)
-                            .accessibilityIdentifier("today-section-\(section.id)")
-                            LazyVStack(spacing: 0) {
-                                ForEach(rows) { row in
-                                    presentedRow(row, now: now)
-                                    if row.id != rows.last?.id { Divider() }
-                                }
-                            }
-                        }
-                    }
-                }
-                if projection.rows.allSatisfy(isOwed) {
-                    TodayCompactState(title: "No other follow-ups to show", symbol: "tray",
-                        message: "Your commitments are listed in I owe above.")
-                }
-            }
-            .accessibilityIdentifier("today-list")
-        }
-    }
-
-    private func presentedRow(_ row: TodayRow, now: Date) -> some View {
-        rowView(row, now: now)
-            .modifier(TodayPresentationAcknowledgement(model: model, rows: [row], isActive: isPresented))
-    }
-
-    private func rowView(_ row: TodayRow, now: Date) -> some View {
-        let entry = row.entry
-        return TodayRowView(row: row, accountName: model.followUps.accountName(for: entry.record.accountID),
-            checkState: model.followUps.replyCheckState(for: entry), now: now,
-            isBusy: model.followUps.busyIDs.contains(entry.id),
-            onEdit: { model.followUps.edit(entry) },
-            onComplete: { Task { await model.followUps.setStatus(entry, status: .completed) } },
-            onDismiss: { Task { await model.followUps.setStatus(entry, status: .dismissed) } },
-            onReopen: { Task { await model.followUps.setStatus(entry, status: .open) } },
-            onDefer: { until in Task { await model.followUps.deferAttention(entry, until: until) } },
-            onChooseDate: { snoozeRequest = TodaySnoozeRequest(entry: entry) },
-            onBringBack: { Task { await model.followUps.deferAttention(entry, until: nil) } },
-            onOpenSource: { model.followUps.openSource(entry) },
-            onDraft: {
-                Task {
-                    if let id = await model.followUps.draftFollowUp(entry) { openWindow(id: ComposeWindow.sceneID, value: id) }
-                }
-            })
-    }
-
-    private var emptyTitle: String {
-        if !model.searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return "No matching tracked work" }
-        return model.filter == .snoozed ? "No snoozed follow-ups" : "No tracked work to show"
-    }
-
-    private var emptyMessage: String {
-        if !model.searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return "Try another search or switch the Today filter." }
-        if model.filter == .snoozed { return "Snoozed follow-ups will appear here until they return to your briefing." }
-        return "Automatic follow-ups depend on synced sent mail and your settings. You can also open an email and choose Track Follow-up."
     }
 
     private struct VisitKey: Equatable {
@@ -281,27 +103,140 @@ struct TodayView: View {
 
 }
 
-private struct TodayPresentationAcknowledgement: ViewModifier {
+/// The title, the date and the page's loading indicator. The clock and the
+/// loading flags are read here, so they redraw this row and nothing below it.
+private struct TodayHeader: View {
     let model: TodayModel
-    let rows: [TodayRow]
-    let isActive: Bool
+    let dashboard: TodayDashboardModel
+    let isPresented: Bool
+    /// The date a hidden page keeps, so it isn't redrawn every minute.
+    @State private var hiddenAt = Date.now
+
+    var body: some View {
+        HStack(alignment: .center, spacing: Tokens.Space.s4) {
+            VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+                Text("Today").font(.largeTitle.weight(.semibold))
+                Text((isPresented ? MinuteClock.shared.now : hiddenAt).formatted(date: .complete, time: .omitted))
+                    .font(.callout).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+            ProgressView().controlSize(.small).accessibilityLabel("Updating dashboard")
+                .ternDelayedLoading(model.isLoading || dashboard.calendarLoading || dashboard.unreadLoading || dashboard.tasks.isLoading)
+            Button("Refresh", systemImage: "arrow.clockwise") {
+                Task { await model.refresh(); await dashboard.refresh() }
+            }
+            .controlSize(.regular).help("Refresh Today")
+            .accessibilityIdentifier("today-refresh")
+        }
+        .onChange(of: isPresented) { _, presented in
+            if !presented { hiddenAt = MinuteClock.shared.now }
+        }
+    }
+}
+
+/// Errors from the visit history and from the follow-ups, each with a retry.
+private struct TodayFeedback: View {
+    let model: TodayModel
+
+    var body: some View {
+        if let error = model.historyError {
+            message(error, identifier: "today-history-error")
+        }
+        if let error = model.followUps.errorMessage {
+            message(error, identifier: "today-error")
+        }
+    }
+
+    private func message(_ text: String, identifier: String) -> some View {
+        TodayInlineWarning(text) {
+            Task { await model.refresh() }
+        }
+        .disabled(model.isLoading)
+        .accessibilityIdentifier(identifier)
+    }
+}
+
+/// Rebuilds the list when the page comes on screen and at the start of each
+/// minute while it stays there, so due and snoozed rows move when their time
+/// comes. A hidden page reads no clock.
+private struct TodayClock: View {
+    let model: TodayModel
+    let isPresented: Bool
+
+    var body: some View {
+        Color.clear.accessibilityHidden(true)
+            .onChange(of: isPresented ? MinuteClock.shared.now : nil) { _, minute in
+                if minute != nil { model.refreshPresentation() }
+            }
+    }
+}
+
+/// What the follow-up list has on screen. Rows write here without invalidating
+/// any view; only the acknowledgement task reads `revision`.
+@MainActor @Observable
+final class TodayRowVisibility {
+    private(set) var revision = 0
+    @ObservationIgnored private var rows: [String: Int] = [:]
+    @ObservationIgnored private var emptyStates = 0
+
+    var showsEmptyState: Bool { emptyStates > 0 }
+    func contains(_ id: String) -> Bool { rows[id] != nil }
+
+    /// A nil ID is the empty state. A row can move to another section before
+    /// its old view disappears, so views are counted per ID.
+    func report(_ id: String?, visible: Bool) {
+        if let id {
+            let count = rows[id, default: 0] + (visible ? 1 : -1)
+            rows[id] = count > 0 ? count : nil
+        } else {
+            emptyStates = max(0, emptyStates + (visible ? 1 : -1))
+        }
+        revision += 1
+    }
+}
+
+struct TodayVisibilityReport: ViewModifier {
+    let visibility: TodayRowVisibility
+    let id: String?
     @State private var isVisible = false
 
     func body(content: Content) -> some View {
         content
-            // Lazy stacks can prepare rows outside the viewport. Wait until a
-            // meaningful part of this row is actually visible before saving it.
-            .onScrollVisibilityChange(threshold: 0.1) { isVisible = $0 }
-            .onDisappear { isVisible = false }
-            .task(id: Key(snapshots: rows.map(\.snapshot), visitID: model.activeVisitID,
-                          historyReady: model.historyReady, isPresented: isActive && isVisible,
-                          hasLoadedEntries: model.hasLoadedEntries, revision: model.presentationRevision)) {
-                guard isActive, isVisible, model.historyReady, model.hasLoadedEntries,
-                      let visitID = model.activeVisitID else { return }
-                let presented = rows
+            // Lazy stacks can prepare rows outside the viewport. Count a row
+            // only once a meaningful part of it is actually on screen.
+            .onScrollVisibilityChange(threshold: 0.1) { report($0) }
+            .onDisappear { report(false) }
+    }
+
+    private func report(_ visible: Bool) {
+        guard isVisible != visible else { return }
+        isVisible = visible
+        visibility.report(id, visible: visible)
+    }
+}
+
+/// One task for the whole list. It passes every row on screen to the model in
+/// one call, so a visit or a change costs one save, not one per row.
+private struct TodayAcknowledgement: View {
+    let model: TodayModel
+    let visibility: TodayRowVisibility
+    let isActive: Bool
+
+    var body: some View {
+        let presentation = model.presentation
+        Color.clear.accessibilityHidden(true)
+            .task(id: Key(snapshots: presentation.snapshots, visitID: model.activeVisitID, historyReady: model.historyReady,
+                          isActive: isActive, hasLoadedEntries: model.hasLoadedEntries,
+                          revision: model.presentationRevision, visibility: visibility.revision)) {
+                guard isActive, model.historyReady, model.hasLoadedEntries, let visitID = model.activeVisitID else { return }
+                // Rows that appear in this update report themselves first.
                 await Task.yield()
                 guard !Task.isCancelled else { return }
-                await model.acknowledgePresented(presented, visitID: visitID)
+                let rows = presentation.rows
+                let visible = rows.filter { visibility.contains($0.id) }
+                guard !visible.isEmpty || (rows.isEmpty && visibility.showsEmptyState) else { return }
+                model.acknowledgeVisible(visible, visitID: visitID)
             }
     }
 
@@ -309,8 +244,9 @@ private struct TodayPresentationAcknowledgement: ViewModifier {
         let snapshots: [TodayCommitmentSnapshot]
         let visitID: UUID?
         let historyReady: Bool
-        let isPresented: Bool
+        let isActive: Bool
         let hasLoadedEntries: Bool
         let revision: Int
+        let visibility: Int
     }
 }

@@ -13,6 +13,8 @@ struct ThreadListView: View {
     #if TERN_TEST_SUPPORT || TERN_PERFORMANCE
     /// Scoped by the test to its mailbox; measures row construction, not projection reuse.
     static var onRowContentBuild: ((MailboxModel, MailListRowID) -> Void)?
+    /// Counts each run of a row host's body, the part that follows one row's content.
+    static var onRowHostBuild: ((MailboxModel, MailListRowID) -> Void)?
     #endif
     #if TERN_TEST_SUPPORT
     enum BodyPhase { case list, dragSelection }
@@ -29,7 +31,9 @@ struct ThreadListView: View {
                 if mailbox.listItems.isEmpty {
                     if mailbox.search.isActive {
                         emptySearch
-                    } else {
+                    } else if mailbox.isListPresentationReady {
+                        // Until the selected mailbox's page arrives, an empty
+                        // list says nothing about the mailbox or its download.
                         emptyMailbox
                     }
                 }
@@ -62,7 +66,7 @@ struct ThreadListView: View {
             .onChange(of: mailbox.listProjectionKey) { _, _ in
                 // A search on its way shows no page yet, so the selection waits for one.
                 if mailbox.isListPresentationReady {
-                    mailbox.selectListRows(mailbox.selectedListRowIDs.intersection(mailbox.listItems.map(\.id)))
+                    mailbox.selectListRows(mailbox.selectedListRowIDs)
                 }
                 if mailbox.listItems.isEmpty, mailbox.search.isActive {
                     mailbox.search.loadMoreResults()
@@ -129,9 +133,12 @@ struct ThreadListView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
+            // An account added or resumed in an open mailbox reads its saved sync
+            // state as it starts, so its empty mailbox can pass through here.
             ProgressView {
                 Text("Downloading mail…")
             }
+            .ternDelayedLoading()
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
@@ -184,9 +191,11 @@ struct ThreadListView: View {
     /// Keep the native scroll view mounted while mailbox and search states change.
     private var list: some View {
         MessageListSelectionSurface(mailbox: mailbox,
-            rows: MessageListRows(mailbox: mailbox, revision: mailbox.listProjectionKey, dragNamespace: dragNamespace))
+            rows: MessageListRows(mailbox: mailbox, rows: mailbox.listRowStates, dragNamespace: dragNamespace))
         .listStyle(.inset)
         .background { PerformanceScrollSurfaceMarker(name: "mailbox", isActive: true) }
+        .overlayPreferenceValue(SnoozeDateAnchorKey.self) { SnoozeDatePopover(mailbox: mailbox, row: $0) }
+        .listSenderPopover(mailbox: mailbox)
         .contentMargins(.horizontal, 0, for: .scrollContent)
         .contentMargins(.top, Tokens.Space.s2, for: .scrollContent)
         // Dragging a selected row carries the whole selection.
@@ -210,6 +219,7 @@ struct ThreadListView: View {
         .quickLookPreview($previewURL)
         .protectAttachmentPreview(previewURL)
         .focused($listFocused)
+        .tracksKeyboardNavigation()
     }
 
     private var emptyDescription: String {
@@ -235,57 +245,51 @@ private struct MessageListSelectionSurface<Rows: View>: View {
 /// A fresh selection binding must update AppKit, while unchanged row content
 /// keeps its existing menus, swipe actions and identities. Conformance alone
 /// preserves flattened tags; do not wrap this content in `.equatable()`.
+/// A page with the same rows in the same order compares equal whatever
+/// changed inside them: each `MessageListRowHost` observes its own row.
 private struct MessageListRows: View, Equatable {
     let mailbox: MailboxModel
-    let revision: MessageListProjection.Key
+    let rows: [MessageListRowState]
     let dragNamespace: Namespace.ID
     @AppStorage(AccountAppearance.storageKey) private var storedColors = Data()
 
     nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
-        lhs.mailbox === rhs.mailbox && lhs.revision == rhs.revision && lhs.dragNamespace == rhs.dragNamespace
+        lhs.mailbox === rhs.mailbox && lhs.dragNamespace == rhs.dragNamespace && lhs.rows.elementsEqual(rhs.rows, by: ===)
     }
 
     var body: some View {
-        @Bindable var model = mailbox
-        let rows = mailbox.listItems
-        // Native separators belong to the preceding row's bottom edge.
-        let rowsBeforeUnread = Set(zip(rows, rows.dropFirst()).compactMap { row, next in
-            next.thread.isUnread ? row.id : nil
-        })
         let isSearching = mailbox.search.isActive
         let accountMarks = compactAccountMarks
         let accountColors = AccountAppearance.colorIndexes(
             for: mailbox.accounts.map(\.account.id), stored: AccountAppearance.decode(storedColors)
         )
         let snoozeAnchor = snoozeDateAnchor(in: rows)
+        // The next page starts loading while these rows scroll into view, so
+        // it is ready before the user reaches the end.
+        let paginationRows: Set<MailListRowID> = isSearching ? [] : Set(rows.suffix(MailboxModel.paginationLead).map(\.id))
+        let lastRow = rows.last?.id
         // Keyed by account too, since thread IDs repeat across accounts.
         ForEach(rows) { row in
             #if TERN_TEST_SUPPORT || TERN_PERFORMANCE
             let _ = ThreadListView.onRowContentBuild?(mailbox, row.id)
             #endif
-            MessageListRow(
-                item: row, mailbox: mailbox,
+            MessageListRowHost(
+                row: row, mailbox: mailbox,
                 accountMark: accountMarks[row.id.accountID], accountColor: AccountAppearance.color(at: accountColors[row.id.accountID])
             )
-                .listRowSeparator(row.thread.isUnread || rowsBeforeUnread.contains(row.id) ? .hidden : .automatic, edges: .bottom)
                 .tag(row.id)
                 .draggable(containerItemID: row.id, containerNamespace: dragNamespace)
-                // Only the first targeted row anchors the snooze popover.
-                .popover(isPresented: snoozeAnchor == row.id ? $model.snoozeDateTargets.isPresent() : .constant(false),
-                         arrowEdge: .trailing) { snoozeDatePicker }
-                .swipeActions(edge: .leading, allowsFullSwipe: false) {
-                    swipeButtons(first: mailbox.listPreferences.leadingFirst, second: mailbox.listPreferences.leadingSecond, row: row)
-                }
-                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                    swipeButtons(first: mailbox.listPreferences.trailingFirst, second: mailbox.listPreferences.trailingSecond, row: row)
+                // Only the first targeted row anchors the list's snooze popover.
+                .background {
+                    if snoozeAnchor == row.id {
+                        Color.clear.anchorPreference(key: SnoozeDateAnchorKey.self, value: .bounds) { $0 }
+                    }
                 }
                 .onAppear {
-                    if row.id == rows.last?.id {
-                        if isSearching {
-                            mailbox.search.loadMoreResults()
-                        } else {
-                            mailbox.loadMoreThreads()
-                        }
+                    if isSearching {
+                        if row.id == lastRow { mailbox.search.loadMoreResults() }
+                    } else if paginationRows.contains(row.id) {
+                        mailbox.loadMoreThreads()
                     }
                 }
         }
@@ -294,49 +298,14 @@ private struct MessageListRows: View, Equatable {
         // Apply outside the row wrappers so the native list receives these insets.
         // The column's resize gutter stays outside the list.
         .listRowInsets(.horizontal, -Tokens.Space.s2)
-        if !rows.isEmpty {
-            if isSearching {
-                let gmail = mailbox.search.gmailState
-                if gmail != .finished {
-                    GmailRow(kind: .search, state: gmail, action: mailbox.search.askGmail)
-                }
-            } else if mailbox.offersOlderConversations {
-                GmailRow(kind: .older, state: mailbox.older?.state ?? .ready, failedAccounts: mailbox.olderFailureAccounts, action: mailbox.loadOlderConversations)
-            }
-        }
+        if !rows.isEmpty { MessageListFooter(mailbox: mailbox) }
     }
 
     /// Choose Date & Time opens beside the first conversation it will snooze.
-    private func snoozeDateAnchor(in rows: [MessageListItem]) -> MailListRowID? {
+    private func snoozeDateAnchor(in rows: [MessageListRowState]) -> MailListRowID? {
         guard let keys = mailbox.snoozeDateTargets else { return nil }
         let targetRows = mailbox.snoozeRowTargets
         return rows.first { targetRows?.contains($0.id) ?? keys.contains($0.id.threadKey) }?.id
-    }
-
-    @ViewBuilder private var snoozeDatePicker: some View {
-        if let ids = mailbox.snoozeDateTargets {
-            SnoozeDateSheet(
-                initial: SnoozeSchedule().wakeTime(for: .tomorrow, now: .now) ?? .now.addingTimeInterval(3600),
-                now: .now,
-                onSnooze: { mailbox.snooze(ids, until: $0) },
-                onCancel: { mailbox.snoozeDateTargets = nil }
-            )
-        }
-    }
-
-    @ViewBuilder private func swipeButtons(first: MailSwipeAction, second: MailSwipeAction, row: MessageListItem) -> some View {
-        swipeButton(first, row: row)
-        swipeButton(second, row: row)
-    }
-
-    @ViewBuilder private func swipeButton(_ action: MailSwipeAction, row: MessageListItem) -> some View {
-        if action != .none {
-            let title = action.buttonTitle(isUnread: row.thread.isUnread, isStarred: row.thread.isStarred)
-            Button { mailbox.performSwipe(action, on: row.id) } label: { Label(title, systemImage: action.symbol) }
-                .tint(action == .trash || action == .spam ? .red : .accentColor)
-                .disabled((action == .archive && !mailbox.offersArchive) || (action == .trash && !mailbox.offersTrash)
-                          || (action == .snooze && !mailbox.offersArchive))
-        }
     }
 
     /// Use all accounts so a badge keeps its meaning when the list is filtered.
@@ -352,6 +321,63 @@ private struct MessageListRows: View, Equatable {
             }
         }
         return marks
+    }
+}
+
+/// One row with the list traits that follow its content. It observes its own
+/// row state, so a change to one conversation runs this body and no other.
+/// Keep the body a single view: the list counts rows without building them.
+private struct MessageListRowHost: View {
+    let row: MessageListRowState
+    let mailbox: MailboxModel
+    let accountMark: String?
+    let accountColor: Color
+
+    var body: some View {
+        let item = row.item
+        #if TERN_TEST_SUPPORT || TERN_PERFORMANCE
+        let _ = ThreadListView.onRowHostBuild?(mailbox, item.id)
+        #endif
+        MessageListRow(item: item, mailbox: mailbox, accountMark: accountMark, accountColor: accountColor)
+            .listRowSeparator(row.hidesSeparator ? .hidden : .automatic, edges: .bottom)
+            .swipeActions(edge: .leading, allowsFullSwipe: false) {
+                swipeButtons(first: mailbox.listPreferences.leadingFirst, second: mailbox.listPreferences.leadingSecond, item: item)
+            }
+            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                swipeButtons(first: mailbox.listPreferences.trailingFirst, second: mailbox.listPreferences.trailingSecond, item: item)
+            }
+    }
+
+    @ViewBuilder private func swipeButtons(first: MailSwipeAction, second: MailSwipeAction, item: MessageListItem) -> some View {
+        swipeButton(first, item: item)
+        swipeButton(second, item: item)
+    }
+
+    @ViewBuilder private func swipeButton(_ action: MailSwipeAction, item: MessageListItem) -> some View {
+        if action != .none {
+            let title = action.buttonTitle(isUnread: item.thread.isUnread, isStarred: item.thread.isStarred)
+            Button { mailbox.performSwipe(action, on: item.id) } label: { Label(title, systemImage: action.symbol) }
+                .tint(action == .trash || action == .spam ? .red : .accentColor)
+                .disabled((action == .archive && !mailbox.offersArchive) || (action == .trash && !mailbox.offersTrash)
+                          || (action == .snooze && !mailbox.offersArchive))
+        }
+    }
+}
+
+/// The row under the last conversation. It observes the mailbox on its own,
+/// so a new page of the same rows doesn't build the rows above it again.
+private struct MessageListFooter: View {
+    let mailbox: MailboxModel
+
+    var body: some View {
+        if mailbox.search.isActive {
+            let gmail = mailbox.search.gmailState
+            if gmail != .finished {
+                GmailRow(kind: .search, state: gmail, action: mailbox.search.askGmail)
+            }
+        } else if mailbox.offersOlderConversations {
+            GmailRow(kind: .older, state: mailbox.older?.state ?? .ready, failedAccounts: mailbox.olderFailureAccounts, action: mailbox.loadOlderConversations)
+        }
     }
 }
 

@@ -16,6 +16,25 @@ public struct MessageListEntry: Sendable, Hashable {
         self.snoozeWakeAt = snoozeWakeAt
     }
 
+    /// Equality and hashing leave out the message's history ID. Sync raises it
+    /// without changing anything a list shows, and no list reader uses it.
+    public static func == (lhs: Self, rhs: Self) -> Bool {
+        guard lhs.labels == rhs.labels, lhs.attachments == rhs.attachments,
+              lhs.snoozeWakeAt == rhs.snoozeWakeAt else { return false }
+        var message = lhs.message
+        message.historyID = rhs.message.historyID
+        return message == rhs.message
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        var message = message
+        message.historyID = 0
+        hasher.combine(message)
+        hasher.combine(labels)
+        hasher.combine(attachments)
+        hasher.combine(snoozeWakeAt)
+    }
+
     public var rowThread: ThreadRecord {
         ThreadRecord(accountID: message.accountID, id: message.threadID, lastDate: message.date,
             subject: message.subject, snippet: message.snippet, participants: message.sender,
@@ -29,7 +48,7 @@ extension MailCache {
     public func messageListEntries(threadsByAccount: [String: [String]], matching query: SearchQuery? = nil,
                                    includingMessageIDs: [String: Set<String>] = [:], snoozedOnly: Bool = false,
                                    now: Date = .now) -> AsyncThrowingStream<[MessageListEntry], any Error> {
-        observe { db in
+        observe(region: ObservedTables.messageList(matching: query, snoozedOnly: snoozedOnly)) { db in
             try CacheTransaction(db: db).messageListEntries(
                 threadsByAccount: threadsByAccount, matching: query,
                 includingMessageIDs: includingMessageIDs, snoozedOnly: snoozedOnly, now: now
@@ -104,7 +123,7 @@ extension CacheTransaction {
     }
 }
 
-private enum MessageListSQL {
+enum MessageListSQL {
     struct Fetched {
         var messages: [MessageRecord] = []
         /// Effective labels, as `rebuildThreads` stored them.
@@ -131,12 +150,21 @@ private enum MessageListSQL {
                 let id: String = row["messageID"]
                 if let label: String = row["labelID"] { result.labels[id, default: []].insert(label) }
             }
-            let attachments = try AttachmentRecord.fetchAll(db, sql: """
-                SELECT a.* FROM attachment a JOIN message m ON m.accountID=a.accountID AND m.id=a.messageID
-                WHERE \(predicate) ORDER BY a.messageID,a.partID
-                """, arguments: arguments)
+            let attachments = try AttachmentRecord.fetchAll(db, sql: attachmentsSQL(threadCount: chunk.count), arguments: arguments)
             for attachment in attachments { result.attachments[attachment.messageID, default: []].append(attachment) }
         }
         return result
+    }
+
+    /// The attachments of the messages in `threadCount` conversations, each
+    /// message's in part order. `CROSS JOIN` makes SQLite read the
+    /// conversations' messages first and look their attachments up by key.
+    /// Left to choose, it follows the `ORDER BY` down the attachment key and
+    /// visits every attachment the account has.
+    static func attachmentsSQL(threadCount: Int) -> String {
+        """
+        SELECT a.* FROM message m CROSS JOIN attachment a ON a.accountID=m.accountID AND a.messageID=m.id
+        WHERE m.accountID=? AND m.threadID IN (\(databaseQuestionMarks(count: threadCount))) ORDER BY a.messageID,a.partID
+        """
     }
 }

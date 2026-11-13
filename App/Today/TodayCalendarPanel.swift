@@ -5,71 +5,96 @@ struct TodayCalendarPanel: View {
     let query: String
     @Environment(\.openSettings) private var openSettings
 
-    private var events: [CalendarDisplayEvent] {
-        dashboard.upcomingEvents.filter { query.isEmpty || [$0.title, $0.event.location ?? ""]
-            .contains { $0.localizedCaseInsensitiveContains(query) } }
-    }
-    private var days: [Date] {
-        Array(Set(events.map { dashboard.calendar.startOfDay(for: max($0.start, dashboard.selectedDateStart)) })).sorted()
+    private struct Day: Identifiable {
+        let id: Date
+        var events: [CalendarDisplayEvent]
     }
 
     var body: some View {
-        TodayDashboardSection(title: "Calendar", symbol: "calendar") {
-            CalendarMiniMonth(date: $dashboard.selectedDate, calendar: dashboard.calendar, events: dashboard.monthEvents)
+        // One read of the prepared lists and of the calendar per body.
+        let agenda = dashboard.agenda, calendar = dashboard.calendar
+        TodayDashboardSection(title: "Calendar", symbol: "calendar", updatingLabel: "Updating events…",
+            isUpdating: dashboard.calendarLoading && agenda.isLoaded) {
+            CalendarMiniMonth(date: $dashboard.selectedDate, calendar: calendar, events: agenda.monthEvents)
             Divider()
-            agenda
+            upcoming(agenda, calendar: calendar)
             status
         }
         .accessibilityIdentifier("today-calendar")
     }
 
-    private var agenda: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s3) {
+    /// Events keep their order and are grouped by the day they are listed under.
+    /// One that began before the selected day is listed under that day.
+    private func days(_ events: [CalendarDisplayEvent], calendar: Calendar) -> [Day] {
+        let first = calendar.startOfDay(for: dashboard.selectedDate)
+        var days: [Day] = [], index: [Date: Int] = [:]
+        for event in events {
+            let day = calendar.startOfDay(for: max(event.start, first))
+            if let position = index[day] { days[position].events.append(event) }
+            else { index[day] = days.count; days.append(Day(id: day, events: [event])) }
+        }
+        return days.sorted { $0.id < $1.id }
+    }
+
+    private func upcoming(_ agenda: TodayAgenda, calendar: Calendar) -> some View {
+        let events = agenda.upcomingEvents.filter { query.isEmpty || [$0.title, $0.event.location ?? ""]
+            .contains { $0.localizedCaseInsensitiveContains(query) } }
+        let days = days(events, calendar: calendar)
+        let titles = Dictionary(dashboard.context.accounts.map { ($0.id, $0.title) }, uniquingKeysWith: { first, _ in first })
+        return VStack(alignment: .leading, spacing: Tokens.Space.s3) {
             HStack(alignment: .firstTextBaseline, spacing: Tokens.Space.s2) {
                 Text("Upcoming events").font(.subheadline.weight(.semibold))
-                if dashboard.hasLoadedCalendar, dashboard.hasAvailableCalendars {
+                if agenda.isLoaded, agenda.hasCalendars {
                     Text(events.count.formatted()).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                         .accessibilityLabel("\(events.count) events shown")
                 }
             }
-            Text("7 days from \(CalendarLayout.format(dashboard.selectedDate, style: .dateTime.month(.abbreviated).day(), calendar: dashboard.calendar))")
+            Text("7 days from \(CalendarLayout.format(dashboard.selectedDate, style: .dateTime.month(.abbreviated).day(), calendar: calendar))")
                 .font(.caption).foregroundStyle(.secondary)
-            if dashboard.calendarLoading && !dashboard.hasLoadedCalendar {
-                TodayLoadingStatus("Loading events…")
-            } else if !dashboard.hasLoadedCalendar {
-                TodayCompactState(title: "Calendar not loaded", symbol: "calendar.badge.exclamationmark",
-                    message: "Refresh to check the available events.")
-            } else if !dashboard.hasAvailableCalendars {
-                VStack(alignment: .leading, spacing: Tokens.Space.s2) {
-                    TodayCompactState(title: "No calendars available", symbol: "calendar",
-                        message: "Connect Calendar or choose visible calendars for this profile.")
-                    Button("Calendar Settings…") {
-                        SettingsNavigationRequests.shared.request(.calendar)
-                        openSettings()
+            VStack(alignment: .leading, spacing: 0) {
+                if dashboard.calendarLoading && !agenda.isLoaded {
+                    TodayLoadingStatus("Loading events…").ternDelayedLoading().ternTransition(.fade)
+                } else if !agenda.isLoaded {
+                    TodayCompactState(title: "Calendar not loaded", symbol: "calendar.badge.exclamationmark",
+                        message: "Refresh to check the available events.")
+                        .ternTransition(.fade)
+                } else if !agenda.hasCalendars {
+                    VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+                        TodayCompactState(title: "No calendars available", symbol: "calendar",
+                            message: "Connect Calendar or choose visible calendars for this profile.")
+                        Button("Calendar Settings…") {
+                            SettingsNavigationRequests.shared.request(.calendar)
+                            openSettings()
+                        }
+                        .controlSize(.small)
                     }
-                    .controlSize(.small)
-                }
-            } else if events.isEmpty {
-                TodayCompactState(title: query.isEmpty ? "No available events" : "No matching events", symbol: "calendar",
-                    message: query.isEmpty ? "Nothing is shown in this seven-day range." : "Try another search or select a different day.")
-            } else {
-                LazyVStack(alignment: .leading, spacing: Tokens.Space.s3) {
-                    ForEach(days, id: \.self) { day in
-                        VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-                            Text(dayTitle(day)).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                            ForEach(events.filter { dashboard.calendar.isDate(max($0.start, dashboard.selectedDateStart), inSameDayAs: day) }) { event in
-                                Button { dashboard.openEvent(event) } label: {
-                                    TodayAgendaEventRow(event: event, calendar: dashboard.calendar,
-                                        accountTitle: dashboard.context.accounts.first { $0.id == event.accountID }?.title)
+                    .ternTransition(.fade)
+                } else if events.isEmpty {
+                    TodayCompactState(title: query.isEmpty ? "No available events" : "No matching events", symbol: "calendar",
+                        message: query.isEmpty ? "Nothing is shown in this seven-day range." : "Try another search or select a different day.")
+                        .ternTransition(.fade)
+                } else {
+                    VStack(alignment: .leading, spacing: Tokens.Space.s3) {
+                        ForEach(days) { day in
+                            VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+                                Text(dayTitle(day.id, calendar: calendar)).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                                ForEach(day.events) { event in
+                                    Button { dashboard.openEvent(event) } label: {
+                                        TodayAgendaEventRow(event: event, calendar: calendar, accountTitle: titles[event.accountID])
+                                    }
+                                    .buttonStyle(.plain).ternHover()
+                                    .accessibilityLabel("Open event: \(event.title)")
+                                    .accessibilityIdentifier("today-event-\(event.id)")
                                 }
-                                .buttonStyle(.plain).ternHover()
-                                .accessibilityLabel("Open event: \(event.title)")
-                                .accessibilityIdentifier("today-event-\(event.id)")
                             }
                         }
                     }
+                    .ternTransition(.fade)
                 }
             }
+            .ternAnimation(value: TodayContentKey(
+                states: [dashboard.calendarLoading && !agenda.isLoaded, agenda.isLoaded, agenda.hasCalendars],
+                ids: events.map(\.id)))
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("today-agenda")
@@ -77,7 +102,6 @@ struct TodayCalendarPanel: View {
 
     private var status: some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s2) {
-            if dashboard.calendarLoading && dashboard.hasLoadedCalendar { TodayLoadingStatus("Updating events…") }
             if let error = dashboard.calendarError {
                 TodayInlineWarning(error, retry: { Task { await dashboard.refreshCalendar() } })
             }
@@ -86,11 +110,11 @@ struct TodayCalendarPanel: View {
         }
     }
 
-    private func dayTitle(_ day: Date) -> String {
-        let date = CalendarLayout.format(day, style: .dateTime.month(.abbreviated).day(), calendar: dashboard.calendar)
-        if dashboard.calendar.isDateInToday(day) { return "Today · \(date)" }
-        if dashboard.calendar.isDateInTomorrow(day) { return "Tomorrow · \(date)" }
-        return CalendarLayout.format(day, style: .dateTime.weekday(.wide).month(.abbreviated).day(), calendar: dashboard.calendar)
+    private func dayTitle(_ day: Date, calendar: Calendar) -> String {
+        let date = CalendarLayout.format(day, style: .dateTime.month(.abbreviated).day(), calendar: calendar)
+        if calendar.isDateInToday(day) { return "Today · \(date)" }
+        if calendar.isDateInTomorrow(day) { return "Tomorrow · \(date)" }
+        return CalendarLayout.format(day, style: .dateTime.weekday(.wide).month(.abbreviated).day(), calendar: calendar)
     }
 }
 
@@ -138,8 +162,4 @@ private struct TodayAgendaEventRow: View {
         if calendar.isDate(event.start, inSameDayAs: event.end) { return "\(start)–\(end)" }
         return "\(CalendarLayout.format(event.start, style: .dateTime.month(.abbreviated).day(), calendar: calendar)) \(start)–\(CalendarLayout.format(event.end, style: .dateTime.month(.abbreviated).day(), calendar: calendar)) \(end)"
     }
-}
-
-private extension TodayDashboardModel {
-    var selectedDateStart: Date { calendar.startOfDay(for: selectedDate) }
 }

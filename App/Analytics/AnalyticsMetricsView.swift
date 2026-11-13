@@ -4,6 +4,8 @@ import SwiftUI
 struct AnalyticsMetricsView: View {
     let snapshot: MailAnalyticsSnapshot
     let period: MailAnalyticsPeriod
+    /// True while another date range loads over these numbers.
+    var isRefreshing = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s2) {
@@ -30,6 +32,10 @@ struct AnalyticsMetricsView: View {
         HStack(spacing: Tokens.Space.s2) {
             Text("Activity").fontWeight(.semibold)
             Text("· \(period.title) · \(snapshot.totalCount.formatted()) emails").foregroundStyle(.secondary)
+            // Always laid out, so the label doesn't move when the spinner shows.
+            ProgressView().controlSize(.mini)
+                .accessibilityLabel("Updating analytics")
+                .ternDelayedLoading(isRefreshing)
         }
         .font(.caption)
         .fixedSize()

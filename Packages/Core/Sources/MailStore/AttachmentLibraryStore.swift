@@ -7,11 +7,13 @@ extension MailCache {
     }
 
     public func observeAttachmentLibrary(query: AttachmentLibraryQuery) -> AsyncThrowingStream<AttachmentLibraryPage, any Error> {
-        observe(latestOnly: true) { try CacheTransaction(db: $0).attachmentLibrary(query: query) }
+        observe(latestOnly: true, region: ObservedTables.attachmentLibrary) {
+            try CacheTransaction(db: $0).attachmentLibrary(query: query)
+        }
     }
 
     public func attachmentIndexStates(accountIDs: [String]) -> AsyncThrowingStream<[AttachmentIndexState], any Error> {
-        observe { db in
+        observe(region: ObservedTables.attachmentIndexStates) { db in
             try AttachmentIndexState.filter(accountIDs.contains(Column("accountID")))
                 .order(Column("accountID")).fetchAll(db)
         }

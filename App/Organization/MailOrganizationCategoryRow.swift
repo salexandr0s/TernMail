@@ -20,6 +20,8 @@ struct MailOrganizationCategoryRow: View {
         }
     }
 
+    /// Checks the proposed senders against the sample and the existing rules. Each read
+    /// repeats that work, so `body` reads it once and passes the result down.
     private var coverage: OrganizationRuleCoverage {
         let senders = samples.eligibleRuleSenders(category.proposal.ruleSenders,
                                                 selectedMessageIDs: category.selectedMessageIDs)
@@ -37,11 +39,12 @@ struct MailOrganizationCategoryRow: View {
                 set: { category.setBackfill($0) })
     }
 
-    private var ruleTitle: String {
+    private func ruleTitle(_ coverage: OrganizationRuleCoverage) -> String {
         coverage.newFilterCount == 1 ? "Create a rule for future mail" : "Create \(coverage.newFilterCount.formatted()) rules for future mail"
     }
 
     var body: some View {
+        let coverage = self.coverage
         VStack(alignment: .leading, spacing: Tokens.Space.s4) {
             HStack(alignment: .top, spacing: Tokens.Space.s3) {
                 Image(systemName: "tag.fill")
@@ -59,8 +62,10 @@ struct MailOrganizationCategoryRow: View {
                 Spacer(minLength: 0)
                 if !category.isSelected && isEditable {
                     TernBadge(text: "Skipped")
+                        .ternTransition(.fade)
                 }
             }
+            .ternAnimation(value: category.isSelected, duration: Tokens.Motion.fast)
 
             VStack(alignment: .leading, spacing: Tokens.Space.s1) {
                 Text("Why this is suggested").font(.caption.weight(.medium)).foregroundStyle(.secondary)
@@ -70,15 +75,15 @@ struct MailOrganizationCategoryRow: View {
 
             Divider()
             if isEditable {
-                choices
+                choices(coverage)
             } else {
-                savedChoices
+                savedChoices(coverage)
             }
 
             if (category.existingLabelID == nil && isEditable) || !coverage.newSenders.isEmpty || !coverage.alreadyCoveredSenders.isEmpty {
                 DisclosureGroup(category.existingLabelID == nil && isEditable ? "Label details" : "Matching senders",
                                 isExpanded: $isDetailsExpanded) {
-                    matchDetails
+                    matchDetails(coverage)
                         .padding(.top, Tokens.Space.s2)
                         .ternTransition(.disclosure)
                 }
@@ -96,13 +101,13 @@ struct MailOrganizationCategoryRow: View {
         }
     }
 
-    @ViewBuilder private var choices: some View {
+    @ViewBuilder private func choices(_ coverage: OrganizationRuleCoverage) -> some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s4) {
             if coverage.newFilterCount > 0 {
                 Toggle(isOn: futureChoice) {
                     VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-                        Text(ruleTitle).font(.callout.weight(.medium))
-                        Text("From \(senderPreview). Add the \(displayName) label.")
+                        Text(ruleTitle(coverage)).font(.callout.weight(.medium))
+                        Text("From \(senderPreview(coverage)). Add the \(displayName) label.")
                             .font(.caption).foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -144,13 +149,13 @@ struct MailOrganizationCategoryRow: View {
         }
     }
 
-    private var senderPreview: String {
+    private func senderPreview(_ coverage: OrganizationRuleCoverage) -> String {
         let senders = coverage.newSenders
         let first = senders.prefix(2).joined(separator: ", ")
         return senders.count > 2 ? first + " and \((senders.count - 2).formatted()) more" : first
     }
 
-    private var savedChoices: some View {
+    private func savedChoices(_ coverage: OrganizationRuleCoverage) -> some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s2) {
             if category.createsFilter && coverage.newFilterCount > 0 {
                 Label("\(coverage.newFilterCount.formatted()) \(coverage.newFilterCount == 1 ? "rule" : "rules") for future mail", systemImage: "arrow.forward.to.line")
@@ -162,7 +167,7 @@ struct MailOrganizationCategoryRow: View {
         .font(.callout)
     }
 
-    private var matchDetails: some View {
+    private func matchDetails(_ coverage: OrganizationRuleCoverage) -> some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s3) {
             if category.existingLabelID == nil && isEditable {
                 TextField("Label name", text: $category.name)

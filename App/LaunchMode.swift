@@ -120,6 +120,10 @@ struct PerformanceOptions: Sendable, Equatable {
     var memoryPause = 0
     var fixedKeyLoop = false
     var startFile: String?
+    /// Runs the benchmark in a visible window without requiring the app to be
+    /// active, for a comparison when nobody can bring it to the front. Its
+    /// report is marked and cannot pass acceptance.
+    var unattended = false
     /// Where reader layout diagnostics write their report: one absolute path.
     var readerLayoutReport: URL?
     /// Starts reader prefetches at once instead of after the 90 ms delay.
@@ -187,6 +191,7 @@ extension PerformanceOptions {
         memoryPause = arguments.integer(after: "--performance-memory-pause=", default: memoryPause, in: 0...30)
         fixedKeyLoop = arguments.contains("--performance-fixed-key-loop")
         startFile = arguments.value(after: "--performance-start-file=")
+        unattended = arguments.contains("--performance-unattended")
         readerLayoutReport = ReaderLayoutDiagnostics.destination(in: arguments)
         readerPrefetchImmediate = arguments.contains("--reader-prefetch-immediate")
     }

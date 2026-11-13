@@ -5,6 +5,29 @@ import SwiftUI
 import Testing
 @testable import Tern
 
+@MainActor @Observable private final class CalendarSelectionProbe {
+    var id: String?
+}
+
+/// Wires the grid as `CalendarView` does: behind its equatable gate, with a
+/// closure that writes an observed model and the selection in the environment.
+private struct CalendarSelectionHarness: View {
+    let selection: CalendarSelectionProbe
+    let day: Date
+    let calendar: Calendar
+    let events: [CalendarDisplayEvent]
+
+    var body: some View {
+        CalendarGridViews(presentationID: CalendarGridIdentity(mode: .day, date: day, calendar: calendar,
+                                                               revision: 0, lifecycle: 0, accessRevision: 0),
+                          events: events, show: { _, _ in }, select: { selection.id = $0 },
+                          create: { _ in }, edit: { _ in }, change: { _, _ in }, delete: { _ in },
+                          duplicate: { _ in }, dropMail: { _, _ in })
+            .equatable()
+            .environment(\.calendarSelectedEventID, selection.id)
+    }
+}
+
 @Suite struct CalendarLayoutTests {
     @MainActor @Test func miniMonthMarkersCountOvernightEventsAndKeepAllDayEndsExclusive() throws {
         let calendar = try calendar("Europe/Vienna")
@@ -119,7 +142,7 @@ import Testing
     func timeGridOpensAtEightInTheMorning(_ opening: (zone: String, month: Int, day: Int, isWeek: Bool, rowsAbove: Int)) async throws {
         let calendar = try calendar(opening.zone)
         let day = try #require(calendar.date(from: DateComponents(year: 2026, month: opening.month, day: opening.day)))
-        let grid = CalendarTimeGrid(date: day, isWeek: opening.isWeek, calendar: calendar, events: [], selectedID: .constant(nil),
+        let grid = CalendarTimeGrid(date: day, isWeek: opening.isWeek, calendar: calendar, events: [], select: { _ in },
                                     create: { _ in }, edit: { _ in }, change: { _, _ in }, delete: { _ in },
                                     duplicate: { _ in }, dropMail: { _, _ in })
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 500), styleMask: [.borderless],
@@ -145,6 +168,112 @@ import Testing
         return ((view as? NSScrollView).map { [$0] } ?? []) + view.subviews.flatMap { scrollViews(in: $0) }
     }
 
+    /// Month replaces the hour grid, and a new grid would open at 8 AM. The
+    /// position its owner keeps brings the next grid back to the same hour.
+    @MainActor @Test func hourScrollPositionSurvivesATripThroughMonth() async throws {
+        let calendar = try calendar()
+        let day = try #require(calendar.date(from: DateComponents(year: 2031, month: 6, day: 12)))
+        let position = CalendarHourScroll()
+        func grid(_ mode: CalendarDisplayMode) -> CalendarGridViews {
+            CalendarGridViews(presentationID: CalendarGridIdentity(mode: mode, date: day, calendar: calendar,
+                                                                   revision: 0, lifecycle: 0, accessRevision: 0),
+                              events: [], show: { _, _ in }, select: { _ in },
+                              create: { _ in }, edit: { _ in }, change: { _, _ in }, delete: { _ in },
+                              duplicate: { _ in }, dropMail: { _, _ in }, hourScroll: position)
+        }
+        let host = NSHostingView(rootView: grid(.week))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 500), styleMask: [.borderless],
+                              backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.orderFront(nil)
+        defer { window.close() }
+        let hourHeight = Tokens.Space.s16
+        // Only the hours are taller than the window.
+        func hours() -> NSScrollView? {
+            scrollViews(in: host).first { ($0.documentView?.frame.height ?? 0) > 12 * hourHeight }
+        }
+        func wait(for condition: () -> Bool) async throws {
+            let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+            while !condition(), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(20)) }
+        }
+        try await wait { (hours()?.contentView.bounds.origin.y ?? 0) >= 8 * hourHeight }
+        let scroll = try #require(hours())
+        let target = scroll.contentView.bounds.origin.y + 3 * hourHeight
+        scroll.contentView.scroll(to: CGPoint(x: scroll.contentView.bounds.origin.x, y: target))
+        scroll.reflectScrolledClipView(scroll.contentView)
+        try await wait { position.offset.map { abs($0 - target) < 1 } ?? false }
+        #expect(abs(try #require(position.offset) - target) < 1)
+
+        host.rootView = grid(.month)
+        try await wait { hours() == nil }
+        #expect(hours() == nil)
+        host.rootView = grid(.week)
+        try await wait { hours().map { abs($0.contentView.bounds.origin.y - target) < 1 } ?? false }
+        #expect(abs(try #require(hours()).contentView.bounds.origin.y - target) < 1)
+    }
+
+    /// A click changes only the selection. The cards read it from the
+    /// environment, so the card is drawn selected and the grid is not laid out again.
+    @MainActor @Test func selectingAnEventRedrawsItsCardAndNotTheGrid() async throws {
+        let calendar = try calendar()
+        let day = try #require(calendar.date(from: DateComponents(year: 2031, month: 7, day: 17)))
+        let nine = try #require(calendar.date(byAdding: .hour, value: 9, to: day))
+        let shown = event("selection-probe", start: nine, end: nine.addingTimeInterval(3600))
+        var gridBodies = 0
+        var cardIsSelected: Bool?
+        let previousGridHook = CalendarTimeGrid.onBodyEvaluation
+        CalendarTimeGrid.onBodyEvaluation = { grid in
+            previousGridHook?(grid)
+            if grid.date == day { gridBodies += 1 }
+        }
+        let previousCardHook = CalendarTimelineEvent.onBodyEvaluation
+        CalendarTimelineEvent.onBodyEvaluation = { card in
+            previousCardHook?(card)
+            if card.event.id == shown.id { cardIsSelected = card.selected }
+        }
+        defer {
+            CalendarTimeGrid.onBodyEvaluation = previousGridHook
+            CalendarTimelineEvent.onBodyEvaluation = previousCardHook
+        }
+        let selection = CalendarSelectionProbe()
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 500), styleMask: [.borderless],
+                              backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = NSHostingView(rootView: CalendarSelectionHarness(selection: selection, day: day,
+                                                                              calendar: calendar, events: [shown]))
+        window.orderFront(nil)
+        defer { window.close() }
+        func wait(for condition: () -> Bool) async throws {
+            let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+            while !condition(), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(20)) }
+        }
+        try await wait { cardIsSelected == false }
+        #expect(cardIsSelected == false)
+        // The grid runs its body again while it opens at 8 AM, and SwiftUI runs
+        // every body once more on the first update after a window opens. Count
+        // after both.
+        let hourHeight = Tokens.Space.s16
+        try await wait {
+            (scrollViews(in: window.contentView).first { ($0.documentView?.frame.height ?? 0) > 12 * hourHeight }?
+                .contentView.bounds.origin.y ?? 0) >= 8 * hourHeight
+        }
+        selection.id = shown.id
+        try await wait { cardIsSelected == true }
+        selection.id = nil
+        try await wait { cardIsSelected == false }
+        try await Task.sleep(for: .milliseconds(150))
+        let before = gridBodies
+        #expect(before > 0)
+        selection.id = shown.id
+        try await wait { cardIsSelected == true }
+        #expect(cardIsSelected == true)
+        selection.id = nil
+        try await wait { cardIsSelected == false }
+        #expect(cardIsSelected == false)
+        #expect(gridBodies == before)
+    }
+
     @MainActor @Test func nativeScrollingUpdatesHitTestingWithoutRebuildingGridAndKeepsDragRangeLive() async throws {
         let calendar = try calendar()
         let day = try #require(calendar.date(from: DateComponents(year: 2031, month: 6, day: 12)))
@@ -158,7 +287,7 @@ import Testing
             bodyEvaluations += 1
         }
         defer { CalendarTimeGrid.onBodyEvaluation = previousHook }
-        let grid = CalendarTimeGrid(date: day, isWeek: false, calendar: calendar, events: [], selectedID: .constant(nil),
+        let grid = CalendarTimeGrid(date: day, isWeek: false, calendar: calendar, events: [], select: { _ in },
                                    create: { _ in }, edit: { _ in }, change: { _, _ in }, delete: { _ in },
                                    duplicate: { _ in }, dropMail: { _, _ in })
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 500), styleMask: [.borderless],
@@ -207,7 +336,7 @@ import Testing
         #expect(abs(afterDate.timeIntervalSince(beforeDate) - 3_600) < 1)
 
         let dragAnchor = try #require(mounted.timedDate(at: point))
-        mounted.drag = CalendarTimelineDrag(action: .createTimed, anchor: dragAnchor, pointer: point)
+        mounted.drag = CalendarTimelineDrag(action: .createTimed, anchor: dragAnchor)
         mounted.updateDrag(at: point)
         let initialRange = try #require(mounted.drag?.range)
         let dragOffset = scroll.contentView.bounds.origin

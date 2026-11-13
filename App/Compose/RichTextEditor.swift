@@ -31,7 +31,9 @@ protocol RichTextEditing: AnyObject {
     /// Returns to the message without moving its selection.
     func resumeEditing()
     func insertDocument(_ document: ComposeDocument)
-    func insertImage(_ reference: InlineImageReference, data: Data)
+    /// `preview` is the image decoded beforehand, so inserting a large one
+    /// doesn't stall typing. Without it the editor decodes `data` itself.
+    func insertImage(_ reference: InlineImageReference, data: Data, preview: ComposeImagePreview?)
     /// The selection, in the editor view's coordinates, for a popover to point
     /// at. Nil before the editor is in a window.
     var selectionRect: CGRect? { get }
@@ -46,6 +48,9 @@ struct RichTextEditor: NSViewRepresentable {
     var isEditable: Bool
     var font: ComposeFont = .sansSerif
     var inlineImages: [String: Data] = [:]
+    /// The images above as the editor draws them, by content ID, decoded off
+    /// the main actor. An image without one is decoded when it is first drawn.
+    var inlinePreviews: [String: ComposeImagePreview] = [:]
     /// File drops can have a different destination from pasted images.
     var onDropFiles: (([ComposeDroppedFile]) -> Void)? = nil
     var onFileDropTargetChange: ((Bool) -> Void)? = nil
@@ -143,7 +148,7 @@ struct RichTextEditor: NSViewRepresentable {
             loadedFont = parent.font
             loadedImages = parent.inlineImages
             isLoading = true
-            storage.setAttributedString(AttributedDocument.string(from: document, font: parent.font, inlineImages: parent.inlineImages))
+            storage.setAttributedString(AttributedDocument.string(from: document, font: parent.font, inlineImages: parent.inlineImages, previews: parent.inlinePreviews))
             projection.reset(from: storage)
             hasUnpublishedChanges = projection.document != document
             textView.typingAttributes = AttributedDocument.baseAttributes(parent.font)
@@ -257,17 +262,17 @@ struct RichTextEditor: NSViewRepresentable {
         func insertDocument(_ document: ComposeDocument) {
             guard let textView, let storage = textView.textStorage else { return }
             let selected = textView.selectedRange()
-            let value = AttributedDocument.string(from: document, font: parent.font, inlineImages: parent.inlineImages)
+            let value = AttributedDocument.string(from: document, font: parent.font, inlineImages: parent.inlineImages, previews: parent.inlinePreviews)
             guard textView.shouldChangeText(in: selected, replacementString: value.string) else { return }
             storage.replaceCharacters(in: selected, with: value)
             textView.didChangeText()
             textView.setSelectedRange(NSRange(location: selected.location + value.length, length: 0))
         }
 
-        func insertImage(_ reference: InlineImageReference, data: Data) {
+        func insertImage(_ reference: InlineImageReference, data: Data, preview: ComposeImagePreview?) {
             guard reference.isValid, let textView, let storage = textView.textStorage else { return }
             let selected = textView.selectedRange()
-            let value = NSAttributedString(attachment: ComposeImageAttachment(reference: reference, data: data))
+            let value = NSAttributedString(attachment: ComposeImageAttachment(reference: reference, data: data, preview: preview))
             guard textView.shouldChangeText(in: selected, replacementString: value.string) else { return }
             storage.replaceCharacters(in: selected, with: value)
             // The text shows this data, so the same data from the model needs no reload.
@@ -351,7 +356,7 @@ struct RichTextEditor: NSViewRepresentable {
                 case (false, .numbered): .numbered(level: 0)
                 }
             }
-            let text = AttributedDocument.string(from: document, font: parent.font, inlineImages: parent.inlineImages)
+            let text = AttributedDocument.string(from: document, font: parent.font, inlineImages: parent.inlineImages, previews: parent.inlinePreviews)
             let whole = NSRange(location: 0, length: storage.length)
             guard textView.shouldChangeText(in: whole, replacementString: text.string) else { return }
             storage.replaceCharacters(in: whole, with: text)

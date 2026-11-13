@@ -32,12 +32,20 @@ struct AnalyticsConversationButton<Label: View>: View {
             Button(action: open) {
                 HStack(spacing: Tokens.Space.s2) {
                     label
-                    if isOpening { ProgressView().controlSize(.small) }
+                    // The slot is always there, so the label doesn't reflow when the spinner shows.
+                    ZStack {
+                        if isOpening { ProgressView().controlSize(.small).ternDelayedLoading() }
+                    }
+                    .frame(width: Tokens.Control.icon, height: Tokens.Control.icon)
                 }
             }
             .disabled(isOpening || !identity.isVisible)
-            if let error { Text(error).font(.caption).foregroundStyle(Tokens.Status.error) }
+            if let error {
+                Text(error).font(.caption).foregroundStyle(Tokens.Status.error)
+                    .ternTransition(.fade)
+            }
         }
+        .ternAnimation(value: error, duration: Tokens.Motion.fast)
         .onChange(of: identity) { _, _ in cancel() }
         .onDisappear { cancel() }
     }

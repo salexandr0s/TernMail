@@ -169,6 +169,55 @@ import Testing
         await today.acknowledgePresented(rows, visitID: id)
         #expect(try await fixture.history().snapshots.isEmpty)
     }
+
+    @Test func visibleRowsSaveOneAtATimeAndAListQueuedDuringASaveIsNotLost() async throws {
+        let fixture = try await TodayFixture()
+        _ = try await fixture.create("first")
+        _ = try await fixture.create("second")
+        let today = fixture.model()
+        defer { today.endVisit(); fixture.followUps.stop() }
+        await today.beginVisit()
+        let rows = today.projection(now: fixture.time).rows, id = try #require(today.activeVisitID)
+        #expect(rows.map(\.entry.record.id) == ["first", "second"])
+        let first = try #require(rows.first)
+        fixture.holdSave = true
+        today.acknowledgeVisible([first], visitID: id)
+        try await fixture.waitUntil { fixture.saveContinuation != nil }
+        today.acknowledgeVisible([first], visitID: id)
+        today.acknowledgeVisible(rows, visitID: id)
+        fixture.holdSave = false
+        fixture.saveContinuation?.resume(); fixture.saveContinuation = nil
+        try await fixture.waitUntil { fixture.savedIDs.count == 2 }
+        #expect(fixture.savedIDs == [["first"], ["second"]])
+    }
+
+    @Test func preparedListFollowsEntriesSearchAndFilterWithoutBeingAsked() async throws {
+        let fixture = try await TodayFixture()
+        _ = try await fixture.create("waiting")
+        _ = try await fixture.create("snoozed", deferredUntil: fixture.time + 3_600)
+        _ = try await fixture.store.createCommitment(CommitmentRecord(accountID: "a", id: "owed", threadID: "thread",
+            sourceMessageID: "source", sourceMessageDate: fixture.time - 60, sourceSubject: "Subject", title: "owed",
+            direction: .owedByMe, createdAt: fixture.time))
+        let today = fixture.model()
+        defer { today.endVisit(); fixture.followUps.stop() }
+        #expect(today.presentation.rows.isEmpty)
+        // Nothing tells Today that the follow-ups loaded. The page would show a stale list if it missed them.
+        await fixture.followUps.refresh(checkReminders: false)
+        try await fixture.waitUntil { today.presentation.rows.count == 2 }
+        #expect(today.presentation.rows == today.projection(now: fixture.time).rows)
+        #expect(today.presentation.owed.map(\.entry.record.id) == ["owed"])
+        #expect(today.presentation.sections.map(\.kind) == [.waiting])
+        #expect(today.presentation.sections.first?.rows.map(\.entry.record.id) == ["waiting"])
+        #expect(today.presentation.followUpCount == 1)
+        today.searchText = "owed"
+        #expect(today.presentation.rows.map(\.entry.record.id) == ["owed"])
+        #expect(today.presentation.sections.isEmpty)
+        today.searchText = ""
+        today.filter = .snoozed
+        #expect(today.presentation.owed.isEmpty)
+        #expect(today.presentation.sections.map(\.kind) == [.snoozed])
+        #expect(today.presentation.rows.map(\.isSnoozed) == [true])
+    }
 }
 
 @Suite @MainActor struct TodayProjectionTests {
@@ -266,6 +315,7 @@ import Testing
     var holdRead = false
     var holdSave = false
     var providerReads = 0
+    var savedIDs: [[String]] = []
     var readContinuation: CheckedContinuation<Void, Never>?
     var saveContinuation: CheckedContinuation<Void, Never>?
     lazy var followUps = FollowUpsModel(store: { self.store }, visibleAccountIDs: { self.context.accountIDs },
@@ -299,6 +349,7 @@ import Testing
                 if self.holdSave { await withCheckedContinuation { self.saveContinuation = $0 } }
                 try Task.checkCancellation()
                 if self.failSave { throw FollowUpModelError.unavailable }
+                self.savedIDs.append(presented.map(\.record.id))
                 return try await self.store.acknowledgeTodayVisit(scope: context.scope, accountIDs: context.accountIDs,
                     presentedEntries: presented, initialEntries: initial, now: date)
             })

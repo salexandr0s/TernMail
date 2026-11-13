@@ -22,12 +22,18 @@ enum Attachable: Sendable {
     case file(URL)
     case dropped(ComposeDroppedFile)
     case data(Data, filename: String, mimeType: String)
+    /// An image pasted as a TIFF. It is attached as a PNG, which is encoded
+    /// once its turn to attach comes, so pasting doesn't stall the window.
+    case pastedTIFF(Data)
+
+    static let pastedImageName = "Pasted Image.png"
 
     var name: String {
         switch self {
         case .file(let url): url.lastPathComponent
         case .dropped(let file): file.filename
         case .data(_, let filename, _): filename
+        case .pastedTIFF: Self.pastedImageName
         }
     }
 }
@@ -129,6 +135,8 @@ final class ComposeModel {
     /// A delayed sender default must not replace a later per-message choice.
     private var signatureChoiceGeneration = 0
     var inlineImageData: [String: Data] = [:]
+    /// The images above as the editor draws them, decoded off the main actor.
+    private(set) var inlineImagePreviews: [String: ComposeImagePreview] = [:]
     var expandingGroups = 0
     var showsFormatting = UserDefaults.standard.bool(forKey: ComposePreferences.formatBarKey) {
         didSet { UserDefaults.standard.set(showsFormatting, forKey: ComposePreferences.formatBarKey) }
@@ -175,7 +183,10 @@ final class ComposeModel {
     private(set) var failedAttachments: [FailedAttachment] = []
     /// Storing the draft before the window closes, so nothing changes meanwhile.
     private(set) var isClosing = false
-    private(set) var isExiting = false
+    /// A send or discard being queued. Nothing may change the draft meanwhile.
+    private enum Exit { case send, discard }
+    private var pendingExit: Exit?
+    private var isExiting: Bool { pendingExit != nil }
     /// A sheet is editing content that Send must not overtake.
     var isEditingSupplement = false
     @ObservationIgnored private let attachmentFiles: OutgoingAttachmentFiles
@@ -196,6 +207,9 @@ final class ComposeModel {
     @ObservationIgnored private var recipientAccountGeneration = 0
     @ObservationIgnored private var recipientAccountTask: Task<Void, Never>?
     @ObservationIgnored private var lastAutomaticRecipient: String?
+    /// A read of the stored accounts that hasn't finished. The address and
+    /// group lookups for one typed text start together and share it.
+    @ObservationIgnored private var storedAccountsRead: Task<[AccountRecord]?, Never>?
 
     init(localDraftID: String, mailbox: MailboxModel, senderChange: SenderChange? = nil) {
         self.localDraftID = localDraftID
@@ -266,6 +280,14 @@ final class ComposeModel {
         return nil
     }
 
+    /// Why the whole window waits and takes no edits. The window says so
+    /// only once the wait is long enough to notice.
+    var waitingText: String? {
+        if phase == .loading, storeError == nil { return "Opening message…" }
+        if pendingExit == .send { return "Sending…" }
+        return nil
+    }
+
     var title: String {
         let subject = content.subject.trimmingCharacters(in: .whitespaces)
         return subject.isEmpty ? "New Message" : subject
@@ -316,13 +338,30 @@ final class ComposeModel {
         return excluded
     }
 
+    /// The stored accounts, which hold the contacts setting and the granted
+    /// scopes. A caller that asks while a read is running gets that read's
+    /// result, so one change to the typed text reads the accounts once. A
+    /// later caller starts a new read and never gets an old answer.
+    func storedAccountsForSuggestions() async -> [AccountRecord]? {
+        if let storedAccountsRead { return await storedAccountsRead.value }
+        let store = mailbox.accountStore
+        let read = Task { try? await store?.accounts() }
+        storedAccountsRead = read
+        let accounts = await read.value
+        if storedAccountsRead == read { storedAccountsRead = nil }
+        return accounts
+    }
+
     /// Local correspondents and contacts appear without waiting for the directory.
     func suggestions(for text: String) async -> [EmailAddress] {
         guard let account = owner?.account else { return [] }
-        let current = try? await mailbox.accountStore?.accounts().first(where: { $0.id == account.id })
+        let store = mailbox.accountStore
+        // The contacts setting and the blocklist are separate reads, so they run together.
+        async let blocked = (try? await store?.blockedSuggestionAddresses(accountID: account.id)) ?? []
+        let current = await storedAccountsForSuggestions()?.first(where: { $0.id == account.id })
         let contacts = current.map { AccountFeature.named($0.enabledFeatures).contains(.contacts) } ?? false
         var excluded = excludedSuggestions
-        excluded.formUnion((try? await mailbox.accountStore?.blockedSuggestionAddresses(accountID: account.id)) ?? [])
+        excluded.formUnion(await blocked)
         let found = try? await mailbox.cache.recipientSuggestions(
             accountID: account.id, matching: text, excluding: excluded, includeContacts: contacts
         )
@@ -402,8 +441,8 @@ final class ComposeModel {
         }
         guard let engine = owner?.engine else { return false }
         content.archiveAfterSend = archive && draft?.threadID != nil
-        isExiting = true
-        defer { isExiting = false }
+        pendingExit = .send
+        defer { pendingExit = nil }
         cancelTimers()
         let id = localDraftID
         let delay = UndoSendDelay.current
@@ -435,8 +474,8 @@ final class ComposeModel {
     func discard() async -> Bool {
         guard isEditable else { return false }
         guard let engine = owner?.engine else { return false }
-        isExiting = true
-        defer { isExiting = false }
+        pendingExit = .discard
+        defer { pendingExit = nil }
         cancelTimers()
         let id = localDraftID
         // Stores the last edits too, so Undo brings them back.
@@ -539,6 +578,10 @@ final class ComposeModel {
                 defer { copying.removeAll { $0.id == file.id } }
                 let attached: OutgoingAttachment?
                 do {
+                    // Encoding a pasted image can take seconds. It comes first,
+                    // so the draft stored below is the message as it is by then.
+                    var pastedPNG: Data?
+                    if case .pastedTIFF(let tiff) = item { pastedPNG = await Attachable.pngData(fromTIFF: tiff) }
                     // The editor can be ahead of its delayed local save. Store
                     // its current inline references before checking the budget.
                     guard try await engine.updateDraft(id, content: content) != nil else { return }
@@ -549,6 +592,9 @@ final class ComposeModel {
                         attached = try await engine.attachFile(at: file.fileURL(), to: id)
                     case .data(let data, let filename, let mimeType):
                         attached = try await engine.attachData(data, filename: filename, mimeType: mimeType, to: id)
+                    case .pastedTIFF:
+                        guard let pastedPNG else { throw CocoaError(.fileReadCorruptFile) }
+                        attached = try await engine.attachData(pastedPNG, filename: item.name, mimeType: "image/png", to: id)
                     }
                 } catch {
                     let reason = (error as? ComposeError)?.errorDescription
@@ -560,10 +606,12 @@ final class ComposeModel {
                 do {
                     guard let image = try await engine.markInlineImage(attached), let cid = image.contentID else { return }
                     let bytes = try await engine.outgoingAttachmentData(image)
+                    let preview = await ComposeImagePreview.decoded(from: bytes, display: .current)
+                    inlineImagePreviews[cid] = preview
                     inlineImageData[cid] = bytes
                     let reference = InlineImageReference(contentID: cid, altText: image.filename)
                     // A closing window's editor takes no edits, so the image goes in the content it stores.
-                    if let editor, isEditable { editor.insertImage(reference, data: bytes) }
+                    if let editor, isEditable { editor.insertImage(reference, data: bytes, preview: preview) }
                     else { content.body.blocks.append(.init(runs: [.init("", image: reference)])) }
                 } catch {
                     alert = Problem(title: "Can't Insert Image", message: "Tern couldn't place “\(attached.filename)” in the message.")
@@ -804,10 +852,14 @@ final class ComposeModel {
             choseRecipientAccount = draft.fromAddress != nil
             replaceContent(with: draft.content)
             knownUpdate = draft.updatedAt
-            await loadSenders()
-            await loadComposeFeatures()
+            // None of these reads needs another's result, so they run together.
+            async let senders: Void = loadSenders()
+            async let features: Void = loadComposeFeatures()
+            async let source = originalMessage(for: draft)
+            let original = await source
+            _ = await (senders, features)
             guard !Task.isCancelled, phase == .loading else { return }
-            await initializeSender(for: draft)
+            await initializeSender(for: draft, original: original)
             guard !Task.isCancelled, phase == .loading else { return }
             phase = .open
             refreshIntegrations()
@@ -823,35 +875,74 @@ final class ComposeModel {
             // Imported from Gmail after another app changed it.
             if !hasPendingEdits, draft.content != content { replaceContent(with: draft.content) }
         }
-        if let engine = owner?.engine {
-            for attachment in activity.attachments where attachment.contentID != nil {
-                if let cid = attachment.contentID, inlineImageData[cid] == nil {
-                    inlineImageData[cid] = try? await engine.outgoingAttachmentData(attachment)
+        if let engine = owner?.engine { await loadInlineImages(of: activity.attachments, from: engine) }
+    }
+
+    /// Reads the inline images the editor doesn't have yet and decodes them
+    /// for it. The images are read and decoded together, off the main actor,
+    /// and the editor gets them all at once, so it loads the message once.
+    private func loadInlineImages(of attachments: [OutgoingAttachment], from engine: SyncEngine) async {
+        let missing = attachments.filter { attachment in attachment.contentID.map { inlineImageData[$0] == nil } ?? false }
+        guard !missing.isEmpty else { return }
+        let display = ComposeImagePreview.Display.current
+        let loaded = await withTaskGroup(of: (contentID: String, data: Data, preview: ComposeImagePreview?)?.self) { group in
+            for attachment in missing {
+                guard let contentID = attachment.contentID else { continue }
+                group.addTask {
+                    guard let data = try? await engine.outgoingAttachmentData(attachment) else { return nil }
+                    return (contentID: contentID, data: data, preview: await ComposeImagePreview.decoded(from: data, display: display))
                 }
             }
+            var loaded: [(contentID: String, data: Data, preview: ComposeImagePreview?)] = []
+            for await image in group {
+                if let image { loaded.append(image) }
+            }
+            return loaded
+        }
+        for image in loaded where inlineImageData[image.contentID] == nil {
+            inlineImagePreviews[image.contentID] = image.preview
+            inlineImageData[image.contentID] = image.data
         }
     }
 
+    /// The stored accounts and each account's identities are separate reads,
+    /// so they run together. The choices keep the order of the accounts.
     private func loadSenders() async {
-        let stored = (try? await mailbox.accountStore?.accounts()) ?? []
-        var choices: [ComposeSender] = []
-        for owner in mailbox.accounts where canChangeAccount || owner.account.id == draft?.accountID {
-            let account = stored.first { $0.id == owner.account.id } ?? owner.account
-            let identities = (try? await mailbox.accountStore?.identities(accountID: account.id)) ?? []
-            choices += ComposeSender.choices(account: account, identities: identities)
+        let accounts = mailbox.accounts.map(\.account).filter { canChangeAccount || $0.id == draft?.accountID }
+        let store = mailbox.accountStore
+        async let storedAccounts = (try? await store?.accounts()) ?? []
+        let identities = await withTaskGroup(
+            of: (String, [IdentityRecord]).self, returning: [String: [IdentityRecord]].self
+        ) { group in
+            for account in accounts {
+                group.addTask { (account.id, (try? await store?.identities(accountID: account.id)) ?? []) }
+            }
+            var found: [String: [IdentityRecord]] = [:]
+            for await (accountID, records) in group { found[accountID] = records }
+            return found
         }
+        let stored = await storedAccounts
         guard !Task.isCancelled else { return }
-        senderChoices = choices
+        senderChoices = accounts.flatMap { account in
+            ComposeSender.choices(account: stored.first { $0.id == account.id } ?? account,
+                                  identities: identities[account.id] ?? [])
+        }
     }
 
-    private func initializeSender(for draft: LocalDraft) async {
-        guard draft.revision == 0, draft.gmailDraftID == nil, content.fromAddress == nil,
-              draft.kind != .edit, draft.kind != .invitationReply, !isTouched else { return }
-        let original: MessageRecord?
-        if let sourceID = draft.sourceMessageID {
-            original = try? await mailbox.cache.read { try $0.message(id: sourceID, accountID: draft.accountID) }
-        } else { original = nil }
-        guard !Task.isCancelled, !isTouched,
+    /// A message nobody has changed, stored or given a sender takes the default sender and its signature.
+    private func needsDefaultSender(_ draft: LocalDraft) -> Bool {
+        draft.revision == 0 && draft.gmailDraftID == nil && content.fromAddress == nil
+            && draft.kind != .edit && draft.kind != .invitationReply && !isTouched
+    }
+
+    /// The message a reply answers. Its recipients pick the reply's sender.
+    private func originalMessage(for draft: LocalDraft) async -> MessageRecord? {
+        guard needsDefaultSender(draft), let sourceID = draft.sourceMessageID else { return nil }
+        return try? await mailbox.cache.read { try $0.message(id: sourceID, accountID: draft.accountID) }
+    }
+
+    private func initializeSender(for draft: LocalDraft, original: MessageRecord?) async {
+        guard needsDefaultSender(draft), !Task.isCancelled,
               let sender = ComposeSender.preferred(
                 in: senderChoices.filter { $0.account.id == draft.accountID }, original: original, kind: draft.kind
               ) else { return }
@@ -983,8 +1074,10 @@ final class ComposeModel {
     }
 
     private func loadComposeFeatures() async {
-        templates = (try? await mailbox.accountStore?.composeTemplates()) ?? []
-        signatures = (try? await mailbox.accountStore?.localSignatures()) ?? []
+        let store = mailbox.accountStore
+        async let storedTemplates = (try? await store?.composeTemplates()) ?? []
+        async let storedSignatures = (try? await store?.localSignatures()) ?? []
+        (templates, signatures) = await (storedTemplates, storedSignatures)
     }
 
     /// Quotation edits use the queue's local store path; body edits and reply

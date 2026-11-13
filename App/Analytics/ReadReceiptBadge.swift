@@ -27,8 +27,10 @@ struct ReadReceiptBadge: View {
                 .popover(isPresented: $showsDetails) {
                     ReadReceiptDetails(status: status)
                 }
+                .ternTransition(.fade)
             }
         }
+        .ternAnimation(value: status != nil, duration: Tokens.Motion.fast)
         .task(id: requestID) {
             status = nil
             showsDetails = false

@@ -131,6 +131,22 @@ struct MeetingPreparationThreadSection: View {
     }
 }
 
+/// Holds the place of a conversation's card until its summary arrives.
+struct MeetingPreparationPendingSection: View {
+    let candidate: MeetingPreparationCandidate
+    let accountName: String
+
+    var body: some View {
+        MeetingPreparationCard(title: candidate.title.isEmpty ? "Untitled conversation" : candidate.title,
+            symbol: "text.bubble") {
+            Text("\(accountName) · \(candidate.reason.explanation)")
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Text("Preparing summary…").font(.callout).foregroundStyle(.secondary)
+        }
+        .accessibilityIdentifier("meeting-thread-pending-\(candidate.thread.accountID.utf8.count):\(candidate.thread.accountID)\(candidate.thread.threadID)")
+    }
+}
+
 struct MeetingPreparationCitations: View {
     let sources: [AssistantSource]
     let prefix: String

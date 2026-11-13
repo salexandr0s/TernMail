@@ -179,12 +179,22 @@ final class ComposeTextView: NSTextView {
         }
         guard pasteboard.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false else { return nil }
         if let png = pasteboard.data(forType: .png) {
-            return [.data(png, filename: "Pasted Image.png", mimeType: "image/png")]
+            return [.data(png, filename: Attachable.pastedImageName, mimeType: "image/png")]
         }
-        if let tiff = pasteboard.data(forType: .tiff),
-           let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) {
-            return [.data(png, filename: "Pasted Image.png", mimeType: "image/png")]
+        // This reads the image's header, which is quick. Encoding it as a PNG
+        // can take seconds, so that waits until the image is attached.
+        if let tiff = pasteboard.data(forType: .tiff), NSBitmapImageRep(data: tiff) != nil {
+            return [.pastedTIFF(tiff)]
         }
         return nil
+    }
+}
+
+extension Attachable {
+    /// The PNG a pasted TIFF is attached as, encoded off the main actor.
+    static func pngData(fromTIFF tiff: Data) async -> Data? {
+        await Task.detached(priority: .userInitiated) {
+            NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:])
+        }.value
     }
 }

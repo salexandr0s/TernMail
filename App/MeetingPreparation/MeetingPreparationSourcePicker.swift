@@ -24,7 +24,7 @@ struct MeetingPreparationSourcePicker: View {
             .padding(.horizontal, Tokens.Space.s5).padding(.bottom, Tokens.Space.s3)
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: Tokens.Space.s3) {
-                    if model.isSearching { ProgressView("Searching conversations…").controlSize(.small) }
+                    if model.isSearching { ProgressView("Searching conversations…").controlSize(.small).ternDelayedLoading() }
                     if let error = model.searchError ?? actionError {
                         Label(error, systemImage: "exclamationmark.circle").font(.callout).foregroundStyle(Tokens.Status.warning)
                             .fixedSize(horizontal: false, vertical: true)

@@ -10,6 +10,8 @@ struct CalendarUtilityPanel<Content: View>: View {
     @FocusState.Binding var backFocused: Bool
     let onBack: () -> Void
     let onResize: (CGFloat) -> Void
+    /// Runs when a drag of the divider ends, so the owner saves the width once.
+    var onResizeEnd: () -> Void = {}
     @ViewBuilder var content: Content
 
     var body: some View {
@@ -18,13 +20,14 @@ struct CalendarUtilityPanel<Content: View>: View {
                 .fill(Tokens.Surface.border)
                 .frame(width: layout.isCompact ? 0 : Tokens.Border.hairline)
                 .overlay {
-                    AssistantSidebarResizeHandle(width: layout.utilityWidth, onResize: onResize)
+                    AssistantSidebarResizeHandle(width: layout.utilityWidth, onResize: onResize, onEnd: onResizeEnd)
                         .frame(width: Tokens.Space.s3)
                         .accessibilityElement()
                         .accessibilityLabel("\(title) width")
                         .accessibilityValue("\(Int(layout.utilityWidth)) points")
                         .accessibilityAdjustableAction { direction in
                             onResize(layout.utilityWidth + (direction == .increment ? Tokens.Space.s4 : -Tokens.Space.s4))
+                            onResizeEnd()
                         }
                 }
                 .opacity(layout.isCompact ? 0 : 1)

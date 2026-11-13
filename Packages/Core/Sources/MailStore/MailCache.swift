@@ -62,13 +62,27 @@ public struct CacheTransaction {
     }
 
     /// Every account with rows in the cache, so a launch can remove the rows
-    /// of accounts that were signed out.
+    /// of accounts that were signed out. Each table is asked for its first
+    /// account and then for the next one after it, a seek each on an index
+    /// that starts with `accountID`. Selecting the column reads every row.
     public func cachedAccountIDs() throws -> Set<String> {
-        let union = Self.accountTables.map { "SELECT accountID FROM \($0)" }.joined(separator: " UNION ")
-        return try Set(String.fetchAll(db, sql: union))
+        var accountIDs = Set<String>()
+        for table in Self.accountTables {
+            var next = try String.fetchOne(db, sql: "SELECT min(accountID) FROM \(table)")
+            while let accountID = next {
+                accountIDs.insert(accountID)
+                next = try String.fetchOne(db, sql: Self.nextAccountSQL(table: table), arguments: [accountID])
+            }
+        }
+        return accountIDs
     }
 
-    private static let accountTables = [
+    /// The first account in `table` after the one given.
+    static func nextAccountSQL(table: String) -> String {
+        "SELECT min(accountID) FROM \(table) WHERE accountID > ?"
+    }
+
+    static let accountTables = [
         "threadLabel", "thread", "attachment", "messageBody", "messageLabel", "effectiveLabel",
         "messageCalendar", "message", "label",
         "pendingAction", "syncState", "draft", "localDraft", "cacheHold", "labelAlias", "wokenThread",
@@ -939,7 +953,7 @@ public struct PendingChangeSummary: Sendable, Equatable {
 extension MailCache {
     /// The account's queue summary, again whenever it changes.
     public func pendingChangeSummary(accountID: String) -> AsyncThrowingStream<PendingChangeSummary, any Error> {
-        observe { db in try CacheTransaction(db: db).pendingChangeSummary(accountID: accountID) }
+        observe(region: ObservedTables.pendingChanges) { db in try CacheTransaction(db: db).pendingChangeSummary(accountID: accountID) }
     }
 }
 

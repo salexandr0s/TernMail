@@ -61,7 +61,9 @@ import Testing
             let recurring = try #require(fixture.model.events.first(where: { $0.event.recurringEventId == "planning" }))
             let range = CalendarInteraction.moving(recurring, to: recurring.start.addingTimeInterval(1800), calendar: fixture.model.calendar)
             try await fixture.model.change(recurring, to: range)
-            for _ in 0..<100 where fixture.model.editor == nil { try await Task.sleep(for: .milliseconds(10)) }
+            // The editor opens on the cached occurrence at once; the series follows.
+            #expect(fixture.model.editor?.source?.id == recurring.id)
+            for _ in 0..<100 where fixture.model.editor?.seriesMaster == nil { try await Task.sleep(for: .milliseconds(10)) }
             let draft = try #require(fixture.model.editor)
             #expect(draft.source?.id == recurring.id)
             #expect(draft.seriesMaster?.id == "planning")

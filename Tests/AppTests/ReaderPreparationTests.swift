@@ -291,6 +291,30 @@ import Testing
         finder.hide()
     }
 
+    @Test func findSkipsOnlyIndexedMessagesThatCannotHoldTheFirstWord() async throws {
+        let finder = ReaderFindModel()
+        finder.order = ["plain", "accented", "unindexed"]
+        finder.setSearchableText("Nothing to see", for: "plain")
+        finder.setSearchableText("Le RÉSUMÉ est prêt", for: "accented")
+        finder.query = "resume pret"; finder.show()
+        finder.find(forward: true)
+        try await waitUntil { finder.requestRevision > 0 }
+        #expect(finder.requestedMessageID == "accented")
+        // A message with no index yet stays a candidate.
+        finder.find(forward: false)
+        try await waitUntil { finder.requestedMessageID == "unindexed" }
+        // New text replaces what an earlier search folded.
+        finder.setSearchableText("Still nothing", for: "unindexed")
+        finder.setSearchableText("A zebra crossing", for: "plain")
+        finder.query = "ZEBRA"
+        finder.find(forward: true)
+        try await waitUntil { finder.requestedMessageID == "plain" }
+        finder.query = "giraffe"
+        finder.find(forward: true)
+        #expect(finder.cameUpEmpty)
+        finder.hide()
+    }
+
     private func body(_ id: String) -> MessageBodyRecord {
         .init(accountID: "account", messageID: id, html: "<p>Message \(id)</p><img src='cid:logo'>", plainText: nil, fetchedAt: .distantPast)
     }

@@ -58,7 +58,7 @@ extension MailCache {
     /// queued label changes applied. A label Gmail hasn't created yet has a
     /// temporary ID (`LabelRules.isTemporary`).
     public func labels(accountID: String) -> AsyncThrowingStream<[LabelRecord], any Error> {
-        observe { db in try CacheTransaction(db: db).displayedLabels(accountID: accountID) }
+        observe(region: ObservedTables.labels) { db in try CacheTransaction(db: db).displayedLabels(accountID: accountID) }
     }
 
     /// Threads listed under `labelID`, newest first. A conversation a snooze
@@ -71,10 +71,32 @@ extension MailCache {
     /// a combined mailbox. Each account's rows come off `threadLabel_list` in
     /// order and SQLite merges them, so no account is read past the page.
     public func threads(accountIDs: [String], labelID: String, limit: Int) -> AsyncThrowingStream<[ThreadRecord], any Error> {
-        guard !accountIDs.isEmpty else { return observe { _ in [] } }
+        // No account means no read, so there is no table to follow.
+        guard !accountIDs.isEmpty else { return observe(region: []) { _ in [] } }
         let sql = ThreadListQuery.sql(accountCount: accountIDs.count)
         let arguments = ThreadListQuery.arguments(accountIDs: accountIDs, labelID: labelID, limit: limit)
-        return observe { db in try ThreadRecord.fetchAll(db, sql: sql, arguments: arguments) }
+        return observe(region: ObservedTables.threadList) { db in try ThreadRecord.fetchAll(db, sql: sql, arguments: arguments) }
+    }
+
+    /// The account's conversations for a caller that wants them once and
+    /// doesn't follow them, as Spotlight indexing does: those under the
+    /// first of `labelIDs`, then those under each later label that aren't
+    /// listed yet, newest first within a label and up to `limit` in all.
+    /// The labels are read from one snapshot on a reader connection.
+    public func threadsListed(accountID: String, underEachOf labelIDs: [String], limit: Int) async throws -> [ThreadRecord] {
+        let sql = ThreadListQuery.sql(accountCount: 1)
+        return try await read { tx in
+            var threads: [ThreadRecord] = []
+            var seen = Set<String>()
+            for labelID in labelIDs where threads.count < limit {
+                let arguments = ThreadListQuery.arguments(accountIDs: [accountID], labelID: labelID, limit: limit)
+                for thread in try ThreadRecord.fetchAll(tx.db, sql: sql, arguments: arguments)
+                where threads.count < limit && seen.insert(thread.id).inserted {
+                    threads.append(thread)
+                }
+            }
+            return threads
+        }
     }
 
     /// A mailbox's newest `limit` conversations under `labelID` across the
@@ -86,19 +108,21 @@ extension MailCache {
     /// The page `builder` describes, read again after each write that
     /// changes it. A write that leaves the page as it was sends nothing.
     public func listPage(_ builder: MailListPageBuilder) -> AsyncThrowingStream<MailListPage, any Error> {
-        observe(latestOnly: true) { db in try builder.page(in: CacheTransaction(db: db)) }
+        observe(latestOnly: true, region: ObservedTables.listPage(builder)) { db in try builder.page(in: CacheTransaction(db: db)) }
     }
 
     /// A conversation as the reader shows it. Its labels are the stored
     /// effective labels, so a queue row that changes state without changing
     /// a label wakes no reader.
     public func thread(accountID: String, threadID: String) -> AsyncThrowingStream<ThreadDetail?, any Error> {
-        observe { db in try CacheTransaction(db: db).threadDetail(threadID: threadID, accountID: accountID) }
+        observe(region: ObservedTables.threadDetail) { db in
+            try CacheTransaction(db: db).threadDetail(threadID: threadID, accountID: accountID)
+        }
     }
 
     /// Drafts and sends that haven't reached Gmail, oldest first.
     public func outbox(accountID: String) -> AsyncThrowingStream<[DraftActivity], any Error> {
-        observe { db in
+        observe(region: ObservedTables.drafts) { db in
             let transaction = CacheTransaction(db: db)
             return try transaction.localDrafts(accountID: accountID)
                 .map { try transaction.draftActivity($0) }
@@ -108,7 +132,7 @@ extension MailCache {
 
     /// One local draft and its queue rows, or nil once it is gone.
     public func draftActivity(localDraftID: String) -> AsyncThrowingStream<DraftActivity?, any Error> {
-        observe { db in
+        observe(region: ObservedTables.drafts) { db in
             let transaction = CacheTransaction(db: db)
             return try transaction.localDraft(id: localDraftID).map(transaction.draftActivity)
         }
@@ -184,11 +208,24 @@ extension MailCache {
         try await writer.read { db in try SyncStateRecord.fetchOne(db, key: accountID) }
     }
 
+    /// `fetch`'s value, and its value again after each write that changes it.
+    ///
+    /// `region` names every table `fetch` can read (`ObservedTables`). After
+    /// a write to one of them has committed, the cache reads the value again
+    /// on a reader connection, so no other write waits for the read. A table
+    /// missing from `region` is a change the stream never shows.
+    ///
+    /// `region` has no default on purpose. Without the tables, GRDB records
+    /// them from each read and has to read again on the writer inside the
+    /// commit, where every other write waits for it. An in-memory cache has
+    /// one connection and gives the same values.
     func observe<T: Sendable & Equatable>(
         latestOnly: Bool = false,
+        region: [String],
         _ fetch: @escaping @Sendable (Database) throws -> T
     ) -> AsyncThrowingStream<T, any Error> {
-        let values = ValueObservation.tracking(fetch).removeDuplicates().values(in: writer)
+        let values = ValueObservation.tracking(regions: region.map { Table($0) }, fetch: fetch)
+            .removeDuplicates().values(in: writer)
         // Large UI snapshots replace previous state. A slow renderer should
         // catch up to the newest page, not retain and prepare every sync step.
         // Event-like consumers keep the default lossless delivery.
@@ -205,6 +242,70 @@ extension MailCache {
             }
             continuation.onTermination = { _ in task.cancel() }
         }
+    }
+}
+
+/// The tables each observed read can touch, for `MailCache.observe`. A list
+/// holds every branch of its read, since a read that returns early touches
+/// fewer. `MessageListEntryTests` compares each list whose read has more
+/// than one statement with what the read records. The others name the
+/// tables of the one statement beside them.
+enum ObservedTables {
+    /// `displayedLabels`.
+    static let labels = ["label", "pendingAction"]
+    /// `ThreadListQuery`.
+    static let threadList = ["threadLabel", "thread"]
+    /// `threadDetail`.
+    static let threadDetail = ["thread", "message", "effectiveLabel", "messageBody", "attachment", "draft", "localDraft", "messageLabel"]
+    /// `draftActivity`, for one draft or the Outbox.
+    static let drafts = ["localDraft", "pendingAction", "outgoingAttachment"]
+    /// `pendingChangeSummary`, and the failed rows of `failedActions`.
+    static let pendingChanges = ["pendingAction"]
+    /// `unreadCounts`.
+    static let unreadCounts = ["unreadDelta", "label"]
+    /// `threadLabels`: the displayed labels, the queue, the drafts a send
+    /// hides, then each message's labels.
+    static let threadLabels = labels + ["localDraft", "draft", "message", "messageLabel"]
+    /// `searchThreads`. A query that can't run locally reads only `thread`.
+    static let searchThreads = ["thread", "message", "messageText", "messageSearch", "messageLabel", "label"]
+    /// `snoozedThreads`.
+    static let snoozedThreads = ["cacheHold", "messageSnoozeHold", "thread"]
+    /// `wokenThreadIDs`.
+    static let wokenThreads = ["wokenThread"]
+    /// `calendarInvitationState`.
+    static let calendarInvitations = ["messageCalendar", "invitationReply"]
+    /// `mimeResources`.
+    static let readingResources = ["mimeResource"]
+    /// `readReceiptStatuses`, for one message or a list.
+    static let readReceipts = ["readReceiptRequest", "readReceiptRecipient", "readReceiptEvent"]
+    /// `contactPhoto`.
+    static let contactPhoto = ["contactPhoto", "contactEmail"]
+    /// `newsletters`. Only the scan state is read until a scan has begun.
+    static let newsletters = ["newsletterScanState", "newsletterMessage", "newsletterOutcome"]
+    /// `attachmentLibrary`. The labels are read for a label filter.
+    static let attachmentLibrary = ["attachmentLibrary", "attachmentLibraryLabel"]
+    /// `attachmentIndexStates`.
+    static let attachmentIndexStates = ["attachmentIndexState"]
+
+    /// `mailAnalytics`. Bodies are read only for one sender's profile, so
+    /// the window for every sender isn't read again as bodies arrive.
+    static func mailAnalytics(_ query: MailAnalyticsQuery) -> [String] {
+        let tables = ["mailAnalyticsMessage", "mailAnalyticsContact", "ownAddress", "mailAnalyticsState"]
+        return query.contactAddress == nil ? tables : tables + ["messageBody"]
+    }
+
+    /// `messageListEntries`. Snooze holds are read for the snoozed list, and
+    /// labels and search text for a query.
+    static func messageList(matching query: SearchQuery?, snoozedOnly: Bool) -> [String] {
+        var tables = ["message", "effectiveLabel", "attachment", "localDraft", "draft", "messageLabel"]
+        if snoozedOnly { tables += ["cacheHold", "messageSnoozeHold"] }
+        if query != nil { tables += ["label", "messageText", "messageSearch"] }
+        return tables
+    }
+
+    /// `MailListPageBuilder.page`: the conversations, then their messages.
+    static func listPage(_ builder: MailListPageBuilder) -> [String] {
+        threadList + messageList(matching: builder.query, snoozedOnly: builder.snoozedOnly)
     }
 }
 
@@ -339,6 +440,24 @@ extension CacheTransaction {
             rows: try composeRows(localDraftID: draft.id),
             attachments: try outgoingAttachments(localDraftID: draft.id)
         )
+    }
+
+    /// Which of `ids` the account has cached, looked up by key 400 at a
+    /// time. A sync that asks about the few messages a history page names
+    /// uses this instead of `cachedMessageIDs(accountID:)`, which loads every
+    /// cached ID.
+    public func cachedMessageIDs(among ids: some Collection<String>, accountID: String) throws -> Set<String> {
+        let ids = Array(ids)
+        var cached = Set<String>()
+        for start in stride(from: 0, to: ids.count, by: 400) {
+            let chunk = ids[start..<min(start + 400, ids.count)]
+            cached.formUnion(try String.fetchSet(
+                db,
+                sql: "SELECT id FROM message WHERE accountID = ? AND id IN (\(databaseQuestionMarks(count: chunk.count)))",
+                arguments: StatementArguments([accountID] + chunk)
+            ))
+        }
+        return cached
     }
 
     /// Folds the addresses of up to `limit` messages of the account that

@@ -16,7 +16,7 @@ struct WorkspaceToolbar: CustomizableToolbarContent {
     let today: TodayModel
     let accounts: AccountPreferencesModel?
     let section: WorkspaceSection
-    let width: CGFloat
+    let layout: WorkspaceToolbarLayout
     let sidebar: SidebarToggle?
     let onSelect: (WorkspaceSection) -> Void
     let onNewMessage: () -> Void
@@ -30,10 +30,7 @@ struct WorkspaceToolbar: CustomizableToolbarContent {
 
     private var showsProfile: Bool {
         (section == .mail || section == .followUps || section == .today) && accounts?.profiles.isEmpty == false
-    }
-    private var compactActions: Bool {
-        let reservedWidth = Tokens.Layout.toolbarMenuWidth * (showsProfile ? 2 : 1)
-        return width - reservedWidth < Tokens.Layout.compactToolbarWidth
+            && !layout.foldsProfile
     }
 
     var body: some CustomizableToolbarContent {
@@ -58,18 +55,20 @@ struct WorkspaceToolbar: CustomizableToolbarContent {
         ToolbarSpacer(.flexible, placement: .primaryAction)
         ToolbarItem(id: "mail.profile", placement: .primaryAction) {
             if let accounts {
-                ProfilePicker(model: accounts, isCompact: width < Tokens.Layout.wideToolbarWidth)
+                ProfilePicker(model: accounts, isCompact: layout.compactProfile)
             }
         }
         .mailToolbarVisible(showsProfile)
-        MailToolbar(mailbox: mailbox, reply: onReply, isCompact: compactActions,
-            foldsReplies: width < Tokens.Layout.replyMenuFoldWidth, isVisible: section == .mail)
+        MailToolbar(mailbox: mailbox, reply: onReply, isCompact: layout.compactActions,
+            foldsReplies: layout.foldsReplies, foldedProfiles: layout.foldsProfile ? accounts : nil,
+            isVisible: section == .mail)
         // Mail's permanent spaces fall in the open area before other sections.
-        CalendarToolbar(model: calendar, isCompact: compactActions)
-            .mailToolbarVisible(section == .calendar && !isCalendarUtilityCompact)
-        AttachmentLibraryToolbar(state: library, isCompact: compactActions, isVisible: section == .attachments)
+        CalendarToolbar(model: calendar, isCompact: layout.compactActions, foldsToday: layout.foldsCalendarToday,
+            foldsNavigation: layout.foldsCalendarNavigation,
+            isVisible: section == .calendar && !isCalendarUtilityCompact)
+        AttachmentLibraryToolbar(state: library, isCompact: layout.compactActions, isVisible: section == .attachments)
         WorkspaceSearchToolbar(mailbox: mailbox, calendar: calendar, libraryToolbar: library, followUps: followUps, today: today,
-            section: section, isFolded: width < Tokens.Layout.searchFoldWidth)
+            section: section, isFolded: layout.foldsSearch)
             .mailToolbarVisible(!isCalendarUtilityCompact)
         WorkspaceAssistantToolbar(isAssistantPresented: isAssistantPresented,
             onToggleAssistant: onToggleAssistant, isAssistantAvailable: isAssistantAvailable,

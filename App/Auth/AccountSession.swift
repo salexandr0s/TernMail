@@ -42,6 +42,20 @@ final class AccountSession: AccessTokenProvider {
         return session
     }
 
+    /// The saved sessions of `accountIDs`, by account ID. An account with no
+    /// saved session has no entry. The Keychain reads are queued together,
+    /// so one account's session is unarchived while the next one's is read.
+    static func restore(accountIDs: [String]) async -> [String: AccountSession] {
+        await withTaskGroup(of: (String, AccountSession?).self) { group in
+            for accountID in accountIDs {
+                group.addTask { (accountID, await restore(accountID: accountID)) }
+            }
+            var sessions: [String: AccountSession] = [:]
+            for await (accountID, session) in group { sessions[accountID] = session }
+            return sessions
+        }
+    }
+
     var isSignedIn: Bool { authState != nil }
 
     /// The scopes the stored grant covers. Nil without a session.

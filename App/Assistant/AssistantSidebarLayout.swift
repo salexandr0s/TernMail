@@ -18,6 +18,11 @@ struct AssistantSidebarLayout {
     let mailWidth: CGFloat
     let hidesMailboxNavigation: Bool
 
+    /// A dragged width, kept within the sidebar's limits.
+    static func clampedWidth(_ width: CGFloat) -> CGFloat {
+        min(max(width, Tokens.Assistant.sidebarMinWidth), Tokens.Assistant.sidebarMaxWidth)
+    }
+
     init(availableWidth: CGFloat, preferredWidth: CGFloat, isPresented: Bool) {
         let width = max(0, availableWidth)
         guard isPresented else {
@@ -187,13 +192,18 @@ final class AssistantMailPaneSizing {
 struct AssistantSidebarResizeHandle: NSViewRepresentable {
     let width: CGFloat
     let onResize: (CGFloat) -> Void
+    /// Runs when a drag ends, by the pointer or by an interruption.
+    var onEnd: () -> Void = {}
 
     func makeNSView(context: Context) -> ResizeView { ResizeView() }
-    func updateNSView(_ view: ResizeView, context: Context) { view.width = width; view.onResize = onResize }
+    func updateNSView(_ view: ResizeView, context: Context) {
+        view.width = width; view.onResize = onResize; view.onEnd = onEnd
+    }
 
     final class ResizeView: ResizeHandleView {
         var width: CGFloat = 0
         var onResize: ((CGFloat) -> Void)?
+        var onEnd: (() -> Void)?
         private var startX: CGFloat = 0
         private var startWidth: CGFloat = 0
         override func mouseDown(with event: NSEvent) {
@@ -205,6 +215,11 @@ struct AssistantSidebarResizeHandle: NSViewRepresentable {
         override func mouseDragged(with event: NSEvent) {
             guard isDragging, isResizeAvailable else { return }
             onResize?(startWidth + startX - event.locationInWindow.x)
+        }
+        override func cancelInteraction() {
+            let endsDrag = isDragging
+            super.cancelInteraction()
+            if endsDrag { onEnd?() }
         }
     }
 }

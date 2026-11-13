@@ -5,29 +5,43 @@ struct CalendarScheduleView: View {
     @Environment(\.calendarIdentities) private var identities
     @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiate
     @Environment(\.isEnabled) private var isEnabled
+    /// The selection the list shows. `select` sets it.
+    @Environment(\.calendarSelectedEventID) private var shownSelection
     let date: Date
     let calendar: Calendar
     let events: [CalendarDisplayEvent]
-    @Binding var selectedID: String?
+    let select: (String?) -> Void
     let create: (CalendarEventRange) -> Void
     let edit: (CalendarDisplayEvent) -> Void
     let delete: (CalendarDisplayEvent) -> Void
     let duplicate: (CalendarDisplayEvent) -> Void
 
-    private var days: [Date] {
+    private var monthDays: [Date] {
         guard let interval = calendar.dateInterval(of: .month, for: date) else { return [] }
         return CalendarLayout.days(in: interval, calendar: calendar)
-            .filter { !events(on: $0).isEmpty }
     }
 
-    private func events(on day: Date) -> [CalendarDisplayEvent] {
-        if let presentation, presentation.matches(calendar) { return presentation.day(day)?.events ?? [] }
+    /// `prepared` is the snapshot once it covers this month. Until then the
+    /// snapshot of another range, such as the week just left, would list only
+    /// its own days.
+    private func events(on day: Date, in prepared: CalendarPresentationSnapshot?) -> [CalendarDisplayEvent] {
+        if let prepared { return prepared.day(day)?.events ?? [] }
         return CalendarLayout.events(events, on: day, calendar: calendar)
     }
 
-    private var selected: CalendarDisplayEvent? { events.first { $0.id == selectedID } }
+    private var selected: CalendarDisplayEvent? { events.first { $0.id == shownSelection } }
+
+    /// Reads the selection the list shows and writes the model's.
+    private var listSelection: Binding<String?> {
+        let shown = shownSelection
+        let select = select
+        return Binding(get: { shown }, set: { select($0) })
+    }
 
     var body: some View {
+        let monthDays = self.monthDays
+        let prepared = presentation.flatMap { $0.covers(monthDays, calendar: calendar) ? $0 : nil }
+        let days = monthDays.filter { !events(on: $0, in: prepared).isEmpty }
         if days.isEmpty {
             VStack(spacing: Tokens.Space.s4) {
                 TernEmptyState(title: "No Events This Month", systemImage: "calendar",
@@ -39,10 +53,10 @@ struct CalendarScheduleView: View {
             }.frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             ScrollViewReader { proxy in
-                List(selection: $selectedID) {
+                List(selection: listSelection) {
                     ForEach(days, id: \.self) { day in
                         Section {
-                            ForEach(events(on: day)) { event in
+                            ForEach(events(on: day, in: prepared)) { event in
                                 row(event, on: day).tag(event.id)
                             }
                         } header: {
@@ -58,13 +72,13 @@ struct CalendarScheduleView: View {
                     edit(selected)
                     return .handled
                 }
-                .onChange(of: date, initial: true) { _, _ in scrollToDate(proxy) }
-                .onChange(of: days) { _, _ in scrollToDate(proxy) }
+                .onChange(of: date, initial: true) { _, _ in scrollToDate(proxy, in: days) }
+                .onChange(of: days) { _, days in scrollToDate(proxy, in: days) }
             }
         }
     }
 
-    private func scrollToDate(_ proxy: ScrollViewProxy) {
+    private func scrollToDate(_ proxy: ScrollViewProxy, in days: [Date]) {
         if let nearest = days.first(where: { $0 >= calendar.startOfDay(for: date) }) ?? days.last {
             proxy.scrollTo(nearest, anchor: .top)
         }
@@ -101,7 +115,7 @@ struct CalendarScheduleView: View {
         .help(description)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(description)
-        .accessibilityAddTraits(selectedID == event.id ? [.isButton, .isSelected] : .isButton)
+        .accessibilityAddTraits(shownSelection == event.id ? [.isButton, .isSelected] : .isButton)
         .accessibilityAction { if isEnabled { edit(event) } }
     }
 

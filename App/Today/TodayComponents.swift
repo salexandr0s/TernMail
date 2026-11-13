@@ -21,6 +21,13 @@ struct TodayCompactState: View {
     }
 }
 
+/// What a section's content shows: the state it is in and its rows. A section
+/// animates its own content when this changes, and nothing outside it.
+struct TodayContentKey: Equatable {
+    var states: [Bool] = []
+    var ids: [String] = []
+}
+
 struct TodayLoadingStatus: View {
     let text: String
     init(_ text: String) { self.text = text }

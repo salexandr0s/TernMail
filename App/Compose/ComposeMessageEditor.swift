@@ -12,6 +12,7 @@ struct ComposeMessageEditor: View {
             isEditable: model.isEditable,
             font: model.content.composeFont,
             inlineImages: model.inlineImageData,
+            inlinePreviews: model.inlineImagePreviews,
             onDropFiles: { model.attach($0.map(Attachable.dropped)) },
             onFileDropTargetChange: { isFileDropTargeted = $0 }
         ) { model.editor = $0 } onAttach: { model.attach($0, inlineImages: true) } onFocusChange: { model.isEditingMessage = $0 }

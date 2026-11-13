@@ -29,9 +29,16 @@ struct SenderProfileEvidence: Identifiable, Sendable {
 @MainActor @Observable
 final class MailAnalyticsModel {
     private(set) var snapshot: MailAnalyticsSnapshot?
+    /// The date range `snapshot` covers. It trails the requested range while a new one loads.
+    private(set) var loadedPeriod: MailAnalyticsPeriod?
     private(set) var profileLinks: [SenderProfileEvidence] = []
+    /// False until the sender's signatures have been read for links. An empty
+    /// `profileLinks` then means there are none.
+    private(set) var didLoadProfileLinks = false
     private(set) var receipts: [ReadReceiptStatus] = []
     private(set) var isLoading = true
+    /// True while new results load over the ones on screen.
+    private(set) var isRefreshing = false
     private(set) var isLoadingHistory = false
     private(set) var historyPagesLoaded = 0
     private(set) var historyAccountName: String?
@@ -39,6 +46,8 @@ final class MailAnalyticsModel {
     private(set) var receiptError: String?
     private(set) var historyError: String?
     @ObservationIgnored private var revision = UUID()
+    /// The accounts and sender the published results belong to.
+    @ObservationIgnored private var resultScope: ResultScope?
     @ObservationIgnored private var historyTask: Task<Void, Never>?
     @ObservationIgnored private var receiptTasks: [Task<Void, Never>] = []
     @ObservationIgnored private var receiptsByAccount: [String: [ReadReceiptStatus]] = [:]
@@ -50,40 +59,72 @@ final class MailAnalyticsModel {
         self.historyPage = historyPage
     }
 
-    func observe(cache: MailCache, query: MailAnalyticsQuery) async {
+    private struct ResultScope: Equatable {
+        let accountIDs: [String]
+        let contactAddress: String?
+    }
+
+    /// Loads the numbers for `query` and keeps them current. They are published in one
+    /// update with the sender's signature links. With `linksFollow` the numbers are
+    /// published as soon as they load, and `didLoadProfileLinks` turns true once the
+    /// signatures have been read.
+    func observe(cache: MailCache, query: MailAnalyticsQuery, linksFollow: Bool = false) async {
         stop()
         let request = UUID()
         revision = request
-        snapshot = nil
-        profileLinks = []
-        receipts = []
-        receiptsByAccount = [:]
+        // A new date range for the same accounts and sender keeps the loaded results on
+        // screen until its own arrive. Results for other accounts or another sender are
+        // cleared before anything loads.
+        let scope = ResultScope(accountIDs: query.accountIDs, contactAddress: query.contactAddress)
+        if resultScope != scope {
+            resultScope = scope
+            snapshot = nil
+            loadedPeriod = nil
+            profileLinks = []
+            didLoadProfileLinks = false
+            receipts = []
+            receiptsByAccount = [:]
+        }
         error = nil
         receiptError = nil
         historyError = nil
-        isLoading = true
+        isLoading = snapshot == nil
+        isRefreshing = snapshot != nil
         observeReceipts(cache: cache, query: query, revision: request)
-        var previousSources: [MailAnalyticsProfileSource] = []
+        var previousSources: [MailAnalyticsProfileSource]?
         do {
             for try await value in cache.observeMailAnalytics(query: query) {
                 guard revision == request, !Task.isCancelled else { return }
-                snapshot = value
-                isLoading = false
-                if value.profileSources != previousSources {
-                    previousSources = value.profileSources
-                    let sources = value.profileSources
-                    let links = await Task.detached(priority: .userInitiated) {
+                let sources = value.profileSources
+                let linksAreCurrent = sources == previousSources
+                previousSources = sources
+                if linksFollow || linksAreCurrent { publish(value, period: query.period) }
+                if linksAreCurrent { continue }
+                var links: [SenderProfileEvidence] = []
+                if !sources.isEmpty {
+                    // Reading signatures parses message HTML, so it runs off the main actor.
+                    links = await Task.detached(priority: .userInitiated) {
                         Self.extractLinks(sources)
                     }.value
                     guard revision == request, !Task.isCancelled else { return }
-                    profileLinks = links
                 }
+                if !linksFollow { publish(value, period: query.period) }
+                profileLinks = links
+                didLoadProfileLinks = true
             }
         } catch {
             guard revision == request, !Task.isCancelled else { return }
             isLoading = false
+            isRefreshing = false
             self.error = "Couldn't load mail analytics. Try again."
         }
+    }
+
+    private func publish(_ value: MailAnalyticsSnapshot, period: MailAnalyticsPeriod) {
+        snapshot = value
+        loadedPeriod = period
+        isLoading = false
+        isRefreshing = false
     }
 
     func loadHistory(accounts: [AccountMailbox], restart: Bool) {
@@ -156,6 +197,7 @@ final class MailAnalyticsModel {
         historyTask = nil
         receiptTasks.forEach { $0.cancel() }
         receiptTasks = []
+        isRefreshing = false
         isLoadingHistory = false
         historyAccountName = nil
     }

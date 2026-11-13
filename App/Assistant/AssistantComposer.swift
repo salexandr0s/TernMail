@@ -5,7 +5,6 @@ import SwiftUI
 struct AssistantComposer: View {
     @Bindable var model: AssistantModel
     let setup: AssistantSetupPrompt?
-    let canSubmit: Bool
     @FocusState.Binding var isFocused: Bool
     let onSubmit: () -> Void
     let onSettings: () -> Void
@@ -14,7 +13,7 @@ struct AssistantComposer: View {
     var body: some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s3) {
             input
-            if let setup, !model.messages.isEmpty {
+            if let setup, model.hasMessages {
                 VStack(alignment: .leading, spacing: Tokens.Space.s1) {
                     Text(setup.detail).font(.caption).foregroundStyle(.secondary)
                     Button(setup.action, action: onSetup)
@@ -33,11 +32,11 @@ struct AssistantComposer: View {
         .padding(Tokens.Space.s3)
         .background(Tokens.Surface.primary, in: RoundedRectangle(cornerRadius: Tokens.Radius.lg))
         .ternOutline(radius: Tokens.Radius.lg, focus: isFocused ? Color.accentColor : nil)
-        .ternAnimation(value: setup != nil && !model.messages.isEmpty)
+        .ternAnimation(value: setup != nil && model.hasMessages)
     }
 
     private var input: some View {
-        TextField(model.messages.isEmpty ? "Ask about mail or calendar…" : "Ask a follow-up…",
+        TextField(model.hasMessages ? "Ask a follow-up…" : "Ask about mail or calendar…",
                   text: $model.composerText, axis: .vertical)
             .font(.body).textFieldStyle(.plain).lineLimit(2...6)
             .padding(.horizontal, Tokens.Space.s1)
@@ -138,6 +137,11 @@ struct AssistantComposer: View {
             .font(.body.weight(.semibold))
             .frame(width: Tokens.Control.iconButton, height: Tokens.Control.iconButton)
             .contentShape(Circle())
+    }
+
+    /// Computed here so typing redraws the composer and not the conversation.
+    private var canSubmit: Bool {
+        setup == nil && !model.hasPendingScopeChange && model.hasComposerText
     }
 
     private var modelName: String {

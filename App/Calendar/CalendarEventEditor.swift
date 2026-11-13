@@ -12,6 +12,10 @@ struct CalendarEventEditor: View {
     let knownExceptionCount: Int?
     let saveTitle: String?
     let additionalRecipients: [String]
+    /// The series of a repeating event, which arrives after the editor has
+    /// opened on the cached occurrence. `draft` is a copy, so it comes in here.
+    let seriesMaster: GoogleCalendarEvent?
+    let isLoadingSeries: Bool
     @State private var title: String
     @State private var location: String
     @State private var notes: String
@@ -32,10 +36,14 @@ struct CalendarEventEditor: View {
     @State private var showsDetails: Bool
 
     init(draft: CalendarEditorDraft, calendars: [CalendarDisplayCalendar], calendar: Calendar,
-         knownExceptionCount: Int? = nil, saveTitle: String? = nil, additionalRecipients: [String] = [], save: @escaping (CalendarEditorDraft) async throws -> Void) {
+         knownExceptionCount: Int? = nil, saveTitle: String? = nil, additionalRecipients: [String] = [],
+         seriesMaster: GoogleCalendarEvent? = nil, isLoadingSeries: Bool = false,
+         save: @escaping (CalendarEditorDraft) async throws -> Void) {
         self.knownExceptionCount = knownExceptionCount
         self.saveTitle = saveTitle
         self.additionalRecipients = additionalRecipients
+        self.seriesMaster = seriesMaster
+        self.isLoadingSeries = isLoadingSeries
         _draft = State(initialValue: draft); self.calendars = calendars; self.calendar = calendar; self.save = save
         let event = draft.event
         let start = event.start?.resolvedDate(fallbackTimeZone: calendar.timeZone) ?? .now
@@ -89,6 +97,24 @@ struct CalendarEventEditor: View {
         .interactiveDismissDisabled(isSaving)
         .onChange(of: notificationRecipients) { _, _ in confirmedNotifications = false }
         .onChange(of: draft.editScope) { _, _ in confirmedNotifications = false }
+        .onChange(of: seriesMaster, initial: true) { _, master in if let master { adopt(seriesMaster: master) } }
+    }
+
+    /// Completes a draft that opened on the cached occurrence with what the
+    /// series brings: its master and its repeat rule. Nothing here can have been
+    /// edited yet, because the rule's control and the series scopes stay
+    /// disabled until the master is set.
+    private func adopt(seriesMaster master: GoogleCalendarEvent) {
+        guard draft.seriesMaster == nil else { return }
+        draft.seriesMaster = master
+        if let source = draft.source {
+            var event = source.event
+            event.recurrence = master.recurrence
+            draft.source = source.replacingEvent(event)
+        }
+        draft.event.recurrence = master.recurrence
+        recurrence = master.recurrence ?? []
+        if !recurrence.isEmpty { showsOptions = true }
     }
 
     private var heading: some View {
@@ -234,8 +260,13 @@ struct CalendarEventEditor: View {
                     }
                 }.disabled(draft.recovery != nil)
                 if draft.seriesMaster == nil {
-                    Text("Series details are unavailable. Refresh before editing all or following events.")
-                        .font(.caption).foregroundStyle(.secondary)
+                    if isLoadingSeries {
+                        Text("Loading series details…").font(.caption).foregroundStyle(.secondary)
+                            .ternDelayedLoading()
+                    } else {
+                        Text("Series details are unavailable. Refresh before editing all or following events.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                 }
                 if draft.editScope == .following {
                     Text(draft.isDeletion ? "This event and all following occurrences will be deleted." : (knownExceptionCount ?? draft.followingExceptionsCount).map { "This splits the series. \($0) later exceptions may be reset." }

@@ -78,6 +78,19 @@ import Testing
         #expect(await fixture.scheduler.deliveries.count == 1)
     }
 
+    @Test func replyChecksRunAfterLoadingAndKeepTheLastResultWhileRechecking() async throws {
+        let fixture = try await FollowUpsFixture()
+        let entry = try await fixture.create(kinds: [.noReply])
+        let model = fixture.model()
+        defer { model.stop() }
+        fixture.watched = (model, entry)
+        await model.refresh()
+        await model.refresh()
+        #expect(fixture.statesAtRead == [.checking, .checked(fixture.time)])
+        #expect(fixture.loadingAtRead == [false, false])
+        #expect(model.replyCheckState(for: entry) == .checked(fixture.time))
+    }
+
     @Test func deliveredReminderDoesNotRepeatAndLaterReplyStillReconciles() async throws {
         let fixture = try await FollowUpsFixture()
         _ = try await fixture.create(kinds: [.noReply])
@@ -243,6 +256,10 @@ import Testing
     var failRead = false
     var snapshot: FollowUpThreadSnapshot
     var drafted: [CommitmentRecord] = []
+    /// What the watched row and the model's loading flag show while a thread is read.
+    var watched: (model: FollowUpsModel, entry: CommitmentEntry)?
+    var statesAtRead: [FollowUpReplyCheckState?] = []
+    var loadingAtRead: [Bool] = []
     var source: MessageRecord { snapshot.messages[0] }
 
     init() async throws {
@@ -274,6 +291,10 @@ import Testing
     func model() -> FollowUpsModel {
         FollowUpsModel(store: { self.store }, visibleAccountIDs: { self.visible }, canReadAccount: { _ in !self.failRead },
             loadThread: { account, thread in
+                if let watched = self.watched {
+                    self.statesAtRead.append(watched.model.replyCheckState(for: watched.entry))
+                    self.loadingAtRead.append(watched.model.isLoading)
+                }
                 guard !self.failRead, account == self.snapshot.accountID, thread == self.snapshot.threadID else {
                     throw FollowUpModelError.unavailable
                 }

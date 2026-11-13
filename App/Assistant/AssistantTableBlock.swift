@@ -5,7 +5,15 @@ import SwiftUI
 /// line. Expansion belongs to the block so resizing cannot discard that choice.
 struct AssistantTableBlock: View {
     let block: AssistantMarkdown.Block
+    /// Measured once for the block. `body` runs again for the row toggle, and
+    /// `ViewThatFits` asks for both layouts.
+    private let columnWidths: [CGFloat]
     @State private var showsAll = false
+
+    init(block: AssistantMarkdown.Block) {
+        self.block = block
+        columnWidths = Self.measuredColumnWidths(for: block.rows)
+    }
 
     private var header: AssistantMarkdown.Row? { block.rows.first(where: \.isHeader) }
     private var dataRows: [AssistantMarkdown.Row] { block.rows.filter { !$0.isHeader } }
@@ -49,9 +57,9 @@ struct AssistantTableBlock: View {
 
     /// Resolve widths before Grid measures row heights. A max-width-only cell
     /// can be measured on one line, then wrap beyond its allocated row later.
-    private var columnWidths: [CGFloat] {
-        var widths = Array(repeating: Tokens.Space.s4, count: block.rows.map { $0.cells.count }.max() ?? 0)
-        for row in block.rows {
+    private static func measuredColumnWidths(for rows: [AssistantMarkdown.Row]) -> [CGFloat] {
+        var widths = Array(repeating: Tokens.Space.s4, count: rows.map { $0.cells.count }.max() ?? 0)
+        for row in rows {
             let size = NSFont.preferredFont(forTextStyle: row.isHeader ? .caption1 : .callout).pointSize
             for (column, cell) in row.cells.enumerated() {
                 let text = NSMutableAttributedString(string: "")

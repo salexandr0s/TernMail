@@ -13,7 +13,7 @@ struct AttachmentLibraryDestination: View {
 
     var body: some View {
         TernSidebarSplit(isPresented: toolbar.showsSidebar, sidebarWidth: $toolbar.sidebarWidth,
-                         minimumWidth: Tokens.Layout.sidebarMinWidth, maximumWidth: Tokens.Layout.sidebarMaxWidth) {
+                         minimumWidth: Tokens.Layout.sidebarMinWidth, maximumWidth: toolbar.sidebarMaximumWidth) {
             SidebarView(mailbox: mailbox)
         } detail: {
             AttachmentLibraryView(model: model, viewMode: toolbar.viewMode,
@@ -37,7 +37,7 @@ struct AttachmentLibraryDestination: View {
         .padding(.top, Tokens.Border.hairline)
         .clipped()
         .onGeometryChange(for: Bool.self) { $0.size.width < Tokens.Layout.sidebarCompactWidth } action: {
-            toolbar.updateCompact($0)
+            toolbar.updateNarrow($0)
         }
         .toolbar(removing: .sidebarToggle)
         .modifier(MailNoticeOverlay(mailbox: mailbox))

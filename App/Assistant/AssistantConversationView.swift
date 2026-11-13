@@ -82,6 +82,7 @@ struct AssistantConversationView<Welcome: View>: View {
                              onRetry: { scrollTracking.followLatest(); model.retry(message.id) },
                              onOpenSource: onOpenSource, onOpenSourceInNewWindow: openInNewWindow,
                              onOpenDraft: onOpenDraft, model: model)
+            .equatable()
         if !message.calendarProposals.isEmpty || !message.availabilityChoices.isEmpty {
             AssistantCalendarActionsView(message: message, model: model)
         }

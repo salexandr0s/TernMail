@@ -9,7 +9,9 @@ extension MailCache {
 
     public func observeReadReceiptStatus(accountID: String, rfcMessageID: String)
         -> AsyncThrowingStream<ReadReceiptStatus?, any Error> {
-        observe { try CacheTransaction(db: $0).readReceiptStatus(accountID: accountID, rfcMessageID: rfcMessageID) }
+        observe(region: ObservedTables.readReceipts) {
+            try CacheTransaction(db: $0).readReceiptStatus(accountID: accountID, rfcMessageID: rfcMessageID)
+        }
     }
 
     public func readReceiptStatuses(accountID: String, recipient: String? = nil, limit: Int = 50) async throws -> [ReadReceiptStatus] {
@@ -18,7 +20,9 @@ extension MailCache {
 
     public func observeReadReceiptStatuses(accountID: String, recipient: String? = nil, limit: Int = 50)
         -> AsyncThrowingStream<[ReadReceiptStatus], any Error> {
-        observe { try CacheTransaction(db: $0).readReceiptStatuses(accountID: accountID, recipient: recipient, limit: limit) }
+        observe(region: ObservedTables.readReceipts) {
+            try CacheTransaction(db: $0).readReceiptStatuses(accountID: accountID, recipient: recipient, limit: limit)
+        }
     }
 }
 

@@ -66,6 +66,82 @@ import Testing
         #expect(try await snoozed.next()?.map(\.message.id) == ["m1"])
     }
 
+    /// The list has one snooze date popover and one sender popover for all its
+    /// rows. Each opens beside its row, and again when asked right after closing.
+    @Test func theListsSnoozeAndSenderPopoversOpenBesideTheirRowAndAgainRightAfterClosing() async throws {
+        let (mailbox, _) = try await fixture(withStore: true)
+        defer { Task { await mailbox.stop() } }
+        mailbox.listPreferences.conversations = false // one row for each of the two messages
+        let controller = NSHostingController(rootView: ThreadListView(mailbox: mailbox)
+            .frame(width: 520, height: 540).environment(AppModel()))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 520, height: 540),
+            styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentViewController = controller
+        window.makeKeyAndOrderFront(nil)
+        defer { window.close() }
+        func popover() -> NSWindow? {
+            NSApp.windows.first { $0 !== window && $0.isVisible && $0.className.contains("Popover") }
+        }
+        func opened(_ phase: String) async throws -> NSWindow {
+            try await awaitListState(phase, details: { "" }) { popover() != nil }
+            return try #require(popover())
+        }
+        func closed(_ phase: String) async throws {
+            try await awaitListState(phase, details: { "" }) { popover() == nil }
+        }
+        try await awaitListState("realized row", details: { "" }) {
+            self.listTables(in: controller.view).first?.view(atColumn: 0, row: 0, makeIfNecessary: false) != nil
+        }
+        let table = try #require(listTables(in: controller.view).first)
+        let row = try #require(mailbox.listItems.first)
+        let rowOnScreen = window.convertToScreen(table.convert(table.rect(ofRow: 0), to: nil))
+
+        mailbox.showSnoozeDate(forRows: [row.id])
+        var shown = try await opened("snooze date popover")
+        // Pointed at the list instead, it would sit about half the list lower.
+        #expect(abs(shown.frame.midY - rowOnScreen.midY) < 120, "popover=\(shown.frame), row=\(rowOnScreen)")
+        // Escape closes it and clears the targets.
+        shown.cancelOperation(nil)
+        try await closed("snooze date popover closed")
+        #expect(mailbox.snoozeDateTargets == nil)
+        mailbox.showSnoozeDate(forRows: [row.id])
+        _ = try await opened("snooze date popover again")
+        mailbox.snoozeDateTargets = nil
+        try await closed("snooze date popover closed by the model")
+
+        // A row is one accessibility element. Its sender popover is a named action.
+        var seen = Set<ObjectIdentifier>()
+        var show: [() -> Bool] = []
+        func collectSenderActions(_ value: Any) {
+            guard let object = value as? NSObject, seen.insert(ObjectIdentifier(object)).inserted else { return }
+            func attribute(_ name: String) -> Any? {
+                object.responds(to: NSSelectorFromString(name)) ? object.value(forKey: name) : nil
+            }
+            let actions = attribute("accessibilityCustomActions") as? [NSAccessibilityCustomAction] ?? []
+            if let handler = actions.first(where: { $0.name == "Show sender details" })?.handler { show.append(handler) }
+            let children = attribute("accessibilityChildren") as? [Any] ?? []
+            for child in children + NSAccessibility.unignoredChildren(from: children) + ((object as? NSView)?.subviews ?? []) {
+                collectSenderActions(child)
+            }
+        }
+        collectSenderActions(controller.view)
+        try #require(show.count == 2)
+        for attempt in 1...2 {
+            #expect(show[0]())
+            shown = try await opened("sender popover, attempt \(attempt)")
+            #expect(abs(shown.frame.midY - rowOnScreen.midY) < 120, "popover=\(shown.frame), row=\(rowOnScreen)")
+            shown.cancelOperation(nil)
+            try await closed("sender popover closed, attempt \(attempt)")
+        }
+        // Another row's request takes the popover over. Wait for the first row's to go.
+        #expect(show[0]())
+        _ = try await opened("first row's sender popover")
+        #expect(show[1]())
+        try await Task.sleep(for: .milliseconds(400))
+        _ = try await opened("second row's sender popover")
+    }
+
     @Test func messageModeActionsAndLabelPickersRetainOnlyTheSelectedMessage() async throws {
         let (mailbox, cache) = try await fixture()
         defer { Task { await mailbox.stop() } }
@@ -787,6 +863,137 @@ import Testing
         #expect(table.selectedRowIndexes == indexes(for: [sibling]))
     }
 
+    /// A page that changes one conversation must reach that row alone. The
+    /// counters cover every row of the page, on screen or not.
+    @Test func oneChangedConversationUpdatesOnlyItsRow() async throws {
+        let (mailbox, cache) = try await fixture()
+        defer { Task { await mailbox.stop() } }
+        @Sendable func filler(_ index: Int) -> MessageRecord {
+            MessageRecord(accountID: "a", id: "filler-\(index)", threadID: "filler-\(index)", historyID: 1,
+                date: Date(timeIntervalSince1970: Double(-index)), snippet: "", sender: "Sender <sender@example.com>",
+                recipients: "me@example.com", cc: nil, subject: "Scroll row \(index)", sizeEstimate: 1)
+        }
+        let fillerCount = 60
+        try await cache.write { tx in
+            for index in 0..<fillerCount {
+                try tx.upsertMessages([.init(record: filler(index), labelIDs: [SystemLabel.inbox])])
+                try tx.rebuildThreads(["filler-\(index)"], accountID: "a")
+            }
+        }
+        try await awaitListState("page of many conversations", details: { "rows=\(mailbox.listItems.count)" }) {
+            mailbox.isListPresentationReady && mailbox.listItems.count == fillerCount + 1
+        }
+
+        var factoryBuilds = 0
+        var bodies: [MailListRowID: Int] = [:]
+        var rendered: [MailListRowID: MessageListRow.RenderState] = [:]
+        ThreadListView.onRowContentBuild = { owner, _ in if owner === mailbox { factoryBuilds += 1 } }
+        ThreadListView.onRowHostBuild = { owner, id in if owner === mailbox { bodies[id, default: 0] += 1 } }
+        MessageListRow.onSelectionObserverEvaluation = { owner, id in
+            if owner === mailbox { bodies[id, default: 0] += 1 }
+        }
+        MessageListRow.onBodyEvaluation = { owner, id, state in
+            guard owner === mailbox else { return }
+            bodies[id, default: 0] += 1
+            rendered[id] = state
+        }
+        defer {
+            ThreadListView.onRowContentBuild = nil
+            ThreadListView.onRowHostBuild = nil
+            MessageListRow.onSelectionObserverEvaluation = nil
+            MessageListRow.onBodyEvaluation = nil
+        }
+        let viewDefaultsName = "tern.message-list.one-row." + UUID().uuidString
+        let viewDefaults = try #require(UserDefaults(suiteName: viewDefaultsName))
+        defer { viewDefaults.removePersistentDomain(forName: viewDefaultsName) }
+        let controller = NSHostingController(rootView: ThreadListView(mailbox: mailbox)
+            .frame(width: 520, height: 540).environment(AppModel()).defaultAppStorage(viewDefaults))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 520, height: 540),
+            styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentViewController = controller
+        window.orderBack(nil)
+        defer { window.close() }
+        try await awaitListState("native table for the page", details: {
+            "tableRows=\(self.listTables(in: controller.view).map(\.numberOfRows))"
+        }) { (self.listTables(in: controller.view).first?.numberOfRows ?? 0) > fillerCount }
+        let table = try #require(listTables(in: controller.view).first)
+
+        func index(of id: MailListRowID) throws -> Int { try #require(mailbox.listItems.firstIndex { $0.id == id }) }
+        func isOnScreen(_ row: Int) -> Bool {
+            table.view(atColumn: 0, row: row, makeIfNecessary: false) != nil && table.rect(ofRow: row).intersects(table.visibleRect)
+        }
+        /// Lets a trailing list update finish before the counters are read.
+        func settle() async throws { try await Task.sleep(for: .milliseconds(200)) }
+        func star(_ filler: MessageRecord) async throws {
+            try await cache.write { tx in
+                try tx.upsertMessages([.init(record: filler, labelIDs: [SystemLabel.inbox, SystemLabel.starred])])
+                try tx.rebuildThreads([filler.threadID], accountID: filler.accountID)
+            }
+        }
+
+        let shown = MailListRowID(accountID: "a", threadID: "filler-1")
+        let shownIndex = try index(of: shown)
+        try await awaitListState("first rows on screen", details: { "body=\(String(describing: rendered[shown]))" }) {
+            rendered[shown]?.starred == false && isOnScreen(shownIndex)
+        }
+        try await settle()
+
+        factoryBuilds = 0
+        bodies = [:]
+        try await star(filler(1))
+        try await awaitListState("star reaches the row on screen", details: { "body=\(String(describing: rendered[shown]))" }) {
+            rendered[shown]?.starred == true
+        }
+        try await settle()
+        #expect(factoryBuilds == 0, "A change to one row must not enumerate the page again")
+        #expect(bodies.keys.filter { $0 != shown }.isEmpty, "Only the changed row may run its bodies")
+        #expect(bodies[shown, default: 0] > 0)
+        // Swipe titles follow the row's new state.
+        let actions = table.delegate?.tableView?(table, rowActionsForRow: shownIndex, edge: .leading) ?? []
+        #expect(actions.map(\.title) == ["Unread", "Unstar"])
+
+        let hidden = MailListRowID(accountID: "a", threadID: "filler-50")
+        let hiddenIndex = try index(of: hidden)
+        try #require(!isOnScreen(hiddenIndex))
+        factoryBuilds = 0
+        bodies = [:]
+        try await star(filler(50))
+        try await awaitListState("star reaches the row off screen", details: { "rows=\(mailbox.listItems.count)" }) {
+            mailbox.listItems[hiddenIndex].thread.isStarred
+        }
+        try await settle()
+        #expect(factoryBuilds == 0, "A change to one row must not enumerate the page again")
+        #expect(bodies.keys.filter { $0 != hidden }.isEmpty, "Only the changed row may run its bodies")
+        // The row shows the change once it scrolls into view.
+        table.scrollRowToVisible(hiddenIndex)
+        try await awaitListState("changed row scrolls into view", details: { "body=\(String(describing: rendered[hidden]))" }) {
+            rendered[hidden]?.starred == true && isOnScreen(hiddenIndex)
+        }
+
+        // An unread row and the row above it hide their separator, so marking
+        // one conversation unread reaches those two rows.
+        let marked = MailListRowID(accountID: "a", threadID: "filler-3")
+        let markedIndex = try index(of: marked)
+        let above = mailbox.listRowStates[markedIndex - 1].id
+        table.scrollRowToVisible(0)
+        try await awaitListState("first rows back on screen", details: { "row=\(markedIndex)" }) { isOnScreen(markedIndex) }
+        try await settle()
+        factoryBuilds = 0
+        bodies = [:]
+        try await cache.write { tx in
+            try tx.upsertMessages([.init(record: filler(3), labelIDs: [SystemLabel.inbox, SystemLabel.unread])])
+            try tx.rebuildThreads(["filler-3"], accountID: "a")
+        }
+        try await awaitListState("unread reaches the row", details: { "body=\(String(describing: rendered[marked]))" }) {
+            rendered[marked]?.unread == true
+        }
+        try await settle()
+        #expect(mailbox.listRowStates[(markedIndex - 1)...(markedIndex + 1)].map(\.hidesSeparator) == [true, true, false])
+        #expect(factoryBuilds == 0, "A change to one row must not enumerate the page again")
+        #expect(Set(bodies.keys).isSubset(of: [marked, above]), "Only the changed row and the one above it may run their bodies")
+    }
+
     /// Exercises production mail columns and reader lifecycle in a background window.
     @Test func productionMailColumnsSelectBeforeBodyDeliveryAndPreserveSelectionAfterLateCompletion() async throws {
         let gate = SelectionBodyGate()
@@ -950,6 +1157,48 @@ import Testing
         #expect(try await cache.read {
             try $0.currentLabels(threadID: first.threadID, accountID: first.accountID)["performance-1"]?.contains(SystemLabel.unread)
         } == true)
+
+        // A third conversation joins the two retained readers. Selecting
+        // between two of them must not run the third reader's body again.
+        let third = MailListRowID(accountID: "ui-audit", threadID: "performance-thread-5")
+        try await cache.write { tx in
+            let message = MessageRecord(accountID: third.accountID, id: "performance-5", threadID: third.threadID, historyID: 200,
+                date: Date(timeIntervalSince1970: 3), snippet: "Synthetic retained content",
+                sender: "Sender <sender@example.invalid>", recipients: "me@example.invalid", cc: nil,
+                subject: "Retained message", sizeEstimate: 1)
+            try tx.upsertMessages([.init(record: message, labelIDs: [SystemLabel.inbox])])
+            try tx.rebuildThreads([third.threadID], accountID: third.accountID)
+        }
+        await gate.release(third.threadID)
+        try await awaitListState("third row listed", details: { "rows=\(mailbox.listItems.map(\.id))" }) {
+            mailbox.listItems.contains { $0.id == third }
+        }
+        var readerBodies: [ThreadKey: Int] = [:]
+        let oldReaderHook = ThreadView.onBodyEvaluation
+        ThreadView.onBodyEvaluation = { key, active in
+            oldReaderHook?(key, active)
+            readerBodies[key, default: 0] += 1
+        }
+        defer {
+            ThreadView.onBodyEvaluation = oldReaderHook
+            NavigationPerformance.shared.cancel(.reader)
+        }
+        func readerIsReadable(_ generation: UInt64) -> Bool {
+            let performance = NavigationPerformance.shared
+            return performance.isReady(.reader, generation: generation)
+                || performance.records.contains { $0.kind == .reader && $0.generation == generation && $0.outcome == .visibleCommit }
+        }
+        mailbox.selectListRows([third])
+        let thirdGeneration = try #require(NavigationPerformance.shared.currentGeneration(for: .reader))
+        try await awaitLoadingState("third reader readable") { readerIsReadable(thirdGeneration) }
+        let settled = readerBodies
+        mailbox.selectListRows([first])
+        let firstGeneration = try #require(NavigationPerformance.shared.currentGeneration(for: .reader))
+        try await awaitLoadingState("first reader readable again") { readerIsReadable(firstGeneration) }
+        func bodies(_ row: MailListRowID) -> Int { readerBodies[row.threadKey, default: 0] - settled[row.threadKey, default: 0] }
+        // The readers that changed are the positive control for the counter.
+        #expect(bodies(first) > 0 && bodies(third) > 0)
+        #expect(bodies(second) == 0, "reader bodies during the switch: first \(bodies(first)), second \(bodies(second)), third \(bodies(third))")
     }
 
     @Test(arguments: [true, false])
@@ -1217,6 +1466,19 @@ import Testing
         }
         #expect(mailbox.isListPresentationReady)
         #expect(mailbox.listItems.isEmpty)
+        // Retained pages are read again once a change settles. Returning to
+        // one may replay that read, but never a page from before the change.
+        mailbox.selectedMailbox = .account("a", SystemLabel.inbox)
+        try await awaitListState("inbox again", details: { "rows=\(mailbox.listItems.count)" }) {
+            mailbox.isListPresentationReady && !mailbox.listItems.isEmpty
+        }
+        await mailbox.perform(.star, on: [key])?.value
+        try await Task.sleep(for: .milliseconds(400))
+        mailbox.selectedMailbox = .account("a", SystemLabel.starred)
+        try await awaitListState("starred again", details: { "rows=\(mailbox.listItems.count)" }) {
+            mailbox.isListPresentationReady
+        }
+        #expect(mailbox.listItems.map(\.id.threadID) == ["t"])
     }
 
     private func fixture(withStore: Bool = false) async throws -> (MailboxModel, MailCache) {

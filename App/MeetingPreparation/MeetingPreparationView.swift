@@ -12,7 +12,22 @@ struct MeetingPreparationView: View {
     @State private var previewRequest: UUID?
     @State private var fileError: String?
 
+    /// What decides which cards and rows the page shows. The stack animates
+    /// when it changes, so new content fades in and the content below it moves
+    /// to its new place.
+    private struct LayoutKey: Equatable {
+        let isLoading: Bool
+        let sources: [MeetingPreparationSourceRow]
+        let sections: [String]
+        let pending: [ThreadKey]
+        let hasTrackedWork: Bool
+        let hasFiles: Bool
+    }
+
     var body: some View {
+        // Read once per update: the cards and the animation key share them.
+        let sections = model.sections, pending = model.pendingSummaries
+        let trackedWork = model.trackedWork, recentFiles = model.recentFiles
         VStack(spacing: 0) {
             header
             Divider()
@@ -20,27 +35,37 @@ struct MeetingPreparationView: View {
                 LazyVStack(alignment: .leading, spacing: Tokens.Space.s4) {
                     status
                     sourceSelection
-                    ForEach(model.sections) { section in
+                    ForEach(sections) { section in
                         MeetingPreparationThreadSection(section: section,
                             accountName: model.followUps.accountName(for: section.candidate.thread.accountID),
                             canTrack: !model.isLoading && !model.isStale,
                             openSource: model.openSource, track: model.trackSuggestion)
+                            .ternTransition(.fade)
                     }
-                    if !model.trackedWork.isEmpty {
+                    ForEach(pending, id: \.thread) { candidate in
+                        MeetingPreparationPendingSection(candidate: candidate,
+                            accountName: model.followUps.accountName(for: candidate.thread.accountID))
+                            .ternTransition(.fade)
+                    }
+                    if !trackedWork.isEmpty {
                         MeetingPreparationCard(title: "Tracked work", symbol: "checklist") {
                             Text("Your saved descriptions and status take precedence over generated suggestions.")
                                 .font(.caption).foregroundStyle(.secondary)
-                            ForEach(model.trackedWork) { entry in
+                            ForEach(trackedWork) { entry in
                                 MeetingPreparationTrackedRow(entry: entry,
                                     accountName: model.followUps.accountName(for: entry.record.accountID),
                                     open: { model.followUps.openSource(entry) })
-                                if entry.id != model.trackedWork.last?.id { Divider() }
+                                if entry.id != trackedWork.last?.id { Divider() }
                             }
                         }
                         .accessibilityIdentifier("meeting-tracked-work")
+                        .ternTransition(.fade)
                     }
-                    if !model.recentFiles.isEmpty { files }
+                    if !recentFiles.isEmpty { files(recentFiles).ternTransition(.fade) }
                 }
+                .ternAnimation(value: LayoutKey(isLoading: model.isLoading, sources: model.sources,
+                    sections: sections.map(\.id), pending: pending.map(\.thread),
+                    hasTrackedWork: !trackedWork.isEmpty, hasFiles: !recentFiles.isEmpty))
                 .frame(maxWidth: Tokens.Layout.readableWidth)
                 .padding(Tokens.Space.s5)
                 .frame(maxWidth: .infinity)
@@ -53,7 +78,7 @@ struct MeetingPreparationView: View {
         .accessibilityIdentifier("meeting-preparation")
         .task(id: model.id) { await model.start() }
         .onDisappear { model.stop(); clearPreview() }
-        .onChange(of: model.recentFiles.map(\.id)) { _, ids in
+        .onChange(of: recentFiles.map(\.id)) { _, ids in
             if let previewedFileID, !ids.contains(previewedFileID) { clearPreview() }
         }
         .sheet(isPresented: $showsSourcePicker) { MeetingPreparationSourcePicker(model: model) }
@@ -98,7 +123,10 @@ struct MeetingPreparationView: View {
     private var status: some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s2) {
             HStack(alignment: .top, spacing: Tokens.Space.s2) {
-                if model.isLoading { ProgressView().controlSize(.small).accessibilityLabel("Preparing meeting") }
+                if model.isLoading {
+                    ProgressView().controlSize(.small).accessibilityLabel("Preparing meeting")
+                        .ternTransition(.fade)
+                }
                 if model.statusMessage != model.errorMessage {
                     Text(model.statusMessage).font(.callout).fixedSize(horizontal: false, vertical: true)
                 }
@@ -160,6 +188,7 @@ struct MeetingPreparationView: View {
                 Text(model.isLoading ? "Finding related conversations…" : "No conversations included. Add one or restore an excluded conversation.")
                     .font(.callout).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+                    .ternTransition(.fade)
             }
             ForEach(included) { source in
                 MeetingPreparationSourceRowView(source: source,
@@ -167,6 +196,7 @@ struct MeetingPreparationView: View {
                     actionTitle: "Exclude", actionSymbol: "minus.circle",
                     open: { model.openConversation(source.key) },
                     act: { Task { await model.exclude(source.key) } })
+                    .ternTransition(.fade)
             }
             let excluded = model.sources.filter(\.isExcluded)
             if !excluded.isEmpty {
@@ -183,16 +213,17 @@ struct MeetingPreparationView: View {
                     .padding(.top, Tokens.Space.s2)
                 }
                 .accessibilityIdentifier("meeting-excluded-sources")
+                .ternTransition(.fade)
             }
         }
         .accessibilityIdentifier("meeting-sources")
     }
 
-    private var files: some View {
+    private func files(_ recentFiles: [MeetingPreparationAttachment]) -> some View {
         MeetingPreparationCard(title: "Recent files", symbol: "paperclip") {
             Text("Files from included conversations, newest first.")
                 .font(.caption).foregroundStyle(.secondary)
-            ForEach(model.recentFiles) { file in
+            ForEach(recentFiles) { file in
                 HStack(alignment: .top, spacing: Tokens.Space.s3) {
                     VStack(alignment: .leading, spacing: Tokens.Space.s1) {
                         Button { preview(file) } label: {
@@ -212,7 +243,7 @@ struct MeetingPreparationView: View {
                         .controlSize(.small).accessibilityIdentifier("meeting-file-source-\(file.id)")
                 }
                 .accessibilityElement(children: .contain)
-                if file.id != model.recentFiles.last?.id { Divider() }
+                if file.id != recentFiles.last?.id { Divider() }
             }
             if let fileError {
                 Label(fileError, systemImage: "exclamationmark.circle").font(.caption).foregroundStyle(Tokens.Status.warning)

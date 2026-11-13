@@ -96,12 +96,14 @@ import TernAI
         defer { model.stop() }
         let pending = Task { await model.start() }
         try await gate.untilEntered()
+        #expect(model.pendingSummaries.map(\.thread) == [.init(accountID: "a", threadID: "thread")])
         await model.process(.init(accountID: "a", fromHistoryID: 1, toHistoryID: 2,
             messages: [.init(record: fixture.message("new"), labelIDs: [SystemLabel.inbox], addedHistoryID: 2)]))
         gate.release()
         await pending.value
         #expect(model.isStale)
         #expect(model.sections.isEmpty)
+        #expect(model.pendingSummaries.isEmpty)
         #expect(!model.isLoading)
     }
 
@@ -268,7 +270,10 @@ import TernAI
                 if self.eventReadFails { throw MeetingPreparationServiceError.sourceUnavailable }
                 return event
             }, sourceLinks: { _ in [.init(accountID: "a", calendarID: "calendar", eventID: "event", threadID: "thread", messageID: "m1")] },
-            sourceTitle: { key in self.titleReads.append(key); return "Orion \(key.threadID)" }, search: { _, ids in
+            sourceTitles: { keys in
+                self.titleReads += keys
+                return Dictionary(uniqueKeysWithValues: keys.map { ($0, "Orion \($0.threadID)") })
+            }, search: { _, ids in
                 guard let account = ids.sorted().first else { return [] }
                 return [.init(key: .init(accountID: account, threadID: "manual"), link: .init(accountID: account, threadID: "manual"),
                     title: "Manual conversation", reason: "Cached conversation", isExcluded: false, isExplicitlyIncluded: false, unavailableMessage: nil)]

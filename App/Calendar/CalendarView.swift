@@ -31,6 +31,14 @@ struct CalendarView: View {
     @State private var heldPresentation: CalendarPresentationSnapshot?
     @State private var heldGridIdentity: CalendarGridIdentity?
     @State private var heldEvents: [CalendarDisplayEvent] = []
+    /// A range that is not prepared yet keeps the previous grid on screen for
+    /// at most `Tokens.Calendar.rangeHold`. True once that time has passed.
+    @State private var rangeHoldExpired = false
+    /// Where the day and week grids' hours are scrolled to. Month, Year, Schedule
+    /// and search results replace that grid; the next one reopens here.
+    @State private var hourScroll = CalendarHourScroll()
+    /// The grid's pane is narrower than a week's minimum width, so a week scrolls sideways.
+    @State private var weekOverflows = false
     @FocusState private var hasKeyboardFocus: Bool
 
     init(model: CalendarModel, isActive: Bool = true, sidebarState: CalendarSidebarState? = nil,
@@ -46,7 +54,7 @@ struct CalendarView: View {
         VStack(spacing: 0) {
             // One split view at every width keeps the grid mounted while the sidebar changes.
             TernSidebarSplit(isPresented: sidebarState.showsSidebar, sidebarWidth: $sidebarState.width,
-                             minimumWidth: Tokens.Layout.sidebarWidth, maximumWidth: Tokens.Layout.sidebarMaxWidth) {
+                             minimumWidth: Tokens.Layout.sidebarWidth, maximumWidth: sidebarState.maximumWidth) {
                 sidebar
             } detail: {
                 calendarPane(compact: sidebarState.isCompact)
@@ -60,7 +68,7 @@ struct CalendarView: View {
         .clipped()
         .disabled(!isActive)
         .onGeometryChange(for: Bool.self) { $0.size.width < Tokens.Calendar.compactWidth } action: {
-            sidebarState.updateCompact($0)
+            sidebarState.updateNarrow($0)
         }
         .onChange(of: isActive) { _, active in
             if !active {
@@ -69,12 +77,16 @@ struct CalendarView: View {
                 showDatePicker = false
                 sidebarState.isPopoverPresented = false
                 importRequest = nil
+            } else if !holdsPreviousRange {
+                // The grid held while hidden can be older than the model.
+                holdCurrentGrid()
             }
         }
         .background(Tokens.Surface.primary)
         .environment(\.timeZone, model.calendar.timeZone)
-        .environment(\.calendarPresentation, isActive ? model.presentation : heldPresentation)
+        .environment(\.calendarPresentation, showsHeldGrid ? heldPresentation : model.presentation)
         .environment(\.calendarIdentities, CalendarIdentityPresentation(calendars: model.calendars))
+        .environment(\.calendarSelectedEventID, model.selectedEventID)
         .userActivity(MailUserActivity.calendarDayType, isActive: isActive) { activity in
             MailUserActivity.describeCalendarDay(
                 activity, date: model.date, calendar: model.calendar,
@@ -84,12 +96,19 @@ struct CalendarView: View {
         .onAppear { model.mode = storedMode }
         .onChange(of: model.mode) { _, mode in storedMode = mode }
         .onChange(of: currentGridIdentity, initial: true) { _, identity in
-            if isActive || heldGridIdentity == nil || identity.lifecycle != heldGridIdentity?.lifecycle
-                || identity.accessRevision != heldGridIdentity?.accessRevision {
-                heldGridIdentity = identity
-                heldPresentation = model.presentation
-                heldEvents = model.events
-            }
+            let accessChanged = heldGridIdentity == nil || identity.lifecycle != heldGridIdentity?.lifecycle
+                || identity.accessRevision != heldGridIdentity?.accessRevision
+            let holding = holdsPreviousRange
+            if !rangeIsPending { rangeHoldExpired = false }
+            // A hidden Calendar and a pending range keep the grid they show.
+            // Lifecycle and access changes always replace it.
+            if accessChanged || (isActive && !holding) { holdCurrentGrid() }
+        }
+        .task(id: holdsPreviousRange) {
+            guard holdsPreviousRange else { return }
+            do { try await Task.sleep(for: Tokens.Calendar.rangeHold) } catch { return }
+            rangeHoldExpired = true
+            holdCurrentGrid()
         }
         .task(id: undoManager.map(ObjectIdentifier.init)) { model.undoManager = undoManager }
         .task(id: rangeRequest) { if isActive { await model.activateRange() } }
@@ -119,7 +138,9 @@ struct CalendarView: View {
         .sheet(item: $model.editor) { draft in
             CalendarEventEditor(draft: draft, calendars: model.calendars, calendar: model.calendar,
                                 knownExceptionCount: model.editor?.followingExceptionsCount,
-                                additionalRecipients: model.editor?.additionalNotificationRecipients ?? []) { edited in
+                                additionalRecipients: model.editor?.additionalNotificationRecipients ?? [],
+                                seriesMaster: model.editor?.seriesMaster,
+                                isLoadingSeries: model.editor?.isLoadingSeries ?? false) { edited in
                 try await model.save(edited)
             }
         }
@@ -270,17 +291,21 @@ struct CalendarView: View {
                                       edit: model.edit, delete: requestDelete, duplicate: model.duplicate)
             }
         } else {
-            CalendarGridViews(presentationID: isActive ? currentGridIdentity : heldGridIdentity ?? currentGridIdentity,
-                              mode: $model.mode, date: $model.date, calendar: model.calendar,
-                              events: isActive ? model.events : heldEvents,
-                              selectedID: $model.selectedEventID, create: model.beginNew(in:), edit: model.edit,
-                              change: prepareChange, delete: requestDelete, duplicate: model.duplicate, dropMail: dropMail)
+            CalendarGridViews(presentationID: showsHeldGrid ? heldGridIdentity ?? currentGridIdentity : currentGridIdentity,
+                              events: showsHeldGrid ? heldEvents : model.events,
+                              show: show(_:in:), select: { model.selectedEventID = $0 },
+                              create: model.beginNew(in:), edit: model.edit,
+                              change: prepareChange, delete: requestDelete, duplicate: model.duplicate, dropMail: dropMail,
+                              hourScroll: hourScroll)
                 .equatable()
                 .focusable()
                 .focusEffectDisabled()
                 .focused($hasKeyboardFocus)
+                .onGeometryChange(for: Bool.self) { $0.size.width < CalendarTimeGrid.minimumWidth(dayCount: 7) } action: {
+                    weekOverflows = $0
+                }
                 .background {
-                    CalendarScrollNavigation(isEnabled: canHandleKeys) { direction in
+                    CalendarScrollNavigation(isEnabled: canHandleKeys && !weekScrollsSideways) { direction in
                         model.shift(periods: direction)
                     }
                 }
@@ -300,6 +325,12 @@ struct CalendarView: View {
                 }
                 .onKeyPress(characters: CharacterSet(charactersIn: "cdwmyatg/e12345"), phases: .down, action: calendarShortcut)
         }
+    }
+
+    /// Navigation from inside the grid: a date, and a mode when the grid changes it.
+    private func show(_ date: Date, in mode: CalendarDisplayMode?) {
+        model.date = date
+        if let mode { model.mode = mode }
     }
 
     private var emptyCalendars: some View {
@@ -367,9 +398,37 @@ struct CalendarView: View {
     }
 
     private var currentGridIdentity: CalendarGridIdentity {
-        .init(mode: model.mode.rawValue, date: model.date, calendar: model.calendar,
-              selectedID: model.selectedEventID, revision: model.presentationRevision,
+        .init(mode: model.mode, date: model.date, calendar: model.calendar, revision: model.presentationRevision,
               lifecycle: model.lifecycleRevision, accessRevision: model.accessRevision)
+    }
+
+    /// The date, mode or time zone moved and the model still has the range it
+    /// is leaving. A prepared range never gets here: the model publishes it in
+    /// the same update as the change.
+    private var rangeIsPending: Bool {
+        guard let presentation = model.presentation else { return false }
+        return presentation.interval != model.displayInterval || !presentation.matches(model.calendar)
+    }
+
+    /// Drawing the new dates now would pair them with the previous range's
+    /// events, so the grid keeps the range it shows until the next one arrives
+    /// or the hold runs out. The period title follows the date at once.
+    private var holdsPreviousRange: Bool {
+        isActive && rangeIsPending && heldGridIdentity != nil && !rangeHoldExpired
+    }
+
+    private var showsHeldGrid: Bool { !isActive || holdsPreviousRange }
+
+    /// The week on screen is wider than its pane. A horizontal swipe then
+    /// scrolls it to the days out of view, and does not change the week.
+    private var weekScrollsSideways: Bool {
+        weekOverflows && (showsHeldGrid ? heldGridIdentity ?? currentGridIdentity : currentGridIdentity).mode == .week
+    }
+
+    private func holdCurrentGrid() {
+        heldGridIdentity = currentGridIdentity
+        heldPresentation = model.presentation
+        heldEvents = model.events
     }
 
     private var searchRequest: [String] {
@@ -444,8 +503,10 @@ struct CalendarView: View {
     private func exportCalendar(_ owner: CalendarDisplayCalendar) {
         perform { try await CalendarImportExport.save(try await model.exportCalendar(owner), in: NSApp.keyWindow) }
     }
-    private func prepareChange(_ event: CalendarDisplayEvent, range: CalendarEventRange) {
-        perform { try await model.change(event, to: range) }
+    /// The grid awaits this to learn when a dropped event's change has been
+    /// written or refused. A refusal shows in the footer.
+    private func prepareChange(_ event: CalendarDisplayEvent, range: CalendarEventRange) async {
+        do { try await model.change(event, to: range) } catch { model.errorMessage = error.localizedDescription }
     }
     /// A conversation dropped on the grid opens the editor prefilled; nothing is saved yet.
     private func dropMail(_ link: MailLink, in range: CalendarEventRange) {

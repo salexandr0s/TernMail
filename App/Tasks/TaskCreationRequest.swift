@@ -64,7 +64,7 @@ enum TaskCreationState: Equatable {
     case idle, adding, added, uncertain
 }
 
-struct GoogleTaskLocation: Equatable, Sendable {
+struct GoogleTaskLocation: Hashable, Sendable {
     let accountID: String
     let listID: String
 }

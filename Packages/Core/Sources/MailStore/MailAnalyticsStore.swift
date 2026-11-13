@@ -8,7 +8,9 @@ extension MailCache {
     }
 
     public func observeMailAnalytics(query: MailAnalyticsQuery) -> AsyncThrowingStream<MailAnalyticsSnapshot, any Error> {
-        observe(latestOnly: true) { try CacheTransaction(db: $0).mailAnalytics(query: query) }
+        observe(latestOnly: true, region: ObservedTables.mailAnalytics(query)) {
+            try CacheTransaction(db: $0).mailAnalytics(query: query)
+        }
     }
 }
 

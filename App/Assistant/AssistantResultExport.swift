@@ -28,6 +28,14 @@ enum AssistantResultExport {
         return parts.joined(separator: "\n\n")
     }
 
+    /// Whether `markdown(_:)` would return any text, without building it.
+    static func hasContent(_ message: AssistantMessage) -> Bool {
+        guard !message.isUser, message.text.isEmpty else { return !message.text.isEmpty }
+        return message.state != .completed || !message.emailResults.isEmpty || !message.taskResults.isEmpty
+            || !message.eventResults.isEmpty || !message.sources.isEmpty || !message.calendarProposals.isEmpty
+            || !message.availabilityChoices.isEmpty || !message.draftIDs.isEmpty
+    }
+
     private static func email(_ result: AssistantEmailResult) -> String {
         var lines = [heading(result.subject.isEmpty ? "No Subject" : result.subject),
                      "From: \(literal(result.senderName)) <\(literal(result.senderEmail))>",

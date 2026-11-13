@@ -64,17 +64,25 @@ extension CalendarResource {
     }
 }
 
+/// Every event resolves its start and end through here, on the main actor and
+/// on background tasks at once, so the formatters are made once and shared.
 public enum CalendarDateCoding {
+    private static let lock = NSLock()
+    // Safe: `ISO8601DateFormatter` is not Sendable, but these two are set up
+    // once, never changed afterwards and only used while `lock` is held.
+    nonisolated(unsafe) private static let internetDateTime = ISO8601DateFormatter()
+    nonisolated(unsafe) private static let fractionalSeconds: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+
     public static func string(_ date: Date) -> String {
-        ISO8601DateFormatter().string(from: date)
+        lock.withLock { internetDateTime.string(from: date) }
     }
 
     public static func date(_ string: String) -> Date? {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let date = formatter.date(from: string) { return date }
-        formatter.formatOptions = [.withInternetDateTime]
-        return formatter.date(from: string)
+        lock.withLock { fractionalSeconds.date(from: string) ?? internetDateTime.date(from: string) }
     }
 }
 

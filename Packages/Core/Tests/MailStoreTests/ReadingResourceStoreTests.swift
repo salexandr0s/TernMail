@@ -46,6 +46,29 @@ import Testing
         }
     }
 
+    @Test func openingReadMatchesTheObservationsForNamedMessagesThatHaveBodies() async throws {
+        let cache = try MailCache.inMemory()
+        try await cache.write { tx in
+            var unsaved = message("a")
+            unsaved.id = "unsaved"
+            try tx.upsertMessages([.init(record: message("a"), labelIDs: []), .init(record: unsaved, labelIDs: [])])
+            try tx.saveBodies([.init(accountID: "a", messageID: "m", html: "<p>Body</p>", plainText: nil, fetchedAt: .distantPast)])
+            try tx.replaceMIMEResources([resource("a", id: "image")], messageID: "m", accountID: "a")
+            try tx.rebuildThreads(["t"], accountID: "a")
+        }
+        let opening = try await cache.readingThreadOpening(accountID: "a", threadID: "t") { $0.messages.map(\.id) + ["elsewhere"] }
+        var details = cache.thread(accountID: "a", threadID: "t").makeAsyncIterator()
+        var resources = cache.readingResources(messageID: "m", accountID: "a").makeAsyncIterator()
+        // The reader skips an observation's first value when it equals this read.
+        #expect(try await details.next() == .some(opening.detail))
+        #expect(try await resources.next() == opening.resources["m"])
+        #expect(opening.detail?.messages.map(\.id).sorted() == ["m", "unsaved"])
+        #expect(Array(opening.resources.keys) == ["m"])
+        let missing = try await cache.readingThreadOpening(accountID: "a", threadID: "missing") { _ in ["m"] }
+        #expect(missing.detail == nil)
+        #expect(missing.resources.isEmpty)
+    }
+
     @Test func upgradeKeepsEnrichmentMarksInTheirOwnRows() async throws {
         let writer = try DatabaseQueue()
         try Schema.cacheMigrator.migrate(writer, upTo: "address-search-v1")

@@ -11,7 +11,7 @@ extension MailCache {
     }
 
     public func observeNewsletters(accountID: String) -> AsyncThrowingStream<NewsletterSnapshot, any Error> {
-        observe { try CacheTransaction(db: $0).newsletters(accountID: accountID) }
+        observe(region: ObservedTables.newsletters) { try CacheTransaction(db: $0).newsletters(accountID: accountID) }
     }
 }
 

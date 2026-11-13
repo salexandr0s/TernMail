@@ -5,7 +5,7 @@ struct TodayRowView: View {
     let row: TodayRow
     let accountName: String
     let checkState: FollowUpReplyCheckState?
-    let now: Date
+    let snooze: TodaySnoozeChoices
     let isBusy: Bool
     let onEdit: () -> Void
     let onComplete: () -> Void
@@ -20,7 +20,6 @@ struct TodayRowView: View {
 
     private var record: CommitmentRecord { row.entry.record }
     private var isOpen: Bool { record.status == .open }
-    private var isDeferred: Bool { isOpen && (record.deferredUntil.map { $0 > now } ?? false) }
 
     var body: some View {
         HStack(alignment: .top, spacing: Tokens.Space.s3) {
@@ -80,7 +79,7 @@ struct TodayRowView: View {
                             .font(.caption).foregroundStyle(.secondary)
                     }
                 }
-                if let deferredUntil = record.deferredUntil, isDeferred {
+                if let deferredUntil = record.deferredUntil, row.isSnoozed {
                     Label("Snoozed until \(deferredUntil.formatted(date: .abbreviated, time: .shortened))", systemImage: "moon.zzz")
                         .font(.caption).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -109,7 +108,7 @@ struct TodayRowView: View {
                     FlowLayout(spacing: Tokens.Space.s2) {
                         Button("Draft Follow-up", systemImage: "square.and.pencil", action: onDraft)
                             .accessibilityIdentifier("today-draft-\(record.id)")
-                        if isDeferred {
+                        if row.isSnoozed {
                             Button("Bring Back to Today", systemImage: "sun.max", action: onBringBack)
                                 .accessibilityIdentifier("today-bring-back-\(record.id)")
                         } else {
@@ -143,7 +142,7 @@ struct TodayRowView: View {
         Button("Open Email", systemImage: "envelope", action: onOpenSource)
         if isOpen {
             Button("Draft Follow-up", systemImage: "square.and.pencil", action: onDraft)
-            if isDeferred { Button("Bring Back to Today", systemImage: "sun.max", action: onBringBack) }
+            if row.isSnoozed { Button("Bring Back to Today", systemImage: "sun.max", action: onBringBack) }
             else { Menu("Snooze", systemImage: "moon.zzz") { snoozeActions } }
             Divider()
             Button("Complete", systemImage: "checkmark.circle", action: onComplete)
@@ -155,8 +154,7 @@ struct TodayRowView: View {
     }
 
     @ViewBuilder private var snoozeActions: some View {
-        let tomorrow = FollowUpSchedule.tomorrow(from: now)
-        let friday = FollowUpSchedule.friday(from: now)
+        let tomorrow = snooze.tomorrow, friday = snooze.friday
         Button("Tomorrow · \(tomorrow.formatted(date: .abbreviated, time: .shortened))") { onDefer(tomorrow) }
             .accessibilityIdentifier("today-snooze-tomorrow-\(record.id)")
         Button("Friday · \(friday.formatted(date: .abbreviated, time: .shortened))") { onDefer(friday) }

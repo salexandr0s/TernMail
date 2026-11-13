@@ -340,13 +340,9 @@ final class CalendarAssistantTools {
             "attendees": .array((event.attendees ?? []).prefix(100).map { AIJSON.string($0.email) }),
             "recurs": .bool(event.recurringEventId != nil || !(event.recurrence ?? []).isEmpty)])
     }
-    static func timestamp(_ date: Date) -> String { ISO8601DateFormatter().string(from: date) }
-    static func parseDate(_ value: String) -> Date? {
-        let formatter = ISO8601DateFormatter()
-        if let date = formatter.date(from: value) { return date }
-        formatter.formatOptions.insert(.withFractionalSeconds)
-        return formatter.date(from: value)
-    }
+    // Both use the formatters the calendar models share, so a tool call makes none of its own.
+    static func timestamp(_ date: Date) -> String { CalendarDateCoding.string(date) }
+    static func parseDate(_ value: String) -> Date? { CalendarDateCoding.date(value) }
 
     static var definitions: [AIToolDefinition] {
         func string(_ description: String, nullable: Bool = false) -> AIJSON {

@@ -194,7 +194,8 @@ import Testing
         try await waitUntil { !FileManager.default.fileExists(atPath: agendaCopy.path(percentEncoded: false)) }
         #expect(FileManager.default.fileExists(atPath: notesCopy.path(percentEncoded: false)))
         model.windowClosed()
-        #expect(!FileManager.default.fileExists(atPath: notesCopy.path(percentEncoded: false)))
+        // The folder is deleted off the main actor, so the copy goes just after the window.
+        try await waitUntil { !FileManager.default.fileExists(atPath: notesCopy.path(percentEncoded: false)) }
         await mailbox.stop()
     }
 
@@ -557,9 +558,9 @@ import Testing
         coordinator.update(model.content.body)
         #expect(attachments().count == 1 && attachments().first === inserted)
 
-        // Data that arrives for an image shown without it still loads. An
-        // attachment drops its data once it has a preview, so the preview's
-        // size shows whether the data loaded.
+        // Data that arrives for an image shown without it still loads. The
+        // attachment takes the image's size then, so its size shows whether
+        // the data loaded.
         let later = InlineImageReference(contentID: "later@example.invalid", altText: "Later")
         let pixels = try #require(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 40, pixelsHigh: 30,
             bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
@@ -577,6 +578,108 @@ import Testing
         await mailbox.stop()
     }
 
+    /// A compose window gets keys before its fields can take them. They go to
+    /// that window, in the order typed, once one of its fields has the cursor.
+    /// A shortcut and another window's keys are left alone, and the keys are
+    /// dropped when no field has the cursor or the window closes.
+    @Test func keysTypedBeforeAFieldHasTheCursorAreTypedIntoIt() async throws {
+        func key(_ character: String, modifiers: NSEvent.ModifierFlags = [], in window: NSWindow) throws -> NSEvent {
+            let event = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: modifiers,
+                timestamp: 1, windowNumber: window.windowNumber, context: nil,
+                characters: character, charactersIgnoringModifiers: character, isARepeat: false, keyCode: 6))
+            try #require(event.window === window)
+            return event
+        }
+        let compose = TypeAheadTestWindow(), other = TypeAheadTestWindow()
+        let field = NSTextView()
+        let typeAhead = ComposeTypeAhead()
+        typeAhead.attach(to: compose)
+        defer { typeAhead.attach(to: nil) }
+
+        let shortcut = try key("w", modifiers: .command, in: compose)
+        #expect(typeAhead.monitoredEventHandler(shortcut) === shortcut)
+        let elsewhere = try key("x", in: other)
+        #expect(typeAhead.monitoredEventHandler(elsewhere) === elsewhere)
+        let first = try key("h", in: compose), second = try key("i", in: compose)
+        #expect(typeAhead.monitoredEventHandler(first) == nil)
+        #expect(typeAhead.monitoredEventHandler(second) == nil)
+        // The cursor reaches a field a moment after it is sent there. Keys
+        // typed in that moment are kept too.
+        typeAhead.release(waitingForCursor: true)
+        #expect(compose.sent.isEmpty)
+        let third = try key("!", in: compose)
+        #expect(typeAhead.monitoredEventHandler(third) == nil)
+        compose.reportedFirstResponder = field
+        try await waitUntil { compose.sent.count == 3 }
+        #expect(compose.sent.elementsEqual([first, second, third]) { $0 === $1 })
+        // The field has the cursor, so it gets its own keys from here on.
+        let later = try key("?", in: compose)
+        #expect(typeAhead.monitoredEventHandler(later) === later)
+
+        // The fields take nothing during a move. No field has the cursor
+        // when it ends here, so what was typed meanwhile is dropped.
+        compose.reportedFirstResponder = nil
+        typeAhead.hold()
+        #expect(typeAhead.monitoredEventHandler(try key("z", in: compose)) == nil)
+        typeAhead.release(waitingForCursor: false)
+        compose.reportedFirstResponder = field
+        #expect(typeAhead.monitoredEventHandler(later) === later)
+
+        // A window that closes drops what it kept and keeps nothing more.
+        compose.reportedFirstResponder = nil
+        typeAhead.hold()
+        #expect(typeAhead.monitoredEventHandler(try key("q", in: compose)) == nil)
+        typeAhead.attach(to: nil)
+        compose.reportedFirstResponder = field
+        typeAhead.release(waitingForCursor: false)
+        #expect(typeAhead.monitoredEventHandler(later) === later)
+        #expect(compose.sent.count == 3 && other.sent.isEmpty)
+    }
+
+    /// The editor draws a preview of an inline image that was decoded
+    /// beforehand. Copying the image out still gives the data that was attached.
+    @Test func copyingAnInlineImageGivesTheDataThatWasAttached() async throws {
+        let pixels = try #require(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 960, pixelsHigh: 640,
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+        let png = try #require(pixels.representation(using: .png, properties: [:]))
+        let width = Tokens.Layout.attachmentWidth
+        let preview = try #require(await ComposeImagePreview.decoded(
+            from: png, display: ComposeImagePreview.Display(maxWidth: width, scale: 2)))
+        // As wide as the editor shows an image, with a pixel for each one on the screen.
+        #expect(preview.size == CGSize(width: width, height: width * 640 / 960))
+        #expect(CGFloat(preview.image.width) == width * 2)
+        #expect(preview.typeIdentifier == "public.png")
+        let reference = InlineImageReference(contentID: "copied@example.invalid", altText: "Copied")
+        var document = ComposeDocument()
+        document.blocks.append(.init(runs: [.init("", image: reference)]))
+        // With the preview, and as an image whose preview hasn't been made.
+        let cases: [[String: ComposeImagePreview]] = [[reference.contentID: preview], [:]]
+        for previews in cases {
+            let textView = ComposeTextView(usingTextLayoutManager: false)
+            textView.importsGraphics = false
+            let storage = try #require(textView.textStorage)
+            storage.setAttributedString(AttributedDocument.string(
+                from: document, inlineImages: [reference.contentID: png], previews: previews))
+            var shown: [CGSize] = []
+            storage.enumerateAttribute(.attachment, in: NSRange(location: 0, length: storage.length)) { value, _, _ in
+                if let attachment = value as? NSTextAttachment { shown.append(attachment.bounds.size) }
+            }
+            #expect(shown == [preview.size])
+            textView.setSelectedRange(NSRange(location: 0, length: storage.length))
+            let pasteboard = NSPasteboard.withUniqueName()
+            defer { pasteboard.releaseGlobally() }
+            // These are the types Copy writes.
+            #expect(textView.writeSelection(to: pasteboard, types: textView.writablePasteboardTypes))
+            let copied = try #require(pasteboard.data(forType: .rtfd).flatMap { NSAttributedString(rtfd: $0, documentAttributes: nil) })
+            var files: [Data?] = []
+            copied.enumerateAttribute(.attachment, in: NSRange(location: 0, length: copied.length)) { value, _, _ in
+                if let attachment = value as? NSTextAttachment { files.append(attachment.fileWrapper?.regularFileContents) }
+            }
+            #expect(files == [png])
+        }
+    }
+
     /// A mailbox whose cache is in memory, or in `file` for a test that breaks it.
     private func makeMailbox(in file: CacheFile? = nil) async throws -> (MailboxModel, MailCache) {
         let cache = try file.map { try MailCache.open(at: $0.url) } ?? MailCache.inMemory()
@@ -591,5 +694,23 @@ import Testing
         let deadline = ContinuousClock.now.advanced(by: .seconds(3))
         while !condition(), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
         #expect(condition(), "The compose window did not reach the expected state")
+    }
+}
+
+/// Never ordered onscreen. It reports the first responder a test gives it and
+/// records the keys it is sent, so a test neither takes the keyboard nor
+/// relies on AppKit delivering keys to a window that isn't shown.
+@MainActor private final class TypeAheadTestWindow: NSWindow {
+    var reportedFirstResponder: NSResponder?
+    private(set) var sent: [NSEvent] = []
+    override var firstResponder: NSResponder? { reportedFirstResponder }
+
+    init() {
+        super.init(contentRect: NSRect(x: 0, y: 0, width: 20, height: 20),
+            styleMask: .borderless, backing: .buffered, defer: false)
+    }
+
+    override func sendEvent(_ event: NSEvent) {
+        sent.append(event)
     }
 }

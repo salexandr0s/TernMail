@@ -19,6 +19,17 @@ final class AttachmentLibraryModel {
     var items: [AttachmentLibraryItem] { currentPage?.items ?? [] }
     var totalCount: Int { currentPage?.totalCount ?? 0 }
     var hasMore: Bool { currentPage?.hasMore ?? false }
+    /// The page behind the rows on screen. While a changed query loads, the last
+    /// loaded page stays visible if it came from the same accounts.
+    private var presentedPage: AttachmentLibraryPage? {
+        if let currentPage { return currentPage }
+        return loadedQuery?.accountIDs == query.accountIDs ? loadedPage : nil
+    }
+    /// The rows on screen. Commands, menus and drags read `items` instead, which is
+    /// empty until the page for the current query arrives.
+    var presentedItems: [AttachmentLibraryItem] { presentedPage?.items ?? [] }
+    /// True while `presentedItems` shows the page of an earlier query.
+    var isPresentingEarlierPage: Bool { currentPage == nil && !presentedItems.isEmpty }
     private(set) var isLoading = true
     private(set) var isWorking = false
     private(set) var indexStates: [AttachmentIndexState] = []
@@ -57,12 +68,19 @@ final class AttachmentLibraryModel {
     var observationKey: ObservationKey { .init(query: query, revision: reloadRevision) }
     struct CoverageKey: Equatable { let accountIDs: [String]; let revision: Int }
     var coverageKey: CoverageKey { .init(accountIDs: availableAccounts.map(\.id), revision: reloadRevision) }
-    var pageEnd: Int { min(pageOffset + items.count, totalCount) }
     var hasPreviousPage: Bool { pageOffset > 0 }
-    /// The library's only count, shown in the status bar.
+    /// Where the rows on screen start in their results.
+    private var presentedOffset: Int { presentedPage == nil ? 0 : loadedQuery?.offset ?? 0 }
+    /// True when the rows on screen are one page of several. The status bar then
+    /// shows their range and the page buttons.
+    var isPresentingPartialPage: Bool { presentedOffset > 0 || presentedPage?.hasMore == true }
+    /// The library's only count, shown in the status bar. It counts the rows on screen,
+    /// so it stays true while they wait for the page of a changed query.
     var rangeSummary: String {
-        if hasPreviousPage || hasMore { return "\(pageOffset + 1)–\(pageEnd) of \(totalCount.formatted()) attachments" }
-        return totalCount == 1 ? "1 attachment" : "\(totalCount.formatted()) attachments"
+        let total = presentedPage?.totalCount ?? 0
+        guard isPresentingPartialPage else { return total == 1 ? "1 attachment" : "\(total.formatted()) attachments" }
+        let end = min(presentedOffset + presentedItems.count, total)
+        return "\(presentedOffset + 1)–\(end) of \(total.formatted()) attachments"
     }
     @ObservationIgnored private var observationRevision = UUID()
     @ObservationIgnored private var coverageRevision = UUID()

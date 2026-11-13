@@ -4,13 +4,20 @@ import SwiftUI
 struct AssistantDiagramView: View {
     let diagram: AssistantDiagram
     let source: String
+    /// Laid out once for the diagram. `body` runs again for the viewport
+    /// width and the source toggle.
+    private let layout: AssistantDiagramLayout
     @Environment(\.colorSchemeContrast) private var contrast
     @State private var showsSource = false
     @State private var showsFullDiagram = false
     @State private var graphViewportWidth: CGFloat?
 
+    init(diagram: AssistantDiagram, source: String) {
+        self.diagram = diagram; self.source = source
+        layout = AssistantDiagramLayout(diagram: diagram)
+    }
+
     var body: some View {
-        let layout = AssistantDiagramLayout(diagram: diagram)
         let overflowsWidth = graphViewportWidth.map { layout.size.width > $0 } ?? false
         let isPreview = overflowsWidth || layout.size.height + Tokens.Space.s1 > Tokens.AssistantFormatting.diagramPreviewHeight
         VStack(alignment: .leading, spacing: Tokens.AssistantFormatting.blockGap) {

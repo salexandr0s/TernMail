@@ -41,12 +41,17 @@ struct UnsubscribeConfirmation: Identifiable {
 
 @MainActor @Observable final class UnsubscribeModel {
     private(set) var accounts: [UnsubscribeAccount] = []
-    var selectedAccountID = "" { didSet { if selectedAccountID != oldValue { clearSelection(); stopScan() } } }
-    var search = "" { didSet { if search != oldValue { clearSelection() } } }
-    var filter = UnsubscribeFilter.active { didSet { if filter != oldValue { clearSelection() } } }
-    var sort = UnsubscribeSort.mostMessages
+    var selectedAccountID = "" {
+        didSet { if selectedAccountID != oldValue { clearSelection(); stopScan(); rebuildVisible() } }
+    }
+    var search = "" { didSet { if search != oldValue { clearSelection(); rebuildVisible() } } }
+    var filter = UnsubscribeFilter.active { didSet { if filter != oldValue { clearSelection(); rebuildVisible() } } }
+    var sort = UnsubscribeSort.mostMessages { didSet { if sort != oldValue { rebuildVisible() } } }
     private(set) var selectedIDs: Set<String> = []
-    private(set) var isLoading = false
+    private(set) var isLoading = false { didSet { if isLoading != oldValue { rebuildVisible() } } }
+    /// False until the first `configure`. Until then the accounts are not known,
+    /// so an empty account list does not yet mean there are none.
+    private(set) var isConfigured = false
     private(set) var isScanning = false
     private(set) var isWorking = false
     private(set) var isSendingRequests = false
@@ -57,7 +62,13 @@ struct UnsubscribeConfirmation: Identifiable {
     var confirmation: UnsubscribeConfirmation?
     var manualSubscription: NewsletterSubscription?
     private(set) var unavailableAccountIDs: Set<String> = []
-    private(set) var snapshots: [String: NewsletterSnapshot] = [:]
+    private(set) var snapshots: [String: NewsletterSnapshot] = [:] { didSet { rebuildVisible() } }
+    /// The rows that pass the account, status and search filters, in sort order. A view reads
+    /// this many times per update, so it is stored and `rebuildVisible()` refreshes it.
+    private(set) var visibleSubscriptions: [NewsletterSubscription] = []
+    /// The visible rows a batch may include. `available` can change without telling the model:
+    /// `configure` follows each such change, and selecting, proposing and confirming ask it again.
+    private var selectableIDs: Set<String> = []
     @ObservationIgnored private let client: (String) -> UnsubscribeClient?
     @ObservationIgnored private let available: (String) -> Bool
     @ObservationIgnored private let openManual: (NewsletterSubscription) async throws -> Void
@@ -81,9 +92,11 @@ struct UnsubscribeConfirmation: Identifiable {
             .flatMap { snapshots[$0.id]?.subscriptions ?? [] }
     }
 
-    var visibleSubscriptions: [NewsletterSubscription] {
+    /// Runs when an input of the visible or selectable rows changes: the account, status,
+    /// search and sort choices, the snapshots, the loading state, and the accounts in `configure`.
+    private func rebuildVisible() {
         let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
-        return subscriptions.filter { item in
+        visibleSubscriptions = subscriptions.filter { item in
             let finished = item.status == .requested || item.status == .completed
             let matchesStatus = filter == .all || (filter == .history ? finished : !finished)
             return matchesStatus && (query.isEmpty || [item.senderName, item.senderAddress, item.listID, item.latestSubject]
@@ -99,9 +112,9 @@ struct UnsubscribeConfirmation: Identifiable {
             let order = (lhs.senderName ?? lhs.senderAddress).localizedStandardCompare(rhs.senderName ?? rhs.senderAddress)
             return order == .orderedSame ? lhs.id < rhs.id : order == .orderedAscending
         }
+        selectableIDs = Set(visibleSubscriptions.filter(isSelectable).map(\.id))
     }
 
-    private var selectableIDs: Set<String> { Set(visibleSubscriptions.filter(isSelectable).map(\.id)) }
     var selectedCount: Int { selectedIDs.intersection(selectableIDs).count }
     var allVisibleSelected: Bool { !selectableIDs.isEmpty && selectableIDs.isSubset(of: selectedIDs) }
     var someVisibleSelected: Bool { selectedCount > 0 && !allVisibleSelected }
@@ -150,9 +163,12 @@ struct UnsubscribeConfirmation: Identifiable {
         isSendingRequests = false
         isLoading = false
         self.accounts = accounts; unavailableAccountIDs = unavailable
+        isConfigured = true
         let kept = Set(accounts.map(\.id))
         snapshots = snapshots.filter { kept.contains($0.key) }
         if !selectedAccountID.isEmpty && !kept.contains(selectedAccountID) { selectedAccountID = "" }
+        // The accounts and their access decide which rows show and which can be selected.
+        rebuildVisible()
         clearSelection(); manualSubscription = nil; notice = nil; errorMessage = nil
     }
 

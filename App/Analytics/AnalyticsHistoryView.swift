@@ -32,11 +32,13 @@ struct AnalyticsHistoryView: View {
                     Button("Open Settings") { openSettings() }
                         .buttonStyle(.borderless).font(.caption).fixedSize()
                 }
+                .ternTransition(.disclosure)
             }
             if let error = model.historyError {
                 Label(error, systemImage: "exclamationmark.circle")
                     .font(.caption).foregroundStyle(Tokens.Status.error)
                     .fixedSize(horizontal: false, vertical: true)
+                    .ternTransition(.disclosure)
             }
             DisclosureGroup(isExpanded: $showsDetails) {
                 VStack(alignment: .leading, spacing: Tokens.Space.s2) {
@@ -53,6 +55,8 @@ struct AnalyticsHistoryView: View {
             }
             .accessibilityIdentifier("analytics-history-details")
         }
+        .ternAnimation(value: !model.isLoadingHistory && !canLoadHistory)
+        .ternAnimation(value: model.historyError)
         .padding(Tokens.Space.s3)
         .frame(maxWidth: .infinity, alignment: .leading)
         .analyticsPanel()

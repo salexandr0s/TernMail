@@ -5,12 +5,16 @@ import SwiftUI
 /// uses the complete, unchanged source, including its indentation and newlines.
 struct AssistantCodeBlock: View {
     let source: String
-    var language: String? = nil
+    let language: String?
+    /// Split once for the source. `body` reads the lines several times and
+    /// runs again for the line toggle and the copied mark.
+    private let lines: [String]
     @State private var showsAll = false
     @State private var copied = false
 
-    private var lines: [String] {
-        source.replacingOccurrences(of: "\r\n", with: "\n")
+    init(source: String, language: String? = nil) {
+        self.source = source; self.language = language
+        lines = source.replacingOccurrences(of: "\r\n", with: "\n")
             .replacingOccurrences(of: "\r", with: "\n")
             .trimmingCharacters(in: .newlines).components(separatedBy: "\n")
     }

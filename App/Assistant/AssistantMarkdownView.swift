@@ -3,7 +3,6 @@ import SwiftUI
 /// Model output is text. Validated result cards provide navigation and actions.
 struct AssistantMarkdownView: View {
     private let markdown: AssistantMessageMarkdown
-    @Environment(\.colorSchemeContrast) private var contrast
 
     init(markdown: AssistantMessageMarkdown) { self.markdown = markdown }
 
@@ -13,7 +12,8 @@ struct AssistantMarkdownView: View {
         let blocks = markdown.blocks
         VStack(alignment: .leading, spacing: 0) {
             ForEach(Array(blocks.enumerated()), id: \.element.id) { index, block in
-                blockView(block).padding(.top, spacing(before: index, in: blocks))
+                AssistantMarkdownBlockView(block: block).equatable()
+                    .padding(.top, spacing(before: index, in: blocks))
             }
         }
         .font(Tokens.AssistantFormatting.bodyFont)
@@ -22,7 +22,27 @@ struct AssistantMarkdownView: View {
         .textSelection(.enabled)
     }
 
-    @ViewBuilder private func blockView(_ block: AssistantMarkdown.Block) -> some View {
+    private func spacing(before index: Int, in blocks: [AssistantMarkdown.Block]) -> CGFloat {
+        guard index > 0 else { return 0 }
+        let block = blocks[index], previous = blocks[index - 1]
+        if block.kind == .heading { return block.headingLevel <= 2 ? Tokens.AssistantFormatting.sectionGap : Tokens.AssistantFormatting.blockGap }
+        if block.isListContinuation { return Tokens.Space.s1_5 }
+        if block.listDepth > 0, previous.listDepth > 0 { return Tokens.AssistantFormatting.listGap }
+        if previous.kind == .heading { return previous.headingLevel <= 2 ? Tokens.Space.s1_5 : Tokens.Space.s1 }
+        if block.quoteDepth > 0, previous.quoteDepth > 0 { return Tokens.Space.s1_5 }
+        return Tokens.AssistantFormatting.blockGap
+    }
+}
+
+/// One parsed block. A reply that grows re-parses into mostly equal blocks;
+/// those skip body and layout, so only the block that changed is redrawn.
+private struct AssistantMarkdownBlockView: View, Equatable {
+    let block: AssistantMarkdown.Block
+    @Environment(\.colorSchemeContrast) private var contrast
+
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool { lhs.block == rhs.block }
+
+    var body: some View {
         HStack(alignment: .top, spacing: Tokens.Space.s1_5) {
             if let completed = block.isTaskCompleted {
                 Image(systemName: completed ? "checkmark.square.fill" : "square")
@@ -82,16 +102,5 @@ struct AssistantMarkdownView: View {
         case 3: Tokens.AssistantFormatting.bodyFont.weight(.semibold)
         default: Tokens.AssistantFormatting.bodyFont.weight(.medium)
         }
-    }
-
-    private func spacing(before index: Int, in blocks: [AssistantMarkdown.Block]) -> CGFloat {
-        guard index > 0 else { return 0 }
-        let block = blocks[index], previous = blocks[index - 1]
-        if block.kind == .heading { return block.headingLevel <= 2 ? Tokens.AssistantFormatting.sectionGap : Tokens.AssistantFormatting.blockGap }
-        if block.isListContinuation { return Tokens.Space.s1_5 }
-        if block.listDepth > 0, previous.listDepth > 0 { return Tokens.AssistantFormatting.listGap }
-        if previous.kind == .heading { return previous.headingLevel <= 2 ? Tokens.Space.s1_5 : Tokens.Space.s1 }
-        if block.quoteDepth > 0, previous.quoteDepth > 0 { return Tokens.Space.s1_5 }
-        return Tokens.AssistantFormatting.blockGap
     }
 }

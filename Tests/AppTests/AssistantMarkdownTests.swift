@@ -113,6 +113,38 @@ struct AssistantMarkdownTests {
         #expect(presentation.preparationCount == 1)
     }
 
+    @Test @MainActor func streamedTextParsesOffTheMainActorAndEndsWithExactBlocks() async {
+        func paragraphs(_ message: AssistantMessage) -> [String] {
+            message.markdown.blocks.map { String($0.text.characters) }
+        }
+        var message = AssistantMessage(isUser: false, text: "", state: .streaming)
+        // A reply nobody displays stays lazy.
+        message.setStreamedText("First", isFinal: false)
+        message.setStreamedText("First paragraph.", isFinal: false)
+        #expect(message.markdown.preparationCount == 0)
+        #expect(paragraphs(message) == ["First paragraph."])
+        #expect(message.markdown.preparationCount == 1)
+
+        // Once displayed, flushes keep the blocks on screen and skip texts
+        // that arrive while a parse is running.
+        message.setStreamedText("First paragraph.\n\nSecond", isFinal: false)
+        message.setStreamedText("First paragraph.\n\nSecond paragraph.", isFinal: false)
+        #expect(message.text == "First paragraph.\n\nSecond paragraph.")
+        #expect(paragraphs(message) == ["First paragraph."])
+        await message.markdown.waitForStreamedBlocks()
+        #expect(paragraphs(message) == ["First paragraph.", "Second paragraph."])
+        #expect(message.markdown.preparationCount == 0)
+
+        // The last flush and the end of streaming show the exact text at once.
+        message.setStreamedText("First paragraph.\n\nSecond paragraph.\n\nThird", isFinal: false)
+        message.setStreamedText("# Final answer", isFinal: true)
+        #expect(message.markdown.blocks.first?.kind == .heading)
+        #expect(paragraphs(message) == ["Final answer"])
+        message.setStreamedText("# Final answer\n\nStopped here", isFinal: false)
+        message.state = .cancelled
+        #expect(paragraphs(message) == ["Final answer", "Stopped here"])
+    }
+
     @Test func preservesHeadingsListsQuotesAndCodeAsSeparateBlocks() {
         let blocks = AssistantMarkdown.parse("""
         # Priorities

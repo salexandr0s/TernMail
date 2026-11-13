@@ -9,9 +9,12 @@ struct ThreadSummaryView: View {
     let detail: ThreadDetail
     let assistant: AssistantModel
     let isActive: Bool
+    /// Moves the conversation around the card when a summary the reader watched load lands.
+    var motion: ThreadSummaryMotion? = nil
     let onOpenSource: (AssistantSource) -> Void
 
     @State private var model = ThreadSummaryModel()
+    @State private var memory = ThreadSummaryMemory()
     @State private var loadedIdentity: LoadIdentity?
     @State private var displayed: ThreadSummaryDisplayState?
     @State private var showsSettings = false
@@ -29,22 +32,23 @@ struct ThreadSummaryView: View {
     }
 
     private var identity: LoadIdentity {
-        LoadIdentity(source: .init(revision: ThreadSummaryModel.revision(for: detail),
+        LoadIdentity(source: .init(revision: memory.revision(for: detail),
             access: assistant.summaryAccessRevision), attempt: attempt, isActive: isActive,
             availability: assistant.summaryAvailability(for: key), scope: assistant.summaryScope)
     }
 
     var body: some View {
         let availability = assistant.summaryAvailability(for: key)
+        let current = identity
         // Keep task and disclosure ownership stable across loading, source
         // revisions, and availability changes within this conversation.
         VStack(alignment: .leading, spacing: 0) {
             if Self.isOffered(availability, isRestoring: assistant.isRestoringConnection) {
-                if availability == .ready, isActive, let report = displayed?.report(for: identity.source) {
+                if availability == .ready, isActive, let report = displayed?.report(for: current.source) {
                     ThreadSummaryContent(report: report, detail: detail,
                         isExpanded: $summaryIsExpanded,
-                        isRefreshing: loadedIdentity != identity,
-                        refreshError: loadedIdentity == identity ? model.errorMessage : nil,
+                        isRefreshing: loadedIdentity != current,
+                        refreshError: loadedIdentity == current ? model.errorMessage : nil,
                         onOpenSource: onOpenSource, onRefresh: { attempt += 1 },
                         onSettings: { showsSettings = true }, tasks: app.tasks,
                         taskAccountEmail: app.mailbox?.account(id: detail.thread.accountID)?.account.email,
@@ -55,16 +59,22 @@ struct ThreadSummaryView: View {
                             guard loadedIdentity == identity, assistant.summaryAvailability(for: key) == .ready else { return }
                             app.requestFollowUp(suggestion)
                         })
-                        .id(identity.source)
+                        .id(current.source)
+                        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
+                            if height > 0 { memory.rememberCardHeight(height, for: key) }
+                        }
                 } else {
-                    let error = loadedIdentity == identity ? model.errorMessage : nil
+                    let error = loadedIdentity == current ? model.errorMessage : nil
+                    // While a summary this conversation has shown is fetched
+                    // again, the row keeps that card's height, so the messages
+                    // below stay where they are.
                     SummaryStatus(text: error ?? (availability == .loading ? "Getting summary ready…" : "Summarizing…"),
                         isLoading: error == nil, onRetry: error == nil ? nil : { attempt += 1 })
-                        .modifier(SummarySurface())
+                        .modifier(SummarySurface(minHeight: error == nil ? memory.cardHeight(for: key) : nil))
                 }
             }
         }
-        .task(id: identity) {
+        .task(id: current) {
             let requested = identity
             loadedIdentity = nil
             if displayed?.source != requested.source { displayed = nil }
@@ -73,10 +83,17 @@ struct ThreadSummaryView: View {
             }
             let forceRefresh = requested.attempt != handledAttempt
             handledAttempt = requested.attempt
+            let started = ContinuousClock.now
             await model.load(key: key, revision: requested.source.revision, assistant: assistant,
                 forceRefresh: forceRefresh, expectedMessageIDs: Set(detail.messages.map(\.id)))
             guard !Task.isCancelled, requested == identity else { return }
             if let report = model.report {
+                // A summary the reader watched load changes the card's height
+                // in front of them, so the conversation moves with it. A saved
+                // summary lands before its loading row is noticed and needs no motion.
+                if displayed == nil, ContinuousClock.now - started >= Tokens.Motion.loadingDelay {
+                    motion?.summaryWillLand()
+                }
                 displayed = .init(source: requested.source, value: report)
             }
             loadedIdentity = requested
@@ -525,13 +542,15 @@ private struct SummaryStatus: View {
 }
 
 private struct SummarySurface: ViewModifier {
+    /// Keeps the card at least this tall, with its content at the top.
+    var minHeight: CGFloat? = nil
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorSchemeContrast) private var contrast
 
     func body(content: Content) -> some View {
         content
             .padding(Tokens.Space.s4)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(maxWidth: .infinity, minHeight: minHeight, alignment: .topLeading)
             .background(reduceTransparency ? Tokens.Surface.muted : Tokens.ConversationHeader.surface,
                 in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
             .overlay {
@@ -540,5 +559,55 @@ private struct SummarySurface: ViewModifier {
                         lineWidth: Tokens.Border.hairline)
                     .allowsHitTesting(false)
             }
+    }
+}
+
+/// What a summary view keeps between body runs. Nothing observes it, so
+/// remembering a value doesn't run the body again.
+@MainActor private final class ThreadSummaryMemory {
+    private var hashed: (detail: ThreadDetail, revision: String)?
+    private var card: (key: ThreadKey, height: CGFloat)?
+
+    /// The revision sorts and digests every message. It's computed once for
+    /// each conversation value, not on each body run.
+    func revision(for detail: ThreadDetail) -> String {
+        if let hashed, hashed.detail == detail { return hashed.revision }
+        let revision = ThreadSummaryModel.revision(for: detail)
+        hashed = (detail, revision)
+        return revision
+    }
+
+    /// The height of the last summary card shown for `key`.
+    func cardHeight(for key: ThreadKey) -> CGFloat? {
+        guard let card, card.key == key else { return nil }
+        return card.height
+    }
+
+    func rememberCardHeight(_ height: CGFloat, for key: ThreadKey) {
+        card = (key, height)
+    }
+}
+
+/// Lets a summary card move the conversation around it. The card reports a
+/// summary that is about to land, and the conversation animates that layout
+/// pass, so the messages below the card slide to their new place.
+@MainActor @Observable final class ThreadSummaryMotion {
+    private(set) var landings = 0
+
+    func summaryWillLand() { landings &+= 1 }
+}
+
+extension View {
+    /// Animates this content's layout when a summary reported to `motion` lands.
+    func followsThreadSummary(_ motion: ThreadSummaryMotion) -> some View {
+        modifier(ThreadSummaryFollower(motion: motion))
+    }
+}
+
+private struct ThreadSummaryFollower: ViewModifier {
+    let motion: ThreadSummaryMotion
+
+    func body(content: Content) -> some View {
+        content.ternAnimation(value: motion.landings, duration: Tokens.Motion.slow)
     }
 }
