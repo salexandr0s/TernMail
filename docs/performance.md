@@ -2,11 +2,11 @@
 
 Tern caches calendar layout, mail rows, message documents, and decoded contact
 images. Foreground reading has priority over speculative preparation. The
-implementation is still being measured. No attended run covers mode switches or
-message selection, switches to and from the attachment library miss the 100 ms
-target, the mailbox and the reader exceed the scrolling budget, and the build
-with the toolbar, hover and library changes of 13 November has not been
-installed.
+implementation is still being measured. Nobody has watched a run of the mode
+switches or of message selection. The mail list and the conversations of
+expanded messages exceed the scrolling budget. On the code of `2e8f3287`, the
+switches to and from the attachment library met the 100 ms target in the one
+run made.
 
 Paths under `evidence/` refer to the local audit archive; those artifacts are not included in this repository.
 
@@ -1566,9 +1566,9 @@ never got a valid run.
 
 `App/Design/KeyboardNavigation.swift` already holds a narrower form of this
 for the mail list: the star on each row binds its own focus state only while
-Keyboard navigation is on. The star is still a `.borderless` button. Whether
-it costs the list what the reader's buttons cost a conversation is not
-measured.
+Keyboard navigation is on. The star was still a `.borderless` button then, and
+what it cost the list was not measured until 19 November (below, under
+"Buttons on the mail list's rows").
 
 #### A style for a row's buttons
 
@@ -2247,6 +2247,60 @@ header's look, and `reader-read-100` then began before the newest message's
 body had loaded. Which of the two differences turns the result around was not
 tested.
 
+### Buttons on the mail list's rows
+
+Each row of the mail list draws two buttons in the borderless style: the
+sender's avatar and the star. `e09bc693`, on the branch `perf/list-row-buttons`
+and not in `main`, gives both `RowButtonStyle` (above, under "A style for a
+row's buttons"). While Keyboard navigation is off they draw their label and
+take the click with a tap gesture. While it is on they are borderless buttons
+that take focus, as before.
+
+The change was built on `f9d2ba15`, which has the app code of `2e8f3287`. It
+ran twice in the scroll scope, at 21:44 and 21:59, against the app built from
+`f9d2ba15` without it: the run of AppKit menus above, at 20:41, and a copy of
+the same app at 21:53. No input reached any run. Late callbacks:
+
+| Scroll | Before, 20:41 | Before, 21:53 | Change, 21:44 | Change, 21:59 |
+| --- | --- | --- | --- | --- |
+| `mailbox` | 1.5% | 1.5% | 1.4% | 1.0% |
+| `mailbox-after` | 1.6% | 1.5% | 1.4% | 1.3% |
+| `mailbox-pointer` | 3.9% | 3.7% | 0.3% | 0.4% |
+
+In `mailbox-pointer` the rows move under a resting pointer. Before the change,
+most of its late callbacks were ones in which no row entered: 63 and 62, against
+4 and 8 with the change. Why the system style delayed those frames was not
+profiled. In `mailbox`, a callback in which a row entered kept the main thread
+awake 17.0 and 16.4 ms at the median with the change, against 18.4 and 18.2 ms
+before.
+
+In the other scrolls the two builds were as far apart as two runs of one build.
+The conversations of expanded messages were late in 3.1% to 3.9% of callbacks
+with either build, the read conversation in 0.2% to 0.6% and the calendar in
+0.1% to 0.2%. The attachment library was late in 0.7% and 0.6% with the change
+and in 1.0% in both runs before; it has no mail rows, and the difference was
+not looked into.
+
+`mailbox-after` is still over the 1% budget in both runs, and `mailbox` in one.
+Nearly all their late callbacks are ones in which a row entered, and a row
+entering keeps the main thread awake about 16.5 ms, a frame at 60 Hz.
+
+The change is not in `main` because its clicks are unchecked. A tap gesture in
+a table row has to act without the table also selecting the row, and the
+branch's hosted test for that has not passed in a form that checks it. The
+first version found the star and the avatar by clicking along the row's first
+line: each acted, and the row still offered VoiceOver its star action. But no
+click beside them selected the row either, so the test could not tell, and
+after the suite the test host never exited. A sample showed a mouse-down that
+the window's gestures had held reaching the table after the test, and the
+table waiting in drag detection for a mouse-up. That version sent each click's
+down and up with one timestamp. With them queued 30 ms apart, a click on the
+subject did not select the row, and the test window was not key. The version
+on the branch gives the test a window that reports itself key. The screen
+locked before it ran. The other 32 tests in the list's suite passed with the
+change; the rest of the hosted suite did not run on it, and nobody has clicked
+a star or an avatar in the list by hand.
+
 ### Opening, compose and mode switches
 
 Opening a message showed no difference between the builds. The two runs of
@@ -2255,39 +2309,45 @@ Opening a message showed no difference between the builds. The two runs of
 with AppKit menus and 142 ms with Row style. `reader-recent` ranged from 45 to
 55 ms the same way.
 
-The compose and workspace scopes ran once for each of `929a2ad6` and
-`c55daf22`:
+The compose and workspace scopes ran at about 20:15, once on `929a2ad6` and
+once on `c55daf22`, and again between 21:26 and 21:44 with `f9d2ba15` beside
+them. `f9d2ba15` has the app code of `2e8f3287`. In the later runs compose ran
+twice on `f9d2ba15` and twice on `929a2ad6`, and workspace once on each of the
+three. Compose, with the runs of a build pooled:
 
-| p50 / p95 in ms | `929a2ad6` | `c55daf22` |
-| --- | --- | --- |
-| New Message, the window is key | 30 / 40 | 47 / 54 |
-| New Message, the main thread is first free, window on screen | 191 / 207 | 205 / 230 |
-| New Message, the main thread stays free | 268 / 302 | 268 / 304 |
-| Reply, a field has the cursor | 263 / 335 | 249 / 264 |
-| Warm switch to Calendar | 58 / 67 | 48 / 51 |
-| Warm switch to Mail | 59 / 68 | 49 / 51 |
-| To the attachment library | 75 / 86 | 80 / 87 |
-| From the library to Mail | 86 / 99 | 93 / 104 |
+| p50 / p95 in ms | `929a2ad6`, 3 runs | `c55daf22`, 1 run | `f9d2ba15`, 2 runs |
+| --- | --- | --- | --- |
+| New Message, the window is key | 41 / 52 | 47 / 54 | 32 / 52 |
+| New Message, the main thread is first free, window on screen | 200 / 230 | 205 / 230 | 198 / 224 |
+| New Message, the main thread stays free | 276 / 307 | 268 / 304 | 262 / 296 |
+| Reply, a field has the cursor | 255 / 290 | 249 / 264 | 249 / 267 |
 
-A new message's window became key 17 ms later on `c55daf22`, with a 95%
-bootstrap interval over the openings of 16 to 18 ms, and was on screen 15 ms
-later, but the main thread stayed free at the same time. `1739be42` and
-`32c0d056` both change the code that opens a compose window, and neither was
-measured alone. On 18 November the build before this pass took 45 ms to the key
-window (above), so the difference may not hold in another session. A reply
-reached the cursor 14 ms sooner. Closing took 15 to 17 ms at the median in both
-builds.
+The time to a new message's key window depends on the run, not the build. Its
+median was 30, 46 and 46 ms in the three runs of `929a2ad6`, 29 and 46 ms in
+the two of `f9d2ba15`, and 47 ms in the run of `c55daf22`. The 17 ms between
+the first two runs was that difference, and what decides it for a run was not
+found. A reply reached the cursor about 6 ms sooner on both later builds.
+Closing took 14 to 17 ms at the median in all three.
 
-The warm switches between Mail and Calendar were about 10 ms faster on
-`c55daf22`. The way back to Mail from the library was 7.7 ms slower, with an
-interval of 1.6 to 10.7 ms, and its p95 of 104 ms went over the 100 ms budget,
-which `929a2ad6` met at 99 ms. The way to the library was 5 ms slower, with an
-interval from 0.7 ms faster to 7.4 ms slower. The causes of these differences
-were not looked into.
+The workspace scope, one run to a column:
+
+| p50 / p95 in ms | `929a2ad6`, 20:20 | `929a2ad6`, 21:30 | `c55daf22`, 20:18 | `c55daf22`, 21:42 | `f9d2ba15`, 21:28 |
+| --- | --- | --- | --- | --- | --- |
+| Warm switch to Calendar | 58 / 67 | 48 / 53 | 48 / 51 | 49 / 55 | 47 / 51 |
+| Warm switch to Mail | 59 / 68 | 48 / 51 | 49 / 51 | 49 / 58 | 47 / 49 |
+| To the attachment library | 75 / 86 | 73 / 80 | 80 / 87 | 74 / 81 | 72 / 79 |
+| From the library to Mail | 86 / 99 | 85 / 90 | 93 / 104 | 88 / 96 | 84 / 89 |
+
+The first run of `929a2ad6` was slow throughout: the main actor was held for
+100 ms or more 34 times in it, against 1 to 7 times in the others, so the warm
+switches were not faster on `c55daf22`. The way back to Mail from the library
+was 3 to 7 ms slower on `c55daf22` than on `929a2ad6` at the median in both
+pairs, and only the first run of `c55daf22` went over the 100 ms budget. On
+`f9d2ba15`, which differs from `c55daf22` only in the header, it took 84 / 89
+ms. That is one run.
 
 Not checked in this pass: the opening hold under a physical wheel or trackpad
 (a hosted test sends synthetic ones; see "Where a conversation opens") and with
-a body that takes more than 2 s to load, the causes of the compose and library
-differences above, and the UI tests, which need Automation Mode and so an
-administrator's password. The benchmark counted its runs as attended, but
-nobody watched them.
+a body that takes more than 2 s to load, what sets a run's time to the key
+window, and the UI tests, which need Automation Mode and so an administrator's
+password. The benchmark counted its runs as attended, but nobody watched them.
