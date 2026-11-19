@@ -205,23 +205,56 @@ import WebKit
         settings.set(ReadingPreferences.MarkRead.manually.rawValue, forKey: ReadingPreferences.markReadKey)
         let window = try await makeWindow(ThreadView(key: key, mailbox: mailbox).environment(app).defaultAppStorage(settings))
         defer { window.close(); settings.removePersistentDomain(forName: suite) }
-        func isAtTop(_ messageID: String) -> Bool {
-            guard let scroll = descendants(in: window.contentView).compactMap({ $0 as? NSScrollView })
-                      .first(where: { !self.messageViews(in: $0.documentView).isEmpty }),
-                  let header = descendants(in: scroll.documentView).compactMap({ $0 as? MessageHeaderClickView })
-                      .first(where: { $0.messageID == messageID }) else { return false }
-            let clip = scroll.contentView
-            return abs(header.convert(header.bounds, to: clip).minY - (clip.bounds.minY + scroll.contentInsets.top)) < 2
-        }
         let newest = key.threadID + "-29"
         try await waitUntil {
-            self.messageViews(in: window.contentView).contains { !$0.isLoading && $0.frame.height > 400 } && isAtTop(newest)
+            self.messageViews(in: window.contentView).contains { !$0.isLoading && $0.frame.height > 400 } && self.isAtTop(newest, in: window)
         }
         let linked = key.threadID + "-25"
         app.mailURLs.receive(try #require(MailLink(accountID: key.accountID, threadID: key.threadID, messageID: linked).ternURL))
-        try await waitUntil { isAtTop(linked) }
+        try await waitUntil { self.isAtTop(linked, in: window) }
         try await Task.sleep(for: .milliseconds(300))
-        #expect(isAtTop(linked), "The opening message must not take the reader back after a link")
+        #expect(isAtTop(linked, in: window), "The opening message must not take the reader back after a link")
+        window.close()
+        await app.signOut()
+    }
+
+    /// A wheel or trackpad scroll that comes while the reader holds the opening
+    /// message ends the hold, so the reader stays where the scroll left it.
+    @Test(.timeLimit(.minutes(1)), arguments: [false, true])
+    func scrollingByHandWhileTheOpeningMessageIsHeldEndsTheHold(trackpad: Bool) async throws {
+        try #require(ProcessInfo.processInfo.arguments.contains("--ui-audit"))
+        let app = AppModel()
+        await app.start()
+        let mailbox = try #require(app.mailbox), cache = try #require(app.cache)
+        try await waitUntil { mailbox.hasSyncedOnce }
+        let key = ThreadKey(accountID: "ui-audit", threadID: "reader-hand-\(UUID().uuidString)")
+        try await seed(cache, key: key, count: 30, text: String(repeating: "A tall synthetic paragraph for the opening message. ", count: 120),
+                       unread: false)
+        let suite = "ReaderViewportTests.\(UUID().uuidString)"
+        let settings = try #require(UserDefaults(suiteName: suite))
+        settings.set(ReadingPreferences.MarkRead.manually.rawValue, forKey: ReadingPreferences.markReadKey)
+        // The hold starts when the conversation loads, after this.
+        let opened = ContinuousClock.now
+        let window = try await makeWindow(ThreadView(key: key, mailbox: mailbox).environment(app).defaultAppStorage(settings))
+        defer { window.close(); settings.removePersistentDomain(forName: suite) }
+        let newest = key.threadID + "-29"
+        try await waitUntil { self.isAtTop(newest, in: window) }
+        let scroll = try #require(readerScrollView(in: window))
+        let before = scroll.contentView.bounds.origin.y
+        // A wheel sends no phase. A trackpad gesture may begin, then begins,
+        // moves and ends, with time between its events as real input has:
+        // sent all at once, it ends before AppKit applies any of its moves.
+        let phases: [CGScrollPhase?] = trackpad ? [.mayBegin, .began, .changed, .changed, .ended] : [nil, nil, nil]
+        for phase in phases {
+            scroll.scrollWheel(with: try scrollEvent(up: phase == .mayBegin || phase == .ended ? 0 : 80, phase: phase))
+            if trackpad { try await Task.sleep(for: .milliseconds(16)) }
+        }
+        #expect(ContinuousClock.now - opened < .seconds(2), "The scroll must come while the reader holds the opening message")
+        try await waitUntil { abs(scroll.contentView.bounds.origin.y - before) >= 100 }
+        // The body loading changes the heights the hold corrects for.
+        try await waitUntil { self.messageViews(in: window.contentView).contains { !$0.isLoading && $0.frame.height > 400 } }
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(!isAtTop(newest, in: window), "The opening message must not take the reader back after a scroll by hand")
         window.close()
         await app.signOut()
     }
@@ -278,6 +311,28 @@ import WebKit
     private func descendants(in view: NSView?) -> [NSView] {
         guard let view else { return [] }
         return [view] + view.subviews.flatMap { descendants(in: $0) }
+    }
+
+    /// The scroll view that holds the conversation's messages.
+    private func readerScrollView(in window: NSWindow) -> NSScrollView? {
+        descendants(in: window.contentView).compactMap { $0 as? NSScrollView }.first { !self.messageViews(in: $0.documentView).isEmpty }
+    }
+
+    /// Whether the message's header is at the top of the reader.
+    private func isAtTop(_ messageID: String, in window: NSWindow) -> Bool {
+        guard let scroll = readerScrollView(in: window),
+              let header = descendants(in: scroll.documentView).compactMap({ $0 as? MessageHeaderClickView })
+                  .first(where: { $0.messageID == messageID }) else { return false }
+        let clip = scroll.contentView
+        return abs(header.convert(header.bounds, to: clip).minY - (clip.bounds.minY + scroll.contentInsets.top)) < 2
+    }
+
+    /// A scroll wheel event that moves the content up by `points`, with a
+    /// trackpad gesture's `phase` when there is one.
+    private func scrollEvent(up points: Int32, phase: CGScrollPhase?) throws -> NSEvent {
+        let event = try #require(CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: points, wheel2: 0, wheel3: 0))
+        if let phase { event.setIntegerValueField(.scrollWheelEventScrollPhase, value: Int64(phase.rawValue)) }
+        return try #require(NSEvent(cgEvent: event))
     }
 
     private func seed(_ cache: MailCache, key: ThreadKey, count: Int, text: String, unread: Bool = true) async throws {

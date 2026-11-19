@@ -1876,6 +1876,17 @@ by 74 pt and shrank by 14 pt with the reader at its end, and once the body was
 the hold counted the reader following the end as a scroll from elsewhere and
 let go, so the message stayed 385 pt below the top.
 
+A second hosted test scrolls by hand while the hold runs: three wheel steps
+of 80 pt in one case, a trackpad gesture of the same length in the other. It
+then waits for the body to load and checks that the newest message's header
+has not come back to the top. Sent all at once, the gesture's events started
+and ended a live scroll without moving the reader, both with the hold on and
+2.5 s after the hold ended, so the test sends them 16 ms apart, like real
+input. In a diagnostic run the paced gesture moved the reader 240 pt within
+60 ms, and the reader stayed there after the body loaded. With the hold
+changed to ignore scroll phases and to keep a scroll by hand as its own, both
+cases fail. The events come from the test, not from a wheel or trackpad.
+
 `reader-read-100` now waits for the body like the other two reader scenarios.
 It then scrolls the reader back to the top and checks that it stays there for
 300 ms before the measured scroll starts, so the scroll covers the same rows
@@ -2168,7 +2179,8 @@ entering a read conversation can still be late. Since `abb6a32e`,
 top before it measures, so its later runs start from a loaded conversation and
 do not compare directly with those.
 
-Not checked in this pass: the timings above, the opening hold under wheel and
-trackpad scrolling and with a body that takes more than 2 s to load, the
+Not checked in this pass: the timings above, the opening hold under a
+physical wheel or trackpad (a hosted test sends synthetic ones; see "Where a
+conversation opens") and with a body that takes more than 2 s to load, the
 header's new weights in the real app, and the UI tests, which need Automation
 Mode and so an administrator's password.
