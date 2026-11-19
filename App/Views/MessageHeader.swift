@@ -29,7 +29,7 @@ struct MessageHeader<SenderItems: View>: View {
                     .frame(width: Tokens.Control.iconButton, height: Tokens.Control.iconButton)
                     .contentShape(Rectangle())
             }
-            .buttonStyle(RowButtonStyle(system: .plain))
+            .buttonStyle(RowButtonStyle())
             .foregroundStyle(.secondary)
             .ternHover()
             .help(isExpanded ? "Collapse message" : "Expand message")

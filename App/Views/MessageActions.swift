@@ -63,13 +63,8 @@ struct MessageActions<SenderItems: View>: View {
                 MessageMenuItems(message: message, mailbox: mailbox, selectedText: selectedText,
                                  markUnreadFromHere: markUnreadFromHere, compose: compose)
                 senderItems
-            } label: {
-                // More keeps the size and color it had as an AppKit menu button.
-                MessageActionIcon("More actions for this message", systemImage: "ellipsis",
-                                  width: Tokens.Space.s5, height: Tokens.Space.s4)
-                    .foregroundStyle(.primary)
-            }
-            .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden)
+            } label: { MessageActionIcon("More actions for this message", systemImage: "ellipsis") }
+            .menuStyle(.borderlessButton).menuIndicator(.hidden)
             .fixedSize()
             .accessibilityLabel("More actions for this message")
             .accessibilityIdentifier("message-more-\(message.id)")
@@ -78,7 +73,7 @@ struct MessageActions<SenderItems: View>: View {
         }
         // The buttons set their own style. A row style here would also reach
         // the commands inside More.
-        .labelStyle(.iconOnly).buttonStyle(.plain).imageScale(.medium)
+        .labelStyle(.iconOnly).buttonStyle(.borderless).imageScale(.medium)
         .foregroundStyle(.secondary)
         // A click that lands between two actions stays here, so it can't
         // open or close the message behind them.
@@ -90,21 +85,16 @@ struct MessageActions<SenderItems: View>: View {
 private struct MessageActionIcon: View {
     let title: String
     let systemImage: String
-    let width: CGFloat
-    let height: CGFloat
 
-    init(_ title: String, systemImage: String, width: CGFloat = Tokens.Control.iconButton,
-         height: CGFloat = Tokens.Control.iconButton) {
+    init(_ title: String, systemImage: String) {
         self.title = title
         self.systemImage = systemImage
-        self.width = width
-        self.height = height
     }
 
     var body: some View {
         Label(title, systemImage: systemImage)
             .labelStyle(.iconOnly)
-            .frame(width: width, height: height)
+            .frame(width: Tokens.Control.iconButton, height: Tokens.Control.iconButton)
             .contentShape(Rectangle())
     }
 }
@@ -269,42 +259,15 @@ struct MessageAddressMenu: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                addressMenu {
-                    Label("Address actions", systemImage: "ellipsis")
-                        .labelStyle(.iconOnly)
-                        .frame(width: Tokens.Space.s6, height: Tokens.Space.s6)
-                        .contentShape(Rectangle())
-                }
-                // Only an open details popover builds these, so they keep the
-                // AppKit menu button.
-                .menuStyle(.borderlessButton)
-                .fixedSize()
+                addressMenu.fixedSize()
             }
         } else {
-            addressMenu {
-                HStack(spacing: Tokens.Space.s1) {
-                    Text(displayName ?? address.name ?? address.address)
-                        .lineLimit(1)
-                        .foregroundStyle(Color(nsColor: .textColor))
-                    Image(systemName: "chevron.down")
-                        .font(.caption2.weight(.bold))
-                        .imageScale(.small)
-                        .accessibilityHidden(true)
-                }
-                .padding(.leading, Tokens.Space.s0_5)
-                .padding(.trailing, Tokens.Space.s1_5)
-                .contentShape(Rectangle())
-            }
-            // Every message header builds this menu, so SwiftUI draws it. The
-            // label draws the chevron and the text color that the AppKit menu
-            // button drew.
-            .menuStyle(.button)
-            .buttonStyle(.plain)
+            addressMenu
         }
     }
 
-    private func addressMenu<MenuLabel: View>(@ViewBuilder label: () -> MenuLabel) -> some View {
-        Menu(content: {
+    private var addressMenu: some View {
+        Menu {
             Text(address.address)
             Divider()
             Button("Copy Address") { NSPasteboard.general.replaceContents(with: address.address) }
@@ -315,8 +278,20 @@ struct MessageAddressMenu: View {
             Button("Search Messages From") { mailbox.searchFromAddress(address.address, accountID: accountID) }
             Button("Search Messages To") { mailbox.searchToAddress(address.address, accountID: accountID) }
             Button("Create Filter…") { mailbox.requestFilter(sender: address.address, recipients: nil, subject: nil, accountID: accountID) }
-        }, label: label)
-        .menuIndicator(.hidden)
+        } label: {
+            if showsFullAddress {
+                Label("Address actions", systemImage: "ellipsis")
+                    .labelStyle(.iconOnly)
+                    .frame(width: Tokens.Space.s6, height: Tokens.Space.s6)
+                    .contentShape(Rectangle())
+            } else {
+                Text(displayName ?? address.name ?? address.address)
+                    .lineLimit(1)
+                    .frame(minHeight: Tokens.Space.s6, alignment: .leading)
+            }
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(showsFullAddress ? .hidden : .visible)
         .ternHover()
         .help(address.displayString)
         .accessibilityLabel("Address actions for \(address.displayString)")
