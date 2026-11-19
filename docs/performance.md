@@ -1309,13 +1309,15 @@ moved its build by 0.2 to 0.9 ms of 6.1 ms in the test harness, and scroll runs
 without the fit check, the context menu, the popovers or the hover were no
 better.
 
-Since `4012c9d3` the header uses these styles and keeps its look. The sender's
-label draws its own arrow, More keeps the color and size the AppKit button gave
-it, and the actions stay where they were. Captures of the header before and
-after match except the sender: the medium weight for read mail and semibold for
-unread, which the code always set, now show, and its arrow sits 2.5 to 4 points
-further right. The hover highlights of More and the sender are 2 and about 4
-points larger, and the expand button dims while pressed.
+`4012c9d3` gave the header these styles and kept its look. The sender's label
+drew its own arrow, More kept the color and size the AppKit button gave it, and
+the actions stayed where they were. Captures of the header before and after
+matched except the sender: the medium weight for read mail and semibold for
+unread, which the code always set, showed, and its arrow sat 2.5 to 4 points
+further right. The hover highlights of More and the sender were 2 and about 4
+points larger, and the expand button dimmed while pressed. Scroll runs of the
+app on 19 November found rows entering slower with these styles, and
+`2e8f3287` undid them; see "Finishing pass, 19 November 2026".
 
 #### The header's click surface
 
@@ -1461,7 +1463,9 @@ scheduled differently from one driven by the display link, and only an attended
 run shows that. And nothing here says how to cut the 23 ms a row costs on a
 performance core; the options not yet tried are building a row over two frames
 and the lighter control styles above. The lighter styles were applied on
-19 November in `4012c9d3`.
+19 November in `4012c9d3` and taken out the same day in `2e8f3287`, because
+rows entered slower with them in the app (see "Rows entering with the SwiftUI
+header").
 
 #### What runs after a row's views
 
@@ -2144,7 +2148,7 @@ full runs with the screen unlocked, the one on the final tree included.
 ## Finishing pass, 19 November 2026
 
 This pass is the branch `chore/finishing-pass`, merged into `main` on
-19 November:
+19 November, and two commits on `main` after it:
 
 | Commit | Change |
 | --- | --- |
@@ -2154,33 +2158,136 @@ This pass is the branch `chore/finishing-pass`, merged into `main` on
 | `8e05b9c1` | A launch reads the saved labels before the mailbox shows (above, under "The table warning at launch"). |
 | `4012c9d3` | The message header draws its controls in SwiftUI (above, under "What fills the frame a message enters in"). |
 | `abb6a32e` | A conversation opens at its first expanded message (above, under "Where a conversation opens"). |
+| `17082587` | A hosted test scrolls by hand while the opening hold runs (above, under "Where a conversation opens"). |
+| `2e8f3287` | The header's menus and buttons are AppKit controls again, which undoes `4012c9d3` (below, under "Rows entering with the SwiftUI header"). |
 
 The hosted suite passed on `abb6a32e`: 1,022 tests in 148 suites in 277 s, with
 the screen unlocked and no input during the run. The reader's six suites passed
 on the two reader commits alone, 39 tests with 3 skipped in that configuration.
 The new opening test failed in its first run on a fault in the hold, which was
-fixed before the commit.
+fixed before the commit. The suite passed again on `17082587`, 1,023 tests in
+285 s, and on `2e8f3287`, 1,023 tests in 281 s. `ClaudeHelperTests` passed on
+`17082587` (17 tests), and the Core package's 961 tests in 141 suites passed on
+`c55daf22`; no later commit changes the package.
 
-The before and after benchmarks were not run. The plan was to alternate runs of
-`929a2ad6` and the final tree, one scope at a time, each after 30 s without
-input, because the Mac was in use that day. The first, a scroll-only run of
-`929a2ad6`, waited 31 minutes: first for the Mac to be used again, since an idle
-Mac would have reached its screensaver during the run, then for 30 s without
-input. Input from the person at the Mac invalidated it 30 s in (36 events), and
-the runner was stopped there so that later runs would not take the screen from
-them. This pass has no scroll, reader, compose or workspace timings of its own.
+### The pass against its first commit
 
-What is known about the lighter styles comes from the runs of 14 November above:
-1.7% and 1.9% of callbacks were late in `reader-read-100` with them, against
-5.7% and 2.8% as shipped. A collapsed row entering still took the main thread
-18.6 ms at the median with them, more than a 60 Hz frame's 16.7 ms, so rows
-entering a read conversation can still be late. Since `abb6a32e`,
-`reader-read-100` waits for the newest message's body and scrolls back to the
-top before it measures, so its later runs start from a loaded conversation and
-do not compare directly with those.
+A first attempt that afternoon measured nothing: input from the person at the
+Mac invalidated its first run 30 s in (36 events), and the runner was stopped
+so that later runs would not take the screen from them. The runs here were made
+that evening, one after another between 19:55 and 21:02, with the screen
+unlocked and no input in any run. The Mac was not quiet: its one-minute load
+average was 2.9 to 17.8 when a run began.
 
-Not checked in this pass: the timings above, the opening hold under a
-physical wheel or trackpad (a hosted test sends synthetic ones; see "Where a
-conversation opens") and with a body that takes more than 2 s to load, the
-header's new weights in the real app, and the UI tests, which need Automation
-Mode and so an administrator's password.
+`929a2ad6`, the pass's first commit, changes only the Today view's model, so it
+stands for the tree before the pass, and `c55daf22` is the merged tree. Two
+variants of `c55daf22`, neither on `main`, ran in the scroll and reader scopes:
+"AppKit menus" (`f9d2ba15`) undoes `4012c9d3`, and "Row style" (`c79746db`)
+keeps its SwiftUI menus with another button style (next part). Late callbacks
+in the reader's scrolls:
+
+| Scroll | `929a2ad6` | `c55daf22`, two runs | AppKit menus | Row style |
+| --- | --- | --- | --- | --- |
+| `reader-20` | 3.1% | 4.0%, 3.8% | 3.3% | 4.6% |
+| `reader-20-pointer` | 3.3% | 4.2%, 4.5% | 3.4% | 4.0% |
+| `reader-100` | 4.0% | 3.7%, 4.0% | 3.7% | 4.7% |
+| `reader-100-pointer` | 3.0% | 3.5%, 4.1% | 3.2% | 4.4% |
+| `reader-read-100` | 0.7% | 2.0%, 2.2% | 0.5% | 5.0% |
+| `reader-read-100-pointer` | 0.3% | 2.9%, 2.9% | 0.6% | 5.2% |
+
+Median time the main thread was awake in a callback in which a row entered:
+
+| Scroll | `929a2ad6` | `c55daf22`, two runs | AppKit menus | Row style |
+| --- | --- | --- | --- | --- |
+| `reader-20` | 30.1 ms | 38.0, 39.0 ms | 30.0 ms | 44.6 ms |
+| `reader-20-pointer` | 31.2 ms | 38.4, 38.5 ms | 30.5 ms | 44.2 ms |
+| `reader-100` | 30.2 ms | 39.5, 39.9 ms | 29.8 ms | 41.4 ms |
+| `reader-100-pointer` | 31.3 ms | 41.9, 40.7 ms | 31.0 ms | 46.1 ms |
+| `reader-read-100` | 15.6 ms | 21.2, 21.3 ms | 16.5 ms | 22.7 ms |
+| `reader-read-100-pointer` | 16.8 ms | 21.3, 21.6 ms | 16.7 ms | 22.9 ms |
+
+In callbacks with no reader event the main thread was awake 2.7 to 4.6 ms at
+the median in every build. The mailbox, calendar and attachment scrolls bring
+in no message rows; their late share was 0.1% to 1.9% in every build, and 3.1%
+to 4.5% in `mailbox-pointer`. No scroll had a stall over 100 ms. Every build
+was over the 1% budget in the mailbox scrolls and in the conversations of
+expanded messages, and only `929a2ad6` and AppKit menus were within it in the
+read conversation.
+
+### Rows entering with the SwiftUI header
+
+On `c55daf22`, in a callback in which a row entered a conversation of expanded
+messages, the main thread was awake 7.2 to 10.6 ms longer at the median than on
+`929a2ad6`, and 4.5 to 5.7 ms longer when a collapsed row of the read
+conversation entered. The two runs of `c55daf22` agreed within 1.2 ms. With
+AppKit menus, rows entered within 0.9 ms of `929a2ad6`, and the read
+conversation's late share fell to 0.5% and 0.6%.
+
+`4012c9d3` drew More and the sender's menu with `.menuStyle(.button)` and
+`.buttonStyle(.plain)`, gave the action buttons `.plain` in place of
+`.borderless`, and added views to keep the header's look: the sender's arrow,
+and a label for More the size of the AppKit button. Row style kept all of that
+but gave the two menus the reader's `RowButtonStyle` in place of `.plain`; with
+keyboard navigation off, as on this Mac, that style draws the label without a
+system button. It was no faster, so the menus' `.plain` is not where the time
+goes. These runs do not separate the rest of `4012c9d3`: SwiftUI drawing the
+menus, the views added to keep the look, and the action buttons' style. Row
+style's More menu also had no accessibility element, so the header tests could
+not find it.
+
+`2e8f3287` undoes `4012c9d3` on `main`. The header looks as it did before: the
+sender's name has the AppKit menu arrow and does not show the weights the code
+sets for read and unread mail.
+
+These runs reverse what the runs of 14 November suggested (above, under "What
+fills the frame a message enters in"), in which the read conversation was late
+in 1.7% and 1.9% of callbacks with lighter styles and in 5.7% and 2.8% as
+shipped. Those runs tried a version of the styles that did not keep the
+header's look, and `reader-read-100` then began before the newest message's
+body had loaded. Which of the two differences turns the result around was not
+tested.
+
+### Opening, compose and mode switches
+
+Opening a message showed no difference between the builds. The two runs of
+`c55daf22` reached the reader in 162 and 135 ms at the median in
+`reader-local`, further apart than any two builds: 145 ms on `929a2ad6`, 138 ms
+with AppKit menus and 142 ms with Row style. `reader-recent` ranged from 45 to
+55 ms the same way.
+
+The compose and workspace scopes ran once for each of `929a2ad6` and
+`c55daf22`:
+
+| p50 / p95 in ms | `929a2ad6` | `c55daf22` |
+| --- | --- | --- |
+| New Message, the window is key | 30 / 40 | 47 / 54 |
+| New Message, the main thread is first free, window on screen | 191 / 207 | 205 / 230 |
+| New Message, the main thread stays free | 268 / 302 | 268 / 304 |
+| Reply, a field has the cursor | 263 / 335 | 249 / 264 |
+| Warm switch to Calendar | 58 / 67 | 48 / 51 |
+| Warm switch to Mail | 59 / 68 | 49 / 51 |
+| To the attachment library | 75 / 86 | 80 / 87 |
+| From the library to Mail | 86 / 99 | 93 / 104 |
+
+A new message's window became key 17 ms later on `c55daf22`, with a 95%
+bootstrap interval over the openings of 16 to 18 ms, and was on screen 15 ms
+later, but the main thread stayed free at the same time. `1739be42` and
+`32c0d056` both change the code that opens a compose window, and neither was
+measured alone. On 18 November the build before this pass took 45 ms to the key
+window (above), so the difference may not hold in another session. A reply
+reached the cursor 14 ms sooner. Closing took 15 to 17 ms at the median in both
+builds.
+
+The warm switches between Mail and Calendar were about 10 ms faster on
+`c55daf22`. The way back to Mail from the library was 7.7 ms slower, with an
+interval of 1.6 to 10.7 ms, and its p95 of 104 ms went over the 100 ms budget,
+which `929a2ad6` met at 99 ms. The way to the library was 5 ms slower, with an
+interval from 0.7 ms faster to 7.4 ms slower. The causes of these differences
+were not looked into.
+
+Not checked in this pass: the opening hold under a physical wheel or trackpad
+(a hosted test sends synthetic ones; see "Where a conversation opens") and with
+a body that takes more than 2 s to load, the causes of the compose and library
+differences above, and the UI tests, which need Automation Mode and so an
+administrator's password. The benchmark counted its runs as attended, but
+nobody watched them.
