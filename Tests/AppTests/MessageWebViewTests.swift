@@ -313,6 +313,8 @@ import WebKit
         defer { spare.stopLoading(); other.stopLoading() }
         #expect(!spare.configuration.websiteDataStore.isPersistent)
         #expect(spare.configuration.websiteDataStore !== other.configuration.websiteDataStore)
+        // Message views share a process pool. Their rule lists and message handlers stay apart.
+        #expect(spare.configuration.userContentController !== other.configuration.userContentController)
         #expect(!spare.configuration.defaultWebpagePreferences.allowsContentJavaScript)
         try await waitFor { !spare.isLoading }
         let page = try await spare.evaluateJavaScript(

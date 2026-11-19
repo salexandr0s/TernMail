@@ -41,7 +41,7 @@ private struct SidebarRowFeedback: ViewModifier {
             }
             .accessibilityIdentifier(box.sidebarAccessibilityIdentifier)
             .listRowInsets(.horizontal, Tokens.Space.s2)
-            .onHover { isHovered = $0 }
+            .ternOnHover { isHovered = $0 }
             .listRowBackground(highlight.map { color in
                 RoundedRectangle(cornerRadius: Tokens.Radius.md).fill(color)
                     .padding(.horizontal, Tokens.Space.s2 + Tokens.Space.s0_5)

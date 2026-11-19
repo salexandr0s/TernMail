@@ -4,8 +4,16 @@ import SwiftUI
 struct TodayView: View {
     let model: TodayModel
     let dashboard: TodayDashboardModel
+    /// Today is the section in front and on screen. It is false while another
+    /// section is in front and while the utility panel fills a narrow window.
     let isActive: Bool
+    /// Today is the section in front, on screen or under the utility panel.
+    /// Nil means the same as `isActive`.
+    var isInFront: Bool? = nil
     var automaticFollowUps: AutomaticFollowUpCoordinator? = nil
+    /// Today has nothing that takes the keyboard, so as it comes to front it
+    /// takes the keyboard from the sections behind it.
+    @State private var keyboard = SectionKeyboard()
     @State private var windowVisible = false
     /// Whether the calendar fits beside the work column. The page learns the
     /// window's width only through this, so a resize redraws it at the threshold alone.
@@ -45,6 +53,7 @@ struct TodayView: View {
             windowVisible = visible
             if !visible { model.endVisit(); dashboard.stop() }
         })
+        .sectionKeyboard(keyboard, isInFront: isInFront ?? isActive, isShown: isActive)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("today-view")
         .task(id: VisitKey(context: model.visitContext, isPresented: isPresented)) {

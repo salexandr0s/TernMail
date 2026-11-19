@@ -15,6 +15,8 @@ struct GoogleTaskRow: View {
     /// day, so rows made on different days must not compare equal.
     private let createdAt = Date.now
     @Environment(\.openURL) private var openURL
+    /// The buttons bind their focus only while Keyboard navigation lets them take it.
+    @Environment(\.buttonsTakeKeyboardFocus) private var buttonsTakeFocus
     @State private var isHovered = false
     @FocusState private var focusedControl: Control?
     @AccessibilityFocusState private var accessibleControl: Control?
@@ -42,7 +44,7 @@ struct GoogleTaskRow: View {
             }
             .buttonStyle(.plain)
             .disabled(isBusy)
-            .focused($focusedControl, equals: .complete)
+            .focused($focusedControl, equals: .complete, whileButtonsTakeFocus: buttonsTakeFocus)
             .accessibilityFocused($accessibleControl, equals: .complete)
             .help(task.isCompleted ? "Mark incomplete" : "Mark complete")
             .accessibilityLabel("\(isPending ? "Adding task" : task.isCompleted ? "Mark incomplete" : "Complete"): \(task.title)")
@@ -57,7 +59,7 @@ struct GoogleTaskRow: View {
                     Button(action: onEdit) { taskText }
                         .buttonStyle(.plain)
                         .disabled(isBusy || !allowsEditing)
-                        .focused($focusedControl, equals: .title)
+                        .focused($focusedControl, equals: .title, whileButtonsTakeFocus: buttonsTakeFocus)
                         .accessibilityFocused($accessibleControl, equals: .title)
                         .help(task.title)
                         .accessibilityLabel("Edit task: \(task.title)")
@@ -86,7 +88,7 @@ struct GoogleTaskRow: View {
         .padding(.horizontal, Tokens.Space.s2)
         .background(showsActions ? Color.primary.opacity(Tokens.Opacity.hover) : .clear,
             in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
-        .onHover { isHovered = $0 }
+        .ternOnHover { isHovered = $0 }
         .ternAnimation(value: showsActions)
         .ternAnimation(value: isBusy, duration: Tokens.Motion.fast)
         .accessibilityElement(children: .contain)
@@ -170,7 +172,7 @@ struct GoogleTaskRow: View {
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)
             .disabled(isBusy)
-            .focused($focusedControl, equals: .source)
+            .focused($focusedControl, equals: .source, whileButtonsTakeFocus: buttonsTakeFocus)
             .accessibilityFocused($accessibleControl, equals: .source)
             .help(Self.emailSubject(task.notes ?? "") ?? "Open source email")
             .accessibilityLabel("Open source email: \(Self.emailSubject(task.notes ?? "") ?? task.title)")
@@ -197,7 +199,7 @@ struct GoogleTaskRow: View {
         }
         .buttonStyle(.plain).foregroundStyle(.secondary)
         .disabled(control == .edit && !allowsEditing)
-        .focused($focusedControl, equals: control)
+        .focused($focusedControl, equals: control, whileButtonsTakeFocus: buttonsTakeFocus)
         .accessibilityFocused($accessibleControl, equals: control)
         .ternHover(isEnabled: !isBusy)
         .help(title).accessibilityLabel("\(title): \(task.title)")

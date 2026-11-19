@@ -168,6 +168,26 @@ import Testing
         #expect(try await cache.mailAnalytics(query: .init(accountIDs: ["a"], period: .allTime)).totalCount == 1)
     }
 
+    /// Gmail dates carry milliseconds, which don't always come back from the
+    /// database as the same Double, so comparing rows in Swift saw a change
+    /// in about half of all unchanged messages.
+    @Test func storingUnchangedMessagesAgainWritesNothing() async throws {
+        let cache = try MailCache.inMemory()
+        let updates = (0..<20).map { index in
+            CacheTransaction.MessageUpdate(
+                record: record("m\(index)", date: Date(timeIntervalSince1970: TimeInterval(1_800_000_000_123 + index * 7_919) / 1_000)),
+                labelIDs: []
+            )
+        }
+        try await cache.write { _ = try $0.upsertMessages(updates) }
+        let written = try await cache.write { tx in
+            let before = tx.db.totalChangesCount
+            _ = try tx.upsertMessages(updates)
+            return tx.db.totalChangesCount - before
+        }
+        #expect(written == 0)
+    }
+
     @Test func chartFillsCalendarDaysAndMilestonesIgnoreSelectedPeriod() async throws {
         let cache = try MailCache.inMemory()
         let old = record("old", date: analyticsDate("2020-01-01T12:00:00Z"))

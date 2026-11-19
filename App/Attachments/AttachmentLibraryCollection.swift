@@ -8,6 +8,8 @@ struct AttachmentLibraryCollection: View {
     @Bindable var model: AttachmentLibraryModel
     let viewMode: AttachmentLibraryViewMode
     let availableWidth: CGFloat
+    /// Moves the keyboard to the files when the library comes to front.
+    let keyboard: SectionKeyboard
     @State private var anchorID: String?
     @State private var currentID: String?
     /// Shift and Command as last pressed, for clicks. Keyboard and VoiceOver
@@ -31,7 +33,9 @@ struct AttachmentLibraryCollection: View {
     }
 
     var body: some View {
-        Group {
+        // A stack rather than a Group: a Group applies the modifiers below to
+        // each layout, so they would start again with every change of layout.
+        VStack(spacing: 0) {
             if viewMode == .grid { cards }
             else {
                 VStack(spacing: 0) {
@@ -63,10 +67,19 @@ struct AttachmentLibraryCollection: View {
         .onChange(of: viewMode) { _, _ in
             currentID = model.items.first { model.selection.contains($0.id) }?.id
             anchorID = currentID
+            // The layout that goes may have had the keyboard, so the new one
+            // takes it unless the toolbar's search field has it.
+            keyboard.focus(takingFrom: .content, focusFiles)
         }
         .onChange(of: model.selection) { _, selection in
             if viewMode == .list, !selection.isEmpty { listFocused = true }
         }
+        .takesSectionKeyboard(keyboard, release: { gridFocused = false; listFocused = false }, focus: focusFiles)
+    }
+
+    /// Gives the keyboard to the layout on screen.
+    private func focusFiles() {
+        if viewMode == .grid { gridFocused = true } else { listFocused = true }
     }
 
     private var columnHeadings: some View {

@@ -67,13 +67,12 @@ struct ConversationWindow: View {
 
     /// Answers the newest message, quoting any selected text.
     private func reply(_ kind: ReplyKind, in mailbox: MailboxModel, link: MailLink, key: ThreadKey) {
-        Task {
-            let quote = selectedQuote.flatMap { $0.belongsTo(accountID: key.accountID, threadID: key.threadID,
-                messageID: link.messageID) ? $0 : nil }
-            guard let messageID = await mailbox.nativeReplyMessageID(for: link, preferredMessageID: quote?.messageID),
-                let id = await mailbox.requestReply(kind, messageID: messageID,
-                accountID: key.accountID, selectedText: quote?.text) else { return }
-            openWindow(id: ComposeWindow.sceneID, value: id)
+        let quote = selectedQuote.flatMap { $0.belongsTo(accountID: key.accountID, threadID: key.threadID,
+            messageID: link.messageID) ? $0 : nil }
+        ComposeWindow.open(with: openWindow) {
+            guard let messageID = await mailbox.nativeReplyMessageID(for: link, preferredMessageID: quote?.messageID)
+            else { return nil }
+            return await mailbox.requestReply(kind, messageID: messageID, accountID: key.accountID, selectedText: quote?.text)
         }
     }
 }

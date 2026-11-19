@@ -66,7 +66,7 @@ struct ShortcutMonitor: NSViewRepresentable {
         /// Returns nil for a key it used, so nothing else sees it.
         private func handle(_ event: NSEvent) -> NSEvent? {
             guard let window, event.window === window, window.isKeyWindow, window.attachedSheet == nil,
-                  !Self.isTyping(in: window)
+                  !window.hasTypingFocus
             else {
                 keys.reset()
                 return event
@@ -78,6 +78,11 @@ struct ShortcutMonitor: NSViewRepresentable {
                 guard window.isMainWindow, NSApp.modalWindow == nil else { return event }
                 if event.isARepeat { return nil }
                 return commandUndo() ? nil : event
+            }
+            // A compose window is opening, and these keys are typed for it.
+            if ComposeTypeAhead.keepsKeys(typedIn: window) {
+                keys.reset()
+                return event
             }
             guard isEnabled, SingleKeyShortcuts.accepts(event.modifierFlags), let characters = event.characters else {
                 keys.reset()
@@ -93,12 +98,16 @@ struct ShortcutMonitor: NSViewRepresentable {
                 return event
             }
         }
+    }
+}
 
-        /// A text field or text view has focus, or an input method is composing.
-        private static func isTyping(in window: NSWindow) -> Bool {
-            guard let responder = window.firstResponder else { return false }
-            if responder is NSText { return true }
-            return (responder as? NSTextInputClient)?.hasMarkedText() ?? false
-        }
+extension NSWindow {
+    /// A text field or text view has focus, or an input method is composing.
+    /// Single-key shortcuts don't run then, and a compose window that is
+    /// opening leaves the keys typed here alone.
+    var hasTypingFocus: Bool {
+        guard let responder = firstResponder else { return false }
+        if responder is NSText { return true }
+        return (responder as? NSTextInputClient)?.hasMarkedText() ?? false
     }
 }

@@ -11,9 +11,10 @@ extension CacheTransaction {
     }
 
     public func finishRecipientHeaderBackfill(messageIDs: [String], accountID: String) throws {
+        // A cached statement: storing messages calls this for each one with a Bcc header.
+        let delete = try db.cachedStatement(sql: "DELETE FROM recipientHeaderBackfill WHERE accountID = ? AND messageID = ?")
         for id in messageIDs {
-            try db.execute(sql: "DELETE FROM recipientHeaderBackfill WHERE accountID = ? AND messageID = ?",
-                arguments: [accountID, id])
+            try delete.execute(arguments: [accountID, id])
         }
     }
 }

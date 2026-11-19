@@ -1,4 +1,5 @@
 import Accessibility
+import Diagnostics
 import Foundation
 import MailStore
 import MessageContent
@@ -68,13 +69,11 @@ final class MailboxModel {
     /// The mailbox the sidebar has selected.
     var selectedMailbox: MailboxID? {
         didSet {
+            // Choosing a mailbox shows mail, even when it's the one behind the library.
+            if !keepsAttachmentLibrary { showsAttachmentLibrary = false }
             guard selectedMailbox != oldValue else { return }
             endUnreadReadingVisit()
             NavigationPerformance.shared.begin(.mailbox)
-            if selectedMailbox?.id == AttachmentLibraryModel.mailboxID || oldValue?.id == AttachmentLibraryModel.mailboxID {
-                NavigationPerformance.shared.begin(.workspace,
-                    destination: selectedMailbox?.id == AttachmentLibraryModel.mailboxID ? "attachments" : "mail")
-            }
             isListPresentationReady = false
             // Choosing another mailbox leaves search.
             search.clear()
@@ -101,6 +100,16 @@ final class MailboxModel {
     }
     /// The selected mailbox's label or virtual mailbox ID, whichever account it's in.
     var selectedLabelID: String? { selectedMailbox?.id }
+    /// Whether the attachment library shows in place of mail. The mailbox,
+    /// search and conversation behind it stay as they were.
+    private(set) var showsAttachmentLibrary = false {
+        didSet {
+            guard showsAttachmentLibrary != oldValue else { return }
+            NavigationPerformance.shared.begin(.workspace, destination: showsAttachmentLibrary ? "attachments" : "mail")
+        }
+    }
+    /// Set while a mailbox that went away is replaced, so the library stays in front.
+    @ObservationIgnored private var keepsAttachmentLibrary = false
     var selectedThreadIDs: Set<ThreadKey> = [] {
         didSet {
             if listPreferences.conversations, selectedThreadIDs != oldValue, selectedThreadIDs.count == 1 {
@@ -252,7 +261,7 @@ final class MailboxModel {
             destination = .account(first.account.id, label)
         }
         if destination != selectedMailbox {
-            selectedMailbox = destination
+            replaceSelectedMailbox(with: destination)
         } else {
             if previousSearchIDs != Set(searchedAccounts.map(\.account.id)) { updateSearchSources() }
             if previousMailboxIDs != Set(selectedAccounts.map(\.account.id)) {
@@ -354,9 +363,9 @@ final class MailboxModel {
         if snoozeDateTargets?.contains(where: { $0.accountID == id }) == true { snoozeDateTargets = nil }
         switch selectedMailbox {
         case .account(id, _)?:
-            selectedMailbox = .account(defaultAccount.account.id, SystemLabel.inbox)
-        case .combined(let box)? where !hasSeveralAccounts && box != AttachmentLibraryModel.mailboxID:
-            selectedMailbox = .account(defaultAccount.account.id, box)
+            replaceSelectedMailbox(with: .account(defaultAccount.account.id, SystemLabel.inbox))
+        case .combined(let box)? where !hasSeveralAccounts:
+            replaceSelectedMailbox(with: .account(defaultAccount.account.id, box))
         default:
             selectedThreadIDs = selectedThreadIDs.filter { $0.accountID != id }
         }
@@ -423,14 +432,17 @@ final class MailboxModel {
         }
     }
 
-    /// Reads which accounts have synced before. An empty list words itself
-    /// by that, so opening a mailbox reads it before the window shows it.
-    func restoreSyncState() async {
+    /// Reads which accounts have synced before, and their labels. An empty
+    /// list's wording depends on the first and the sidebar's first frame on
+    /// the second, so opening a mailbox reads both before the window shows it.
+    func restoreSavedState() async {
+        let span = TernSignposts.begin(.mailboxRestore)
         await withTaskGroup(of: Void.self) { group in
             for account in accounts {
-                group.addTask { await account.restoreSyncState() }
+                group.addTask { await account.restoreSavedState() }
             }
         }
+        TernSignposts.end(span)
     }
 
     /// Returns once the accounts have stopped writing to the cache.
@@ -543,14 +555,6 @@ final class MailboxModel {
         owners(of: box).flatMap(\.outbox)
     }
 
-    /// A sidebar mailbox's unread conversations, summed across accounts
-    /// for a combined one.
-    func unreadCount(_ box: MailboxID) -> Int {
-        owners(of: box).reduce(0) { total, owner in
-            total + (owner.labels.first { $0.id == box.id }?.threadsUnread ?? 0)
-        }
-    }
-
     func label(id: String) -> LabelRecord? {
         labels.first { $0.id == id }
     }
@@ -653,7 +657,7 @@ final class MailboxModel {
     /// listing establishes that this visit has reached the end of a mailbox.
     var offersOlderConversations: Bool {
         guard !search.isActive, let id = selectedLabelID,
-              ![SystemLabel.draft, Self.outboxID, Self.snoozedID, AttachmentLibraryModel.mailboxID].contains(id),
+              ![SystemLabel.draft, Self.outboxID, Self.snoozedID].contains(id),
               !id.hasPrefix(MailNavigationModel.searchPrefix), !selectedAccounts.isEmpty,
               threads.count < threadLimit else { return false }
         return older?.state != .finished
@@ -707,7 +711,8 @@ final class MailboxModel {
                 return try await composeAccount.engine.startMessage().id
             case .reply(let kind, let messageID, let accountID):
                 guard let owner = account(id: accountID) else { return nil }
-                return try await owner.engine.startReply(kind, to: messageID).id
+                // The window opens without waiting for Gmail and gets the quote and files when they come.
+                return try await owner.engine.insertReplyShell(kind, to: messageID).id
             case .editDraft(let messageID, let accountID):
                 guard let owner = account(id: accountID) else { return nil }
                 let opened = try await owner.engine.openDraft(messageID: messageID)
@@ -739,6 +744,20 @@ final class MailboxModel {
             let accountID = if case .account(let id, _)? = selectedMailbox { id } else { defaultAccount.account.id }
             selectedMailbox = .account(accountID, labelID)
         }
+    }
+
+    /// Puts the attachment library in front of mail.
+    func showAttachmentLibrary() { showsAttachmentLibrary = true }
+
+    /// Goes from the attachment library back to the mailbox and conversation it covered.
+    func leaveAttachmentLibrary() { showsAttachmentLibrary = false }
+
+    /// Puts `box` in place of a mailbox that went away or that the shown
+    /// accounts no longer cover. The library stays in front if it was.
+    func replaceSelectedMailbox(with box: MailboxID?) {
+        keepsAttachmentLibrary = true
+        defer { keepsAttachmentLibrary = false }
+        selectedMailbox = box
     }
 
     /// What Reply and Forward answer, which is what the reader shows: the
@@ -1092,8 +1111,7 @@ final class MailboxModel {
         mailboxPageGeneration &+= 1
         let generation = mailboxPageGeneration
         let sources = selectedAccounts.map(\.account.id)
-        guard let mailbox = selectedMailbox,
-              ![Self.outboxID, AttachmentLibraryModel.mailboxID].contains(mailbox.id), !sources.isEmpty else {
+        guard let mailbox = selectedMailbox, mailbox.id != Self.outboxID, !sources.isEmpty else {
             listPages.deactivate()
             threads = []
             mailboxPage = .empty
@@ -1227,12 +1245,11 @@ final class MailboxModel {
     private func labelsChanged() {
         listContextRevision &+= 1
         guard !isStopped, case .account(let accountID, let id)? = selectedMailbox, id != Self.outboxID,
-              id != AttachmentLibraryModel.mailboxID,
               !id.hasPrefix(MailNavigationModel.searchPrefix),
               !SystemMailbox.all.contains(where: { $0.id == id }),
               let owner = account(id: accountID), !owner.labels.contains(where: { $0.id == id })
         else { return }
-        selectedMailbox = .account(accountID, SystemLabel.inbox)
+        replaceSelectedMailbox(with: .account(accountID, SystemLabel.inbox))
     }
 
     /// The accounts whose mail the selected mailbox shows.

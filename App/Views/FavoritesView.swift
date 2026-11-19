@@ -94,11 +94,11 @@ struct FavoritesView: View {
         .accessibilityFocused($isHeaderAccessibilityFocused)
         .accessibilityAction(named: Text("Add Favorite")) { isAddingFavorite = true }
         .accessibilityAction(named: Text(isCollapsed ? "Expand Favorites" : "Collapse Favorites")) { isCollapsed.toggle() }
-        .onHover { isHeaderHovered = $0 }
+        .ternOnHover { isHeaderHovered = $0 }
         .contextMenu {
             Button("Add Favorite…", systemImage: "plus") { isAddingFavorite = true }
             Button("Add Current Mailbox") { addCurrent() }
-                .disabled(mailbox.selectedLabelID == nil || mailbox.selectedLabelID == AttachmentLibraryModel.mailboxID)
+                .disabled(mailbox.selectedLabelID == nil || mailbox.showsAttachmentLibrary)
             Button("New Saved Search…") { mailbox.navigation.isCreatingSearch = true }
             Divider()
             Button("Reset Favorites") { Task { await mailbox.navigation.resetFavorites() } }
@@ -129,7 +129,7 @@ struct FavoritesView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
-        .onHover { isHovering in
+        .ternOnHover { isHovering in
             if isHovering { hoveredFavorite = favorite.id } else if hoveredFavorite == favorite.id { hoveredFavorite = nil }
         }
         .badge(canExpand && isExpanded ? 0 : mailbox.sidebarBadgeCount(box))

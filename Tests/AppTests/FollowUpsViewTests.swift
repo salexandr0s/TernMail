@@ -65,7 +65,7 @@ import Testing
             prepareDraft: { _ in throw FollowUpModelError.unavailable }, scheduler: SilentFollowUpNotificationScheduler(), now: { now })
         await model.refresh()
         defer { model.stop() }
-        let controller = NSHostingController(rootView: FollowUpsView(model: model).followUpEditor(model: model))
+        let controller = NSHostingController(rootView: FollowUpsView(model: model, isActive: false).followUpEditor(model: model))
         controller.sizingOptions = []
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 720, height: 480),
             styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
@@ -77,6 +77,21 @@ import Testing
         NSApp.activate()
         defer { window.close(); window.contentViewController = nil }
         try await until { element("follow-up-edit-approval", in: controller.view) != nil }
+
+        // The list takes the keyboard as the page comes to front and gives it up as the page goes behind.
+        func listHasKeyboard() -> Bool { window.firstResponder is NSTableView }
+        try #require(window.makeFirstResponder(nil))
+        controller.rootView = FollowUpsView(model: model).followUpEditor(model: model)
+        try await until { listHasKeyboard() }
+        controller.rootView = FollowUpsView(model: model, isActive: false).followUpEditor(model: model)
+        try await until { !listHasKeyboard() }
+        // Under the utility panel in a narrow window, the page comes to front
+        // hidden, and the list takes the keyboard once the page shows.
+        controller.rootView = FollowUpsView(model: model, isActive: false, isInFront: true).followUpEditor(model: model)
+        try await settle(window)
+        #expect(!listHasKeyboard())
+        controller.rootView = FollowUpsView(model: model).followUpEditor(model: model)
+        try await until { listHasKeyboard() }
         try await settle(window)
         try capture(controller.view, name: "waiting-for-light")
         window.appearance = NSAppearance(named: .darkAqua)

@@ -9,7 +9,6 @@ import SyncEngine
 @MainActor
 @Observable
 final class AttachmentLibraryModel {
-    static let mailboxID = "TERN_ATTACHMENTS"
     let mailbox: MailboxModel
     private var loadedPage: AttachmentLibraryPage?
     private var loadedQuery: AttachmentLibraryQuery?

@@ -35,6 +35,7 @@ struct TodayTasksPanel: View {
             taskContent
             footer
         }
+        .tracksKeyboardNavigation()
         .accessibilityIdentifier("today-tasks")
         .sheet(item: $editor) { GoogleTaskEditor(model: dashboard.tasks, context: $0) }
         .onChange(of: dashboard.context) { _, _ in editor = nil; deletion = nil }

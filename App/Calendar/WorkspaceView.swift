@@ -52,14 +52,15 @@ struct WorkspaceView: View {
                 ZStack(alignment: .topLeading) {
                     ZStack {
                         CalendarView(model: app.calendar, isActive: app.destination == .calendar && !layout.isCompact,
-                            sidebarState: calendarSidebar, onDeactivateFocus: {
+                            isInFront: app.destination == .calendar, sidebarState: calendarSidebar, onDeactivateFocus: {
                                 if layout.isCompact { compactBackFocused = true }
                             })
                             .opacity(app.destination == .calendar ? 1 : 0)
                             .allowsHitTesting(app.destination == .calendar)
                             .accessibilityHidden(app.destination != .calendar)
                             .focusedValue(\.calendarWorkspaceHasFocus, app.destination == .calendar)
-                        FollowUpsView(model: app.followUps, isActive: app.destination == .followUps)
+                        FollowUpsView(model: app.followUps, isActive: app.destination == .followUps && !layout.isCompact,
+                            isInFront: app.destination == .followUps)
                             .opacity(app.destination == .followUps ? 1 : 0)
                             .allowsHitTesting(app.destination == .followUps)
                             .accessibilityHidden(app.destination != .followUps)
@@ -70,7 +71,7 @@ struct WorkspaceView: View {
                             }
                         TodayView(model: app.today, dashboard: app.todayDashboard,
                             isActive: app.destination == .today && !layout.isCompact,
-                            automaticFollowUps: app.automaticFollowUps)
+                            isInFront: app.destination == .today, automaticFollowUps: app.automaticFollowUps)
                             .opacity(app.destination == .today ? 1 : 0)
                             .allowsHitTesting(app.destination == .today)
                             .accessibilityHidden(app.destination != .today)
@@ -252,7 +253,7 @@ private struct MailWorkspacePerformance: View {
     let isActive: Bool
 
     private var ready: Bool {
-        isActive && mailbox.selectedLabelID != AttachmentLibraryModel.mailboxID && mailbox.isListPresentationReady
+        isActive && !mailbox.showsAttachmentLibrary && mailbox.isListPresentationReady
     }
 
     var body: some View {

@@ -171,7 +171,9 @@ public struct MailAnalyticsIndexState: Codable, Sendable, Equatable, FetchableRe
     }
 }
 
-struct MailAnalyticsRecord: Codable, Sendable, Equatable, FetchableRecord, PersistableRecord {
+/// Not `Equatable`: a date read back from the database isn't always the same
+/// Double, so compare a stored copy with `databaseEquals`.
+struct MailAnalyticsRecord: Codable, Sendable, FetchableRecord, PersistableRecord {
     static let databaseTableName = "mailAnalyticsMessage"
     var accountID: String
     var messageID: String

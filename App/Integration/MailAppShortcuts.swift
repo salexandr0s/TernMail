@@ -61,10 +61,8 @@ struct NewMessageIntent: AppIntent {
         guard let mailbox = app.mailbox else { throw MailIntentError.signedOut }
         let to = EmailAddress.parseList(recipients ?? "").filter(\.isValid)
         app.showMainWindow()
-        guard let id = await mailbox.startMailto(MailtoRequest(to: to, subject: subject ?? "", body: body ?? "")) else {
-            throw MailIntentError.draftFailed
-        }
-        app.mailURLs.composeDraftID = id
+        let request = MailtoRequest(to: to, subject: subject ?? "", body: body ?? "")
+        guard await app.mailURLs.compose(request, in: mailbox) else { throw MailIntentError.draftFailed }
         return .result()
     }
 }

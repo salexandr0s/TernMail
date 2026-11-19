@@ -125,7 +125,8 @@ private struct MailDetailView: View {
                 message: "Use the toolbar to organize your selection.")
         } else if ids.count == 1, let key = ids.first {
             let messageID = mailbox.listPreferences.conversations ? nil : mailbox.selectedMessageRows.first?.messageID
-            ReaderSessionContainer(key: key, messageID: messageID, mailbox: mailbox, isActive: app.destination == .mail)
+            ReaderSessionContainer(key: key, messageID: messageID, mailbox: mailbox,
+                isActive: app.destination == .mail && !mailbox.showsAttachmentLibrary)
                 .id(ReaderCacheLifecycle.shared.revision)
         } else if ids.count > 1 {
             TernEmptyState(

@@ -146,7 +146,7 @@ struct AttachmentLibraryCard: View, Equatable {
                 .accessibilityHidden(true)
         }
         .contentShape(RoundedRectangle(cornerRadius: Tokens.Radius.lg))
-        .onHover { hovered = $0 }
+        .ternOnHover { hovered = $0 }
         .ternAnimation(value: hovered)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(AttachmentPresentation.accessibilityLabel(item, account: accountName))

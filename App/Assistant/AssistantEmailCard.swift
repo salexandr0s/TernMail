@@ -88,7 +88,7 @@ struct AssistantEmailCard: View {
         }
         .buttonStyle(.plain)
         .contentShape(.focusEffect, RoundedRectangle(cornerRadius: Tokens.AssistantFormatting.cornerRadius))
-        .onHover { isHovered = $0 }
+        .ternOnHover { isHovered = $0 }
         .ternAnimation(value: isHovered)
         .contextMenu {
             Group {

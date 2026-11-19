@@ -149,11 +149,15 @@ final class TodayModel {
         loadTask = task
         do {
             let value = try await task.value
-            guard isCurrent(id, context: context) else { return }
+            // The task that began the read may be cancelled by now, for example
+            // when the page's view task restarts. A later beginVisit() returns
+            // early while a read runs, so the result counts as long as the visit
+            // is open. endVisit() closes the visit and cancels its read.
+            guard isVisitOpen(id, context: context) else { return }
             guard value.scope == context.scope, value.accountIDs == context.accountIDs else { throw TodayVisitStoreError.unavailableScope }
             baseline = value; historyReady = true; historyError = nil; historyRevision += 1
         } catch is CancellationError {} catch {
-            if isCurrent(id, context: context) { historyError = "Recent-change tracking is unavailable. Refresh to try again." }
+            if isVisitOpen(id, context: context) { historyError = "Recent-change tracking is unavailable. Refresh to try again." }
         }
     }
 
@@ -224,7 +228,13 @@ final class TodayModel {
         }
     }
 
+    /// Whether the calling task may still act for the visit.
     private func isCurrent(_ id: UUID, context: TodayVisitContext) -> Bool {
-        !Task.isCancelled && canPresent() && activeVisitID == id && activeContext == context && visitContext == context
+        !Task.isCancelled && isVisitOpen(id, context: context)
+    }
+
+    /// Whether the visit is still open, whichever task asks.
+    private func isVisitOpen(_ id: UUID, context: TodayVisitContext) -> Bool {
+        canPresent() && activeVisitID == id && activeContext == context && visitContext == context
     }
 }

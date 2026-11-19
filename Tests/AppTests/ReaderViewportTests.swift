@@ -188,6 +188,44 @@ import WebKit
         await app.signOut()
     }
 
+    /// A read conversation expands only its newest message, below the first
+    /// screen. Its first scroll lands short until the body loads, and a link
+    /// that arrives while the reader holds that message must still win.
+    @Test(.timeLimit(.minutes(1))) func readConversationOpensAtItsNewestMessageAndALinkStillMovesIt() async throws {
+        try #require(ProcessInfo.processInfo.arguments.contains("--ui-audit"))
+        let app = AppModel()
+        await app.start()
+        let mailbox = try #require(app.mailbox), cache = try #require(app.cache)
+        try await waitUntil { mailbox.hasSyncedOnce }
+        let key = ThreadKey(accountID: "ui-audit", threadID: "reader-opening-\(UUID().uuidString)")
+        try await seed(cache, key: key, count: 30, text: String(repeating: "A tall synthetic paragraph for the opening message. ", count: 120),
+                       unread: false)
+        let suite = "ReaderViewportTests.\(UUID().uuidString)"
+        let settings = try #require(UserDefaults(suiteName: suite))
+        settings.set(ReadingPreferences.MarkRead.manually.rawValue, forKey: ReadingPreferences.markReadKey)
+        let window = try await makeWindow(ThreadView(key: key, mailbox: mailbox).environment(app).defaultAppStorage(settings))
+        defer { window.close(); settings.removePersistentDomain(forName: suite) }
+        func isAtTop(_ messageID: String) -> Bool {
+            guard let scroll = descendants(in: window.contentView).compactMap({ $0 as? NSScrollView })
+                      .first(where: { !self.messageViews(in: $0.documentView).isEmpty }),
+                  let header = descendants(in: scroll.documentView).compactMap({ $0 as? MessageHeaderClickView })
+                      .first(where: { $0.messageID == messageID }) else { return false }
+            let clip = scroll.contentView
+            return abs(header.convert(header.bounds, to: clip).minY - (clip.bounds.minY + scroll.contentInsets.top)) < 2
+        }
+        let newest = key.threadID + "-29"
+        try await waitUntil {
+            self.messageViews(in: window.contentView).contains { !$0.isLoading && $0.frame.height > 400 } && isAtTop(newest)
+        }
+        let linked = key.threadID + "-25"
+        app.mailURLs.receive(try #require(MailLink(accountID: key.accountID, threadID: key.threadID, messageID: linked).ternURL))
+        try await waitUntil { isAtTop(linked) }
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(isAtTop(linked), "The opening message must not take the reader back after a link")
+        window.close()
+        await app.signOut()
+    }
+
     @Test(.timeLimit(.minutes(1))) func findLoadsOnlyTheUnrealizedMatchingBodyAndRevealsTheNativeSelection() async throws {
         let finder = ReaderFindModel()
         finder.order = (0..<100).map { "message-\($0)" }
@@ -242,7 +280,7 @@ import WebKit
         return [view] + view.subviews.flatMap { descendants(in: $0) }
     }
 
-    private func seed(_ cache: MailCache, key: ThreadKey, count: Int, text: String) async throws {
+    private func seed(_ cache: MailCache, key: ThreadKey, count: Int, text: String, unread: Bool = true) async throws {
         let date = Date(timeIntervalSince1970: 1_790_000_000)
         try await cache.write { tx in
             for index in 0..<count {
@@ -250,7 +288,7 @@ import WebKit
                 let record = MessageRecord(accountID: key.accountID, id: id, threadID: key.threadID, historyID: 1,
                     date: date.addingTimeInterval(Double(index)), snippet: "Synthetic reader test", sender: "Synthetic <reader@example.invalid>",
                     recipients: "audit@example.invalid", cc: nil, subject: "Synthetic reader fixture", sizeEstimate: 1_024)
-                try tx.upsertMessages([.init(record: record, labelIDs: [SystemLabel.inbox, SystemLabel.unread])])
+                try tx.upsertMessages([.init(record: record, labelIDs: unread ? [SystemLabel.inbox, SystemLabel.unread] : [SystemLabel.inbox])])
                 try tx.saveBodies([.init(accountID: key.accountID, messageID: id, html: "<p>Viewport message \(index).</p><p>\(text)</p>", plainText: nil, fetchedAt: date)])
                 try tx.setBodyEnrichedAt(date, messageID: id, accountID: key.accountID)
             }

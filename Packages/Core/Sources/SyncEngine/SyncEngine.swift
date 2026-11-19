@@ -116,6 +116,7 @@ public actor SyncEngine {
     private var pollTask: Task<Void, Never>?
     private var peopleTask: Task<Void, Never>?
     private var addressFoldTask: Task<Void, Never>?
+    private var pendingImportTask: Task<Void, Never>?
     /// Whether a pass has ended yet, and the launch work waiting for one to.
     private var firstPassEnded = false
     private var firstPassWaiters: [CheckedContinuation<Void, Never>] = []
@@ -308,11 +309,15 @@ public actor SyncEngine {
         scheduleSending()
         requestSync(reason: .poll)
         settingsAccessTask = Task { await wakeSettingsWhenAllowed() }
-        // Showing mail needs neither, so both wait for the first pass to end
-        // and then run below the work the user is waiting on.
+        // Showing mail needs none of these, so they wait for the first pass
+        // to end and then run below the work the user is waiting on.
         addressFoldTask = Task(priority: .utility) {
             await waitForFirstPassToEnd()
             await foldPendingAddresses()
+        }
+        pendingImportTask = Task(priority: .utility) {
+            await waitForFirstPassToEnd()
+            await finishPendingImports()
         }
         peopleTask = Task(priority: .utility) { [weak self] in
             await self?.waitForFirstPassToEnd()
@@ -344,7 +349,8 @@ public actor SyncEngine {
         isStopped = true
         let newsletterRequests = Array(newsletterRequestTasks.values)
         newsletterRequests.forEach { $0.cancel() }
-        let background = [pollTask, peopleTask, settingsAccessTask, addressFoldTask, requestedPasses, afterActionTask, attachmentIndexTask, prefetchTask].compactMap { $0 }
+        let background = [pollTask, peopleTask, settingsAccessTask, addressFoldTask, pendingImportTask, requestedPasses, afterActionTask,
+                          attachmentIndexTask, prefetchTask].compactMap { $0 }
         for sleeper in sleepers.values { sleeper.cancel() }
         prefetchTargets = []
         let reading = Array(readingLoads.values.map(\.task)) + Array(retiredReadingLoads.values)
@@ -383,6 +389,7 @@ public actor SyncEngine {
         peopleTask = nil
         settingsAccessTask = nil
         addressFoldTask = nil
+        pendingImportTask = nil
         attachmentIndexTask = nil
         drainTasks = [:]
         newsletterRequestTasks = [:]
@@ -605,10 +612,13 @@ public actor SyncEngine {
 
         var gone = Set<String>()
         var fetchedIDs = Set<String>()
-        var updates: [CacheTransaction.MessageUpdate] = []
-        // What a first download has fetched and not yet stored, and when it
-        // last stored. The closing transaction stores whatever is left.
+        // What the pass has fetched and not yet stored. A first download
+        // stores as it goes and leaves the rest to the closing transaction,
+        // since storing the same copy again would change nothing. A reset
+        // stores everything there, so a failed one leaves the old cache as
+        // it was.
         var unstored: [CacheTransaction.MessageUpdate] = []
+        // When a first download last stored.
         var storedAt: Date?
         let kept = Set(listed)
         while true {
@@ -616,11 +626,10 @@ public actor SyncEngine {
                 for start in stride(from: 0, to: wanted.count, by: Self.fullSyncChunk) {
                     let chunk = Array(wanted[start..<min(start + Self.fullSyncChunk, wanted.count)])
                     let (fetched, missing) = try await fetchMetadata(chunk)
-                    updates += fetched
+                    unstored += fetched
                     fetchedIDs.formUnion(chunk)
                     gone.formUnion(missing)
                     guard !reset else { continue }
-                    unstored += fetched
                     // The first group shows at once. After it a store waits
                     // for enough messages or enough time, because each one
                     // makes every open list read and lay out again.
@@ -638,7 +647,7 @@ public actor SyncEngine {
                 throw error
             }
             let finishedAt = now()
-            let remaining = try await write { [gone, fetchedIDs, updates] tx -> Set<String> in
+            let remaining = try await write { [gone, fetchedIDs, unstored] tx -> Set<String> in
                 // Recheck inside the committing transaction. User actions and
                 // thread loads can have added protected targets while we awaited.
                 let remaining = try tx.messageIDsTargetedByPendingActions(accountID: accountID).subtracting(fetchedIDs)
@@ -646,7 +655,7 @@ public actor SyncEngine {
                 try tx.replaceLabels(labels, accountID: accountID, countedAt: countedAt)
                 try tx.replaceDrafts(drafts, accountID: accountID)
                 deleted.withLock { $0.formUnion(gone) }
-                let live = deleted.withLock { ids in updates.filter { !ids.contains($0.record.id) } }
+                let live = deleted.withLock { ids in unstored.filter { !ids.contains($0.record.id) } }
                 var threads = try tx.upsertMessages(live)
                 try tx.deleteAnalyticsMessages(messageIDs: Array(gone), accountID: accountID)
                 if reset { try tx.invalidateAnalyticsCoverage(accountID: accountID) }

@@ -6,8 +6,8 @@ task_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 event_count="${1:-100}"
 scenario="${2:-all}"
 variant="${3:-normal}"
-case "$event_count" in 100|1000) ;; *) echo 'Usage: benchmark-navigation.sh [100|1000] [all|workspace-only|reader-only|scroll-only]' >&2; exit 2 ;; esac
-case "$scenario" in all|workspace-only|reader-only|scroll-only) ;; *) echo 'Scenario must be all, workspace-only, reader-only, or scroll-only.' >&2; exit 2 ;; esac
+case "$event_count" in 100|1000) ;; *) echo 'Usage: benchmark-navigation.sh [100|1000] [all|workspace-only|reader-only|scroll-only|compose-only]' >&2; exit 2 ;; esac
+case "$scenario" in all|workspace-only|reader-only|scroll-only|compose-only) ;; *) echo 'Scenario must be all, workspace-only, reader-only, scroll-only, or compose-only.' >&2; exit 2 ;; esac
 case "$variant" in normal|fixed-key-loop|unattended) ;; *) echo 'Variant must be normal, fixed-key-loop or unattended.' >&2; exit 2 ;; esac
 build_root="${TERN_PERFORMANCE_BUILD_DIR:-/tmp/tern-performance-audit-build}"
 audit_bundle_id="${TERN_PERFORMANCE_BUNDLE_ID:-dev.tern.performance}"
@@ -52,6 +52,10 @@ audit_variant_args=()
 if [ "$variant" = fixed-key-loop ]; then audit_variant_args+=(--performance-fixed-key-loop); fi
 # Unattended runs compare two builds when nobody can bring the app to the front.
 if [ "$variant" = unattended ]; then audit_variant_args+=(--performance-unattended); fi
+# Scrolls the mail list with the pointer parked, resting on it and parked again. This moves the pointer.
+if [ "${TERN_PERFORMANCE_POINTER_ON_LIST:-0}" = 1 ]; then audit_variant_args+=(--performance-pointer-on-list); fi
+# Scrolls each conversation with the pointer parked, then resting on the reader. This moves the pointer.
+if [ "${TERN_PERFORMANCE_POINTER_ON_READER:-0}" = 1 ]; then audit_variant_args+=(--performance-pointer-on-reader); fi
 if [ -n "${TERN_PERFORMANCE_START_FILE:-}" ]; then audit_variant_args+=("--performance-start-file=$TERN_PERFORMANCE_START_FILE"); fi
 /usr/bin/python3 "$task_root/scripts/performance-process-memory.py" "$run_dir" \
     "$build_root/Build/Products/Release/Tern.app/Contents/MacOS/Tern" \

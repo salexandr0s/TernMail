@@ -147,11 +147,20 @@ final class AssistantMailPaneSizing {
         }
     }
 
-    func apply() {
-        let restoresToolbar = !toolbarPositions.isEmpty
-        let positions = restoresToolbar ? toolbarPositions : savedPositions
-        guard toolbarSidebarWidth == nil, restoresToolbar || !isPresented,
-              !positions.isEmpty, remainingAttempts > 0 else { return }
+    /// Moves Mail's dividers back as soon as the update that shows Mail again has
+    /// run, so its first frame has its own widths where the split already allows
+    /// them. `apply()` runs a turn later, after that frame, and finishes the
+    /// restore. Call this from an update's actions, never from layout: moving a
+    /// divider while the split lays out makes it lay out without end.
+    func restoreToolbarPositionsEarly() {
+        guard toolbarSidebarWidth == nil, !toolbarPositions.isEmpty, remainingAttempts > 0 else { return }
+        _ = place(toolbarPositions)
+    }
+
+    /// Moves each divider that can reach its position. `settled` is false while
+    /// one is elsewhere or its column is missing; `outOfReach` is true when the
+    /// split's current limits keep a divider from its position.
+    private func place(_ positions: [Pane: CGFloat]) -> (settled: Bool, outOfReach: Bool) {
         var settled = true
         var outOfReach = false
         for role in Pane.allCases {
@@ -174,6 +183,15 @@ final class AssistantMailPaneSizing {
             }
             settled = settled && abs(pane.frame.maxX - position) <= 0.5
         }
+        return (settled, outOfReach)
+    }
+
+    func apply() {
+        let restoresToolbar = !toolbarPositions.isEmpty
+        let positions = restoresToolbar ? toolbarPositions : savedPositions
+        guard toolbarSidebarWidth == nil, restoresToolbar || !isPresented,
+              !positions.isEmpty, remainingAttempts > 0 else { return }
+        let (settled, outOfReach) = place(positions)
         if settled {
             remainingAttempts = 0
             mailPositions = positions

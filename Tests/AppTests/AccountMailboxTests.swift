@@ -54,9 +54,12 @@ import Testing
             snoozeStore: accounts)
 
         // Opening a mailbox reads this before the window shows it, so an
-        // empty list doesn't say it is downloading mail.
-        await mailbox.restoreSyncState()
+        // empty list doesn't say it is downloading mail and the sidebar has
+        // the labels in its first frame.
+        await mailbox.restoreSavedState()
         #expect(mailbox.hasSyncedOnce)
+        #expect(mailbox.labels.map(\.id) == [label.id])
+        #expect(mailbox.sidebarLabelOutline.map(\.id) == [label.id])
 
         await mailbox.startLocal()
         try await eventually { mailbox.labels.map(\.id) == [label.id] }
@@ -65,6 +68,10 @@ import Testing
         #expect(try await cache.read { try $0.resolvedLabelID(temporaryID, accountID: account.id) } == label.id,
                 "An engine start clears label aliases, and the local start must not run one.")
         #expect(await transport.requests.isEmpty)
+        // The cache observation still follows the labels after the first read.
+        let renamed = LabelRecord(accountID: account.id, id: label.id, name: "Clients", isSystem: false)
+        try await cache.write { tx in try tx.replaceLabels([renamed], accountID: account.id) }
+        try await eventually { mailbox.sidebarLabelOutline.map(\.title) == ["Clients"] }
 
         await mailbox.startNetwork()
         #expect(try await cache.read { try $0.resolvedLabelID(temporaryID, accountID: account.id) } == temporaryID)

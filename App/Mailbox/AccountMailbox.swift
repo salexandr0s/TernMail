@@ -68,7 +68,7 @@ final class AccountMailbox {
     @ObservationIgnored private var wakeObserver: (any NSObjectProtocol)?
     /// The local start. The network start waits for it.
     @ObservationIgnored private var localStart: Task<Void, Never>?
-    @ObservationIgnored private var hasReadSyncState = false
+    @ObservationIgnored private var hasReadSavedState = false
     @ObservationIgnored private var isNetworkStarted = false
     /// Engine settings go in the order they were made.
     @ObservationIgnored private var control: Task<Void, Never>?
@@ -134,15 +134,47 @@ final class AccountMailbox {
         await snoozeKeeper?.start()
     }
 
-    /// Reads whether this account has ever finished a sync. An empty list
-    /// says "Downloading mail…" only for an account that hasn't, so opening
-    /// a mailbox reads this before the window shows it. Only the first call
-    /// reads.
-    func restoreSyncState() async {
-        guard !hasReadSyncState else { return }
-        hasReadSyncState = true
+    /// Reads whether this account has ever finished a sync and, until the
+    /// cache observation starts, its labels. An empty list says "Downloading
+    /// mail…" only for an account that hasn't synced, and the sidebar shows
+    /// the labels in its first frame, so opening a mailbox reads both before
+    /// the window shows it. Only the first call reads.
+    func restoreSavedState() async {
+        guard !hasReadSavedState else { return }
+        hasReadSavedState = true
+        let accountID = account.id
+        // Once the observation has started, its labels are the newer ones.
+        let readsLabels = localStart == nil
+        // Labels that fail to load don't hide the sync state. The
+        // observation reports that failure when it starts.
+        let saved = try? await cache.read { tx in
+            (hasSynced: try tx.syncState(accountID: accountID) != nil,
+             labels: readsLabels ? (try? tx.displayedLabels(accountID: accountID)) : nil)
+        }
+        guard let saved else { return }
         // A sync that finished during the read has already set the flag.
-        if (try? await cache.syncState(accountID: account.id)) != nil { hasSyncedOnce = true }
+        if saved.hasSynced { hasSyncedOnce = true }
+        if let labels = saved.labels, localStart == nil, !isStopped { show(labels) }
+    }
+
+    /// Puts a label snapshot in the sidebar, the pickers and the list's badges.
+    private func show(_ labels: [LabelRecord]) {
+        self.labels = labels
+        let outline = LabelNode.outline(labels.filter { !$0.isSystem && LabelNode.isVisibleInSidebar($0) })
+        if sidebarLabelOutline != outline { sidebarLabelOutline = outline }
+        let presentation = labels.map { label in
+            var value = label
+            value.threadsTotal = nil
+            value.threadsUnread = nil
+            value.messagesTotal = nil
+            value.messagesUnread = nil
+            return value
+        }
+        if listLabels != presentation {
+            listLabels = presentation
+            onLabelsChange?()
+        }
+        onUnreadCountChange?()
     }
 
     private func observeCache() async {
@@ -154,24 +186,7 @@ final class AccountMailbox {
         let snoozedStream = cache.snoozedThreads(accountID: account.id)
         let wokenStream = cache.wokenThreadIDs(accountID: account.id)
         let events = engine.events
-        observe(labelStream) { mailbox, labels in
-            mailbox.labels = labels
-            let outline = LabelNode.outline(labels.filter { !$0.isSystem && LabelNode.isVisibleInSidebar($0) })
-            if mailbox.sidebarLabelOutline != outline { mailbox.sidebarLabelOutline = outline }
-            let presentation = labels.map { label in
-                var value = label
-                value.threadsTotal = nil
-                value.threadsUnread = nil
-                value.messagesTotal = nil
-                value.messagesUnread = nil
-                return value
-            }
-            if mailbox.listLabels != presentation {
-                mailbox.listLabels = presentation
-                mailbox.onLabelsChange?()
-            }
-            mailbox.onUnreadCountChange?()
-        }
+        observe(labelStream) { $0.show($1) }
         observe(outboxStream) { mailbox, outbox in
             mailbox.outbox = outbox
             mailbox.activityGuard?.update(.send(accountID: mailbox.account.id), isActive: outbox.contains(where: \.isSending))
@@ -197,8 +212,9 @@ final class AccountMailbox {
                 await onMailSync?(notification)
             }
         })
-        // Does nothing when opening the mailbox already read it.
-        await restoreSyncState()
+        // Does nothing when opening the mailbox already read it. Otherwise it
+        // reads only the sync state, since the label stream has started.
+        await restoreSavedState()
         guard !isStopped else { return }
         // The engine clears old aliases on startup. Migrate saved icons first.
         await LabelAppearance.shared.reconcile(using: cache)

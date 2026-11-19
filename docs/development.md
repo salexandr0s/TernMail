@@ -48,6 +48,12 @@ Hosted and UI tests run in the Debug-Testing configuration, which the shared sch
 
 Xcode adds the app's AppAuth dependency to `Packages/Core/Package.resolved`; SwiftPM removes it again. Commit that file as `swift test` leaves it. Build products live under the ignored `build/` directory.
 
+GitHub Actions runs the full Core suite for Core/workflow changes and manual
+dispatches. Each run retains test logs and invocation timings for seven days.
+See the [CI audit](ci-audit.md) for the measured baseline, cache policy, cost
+calculation and coverage limits. Hosted app, helper and UI tests remain separate
+from that workflow.
+
 To build a universal Release for Apple silicon and Intel:
 
 ```sh

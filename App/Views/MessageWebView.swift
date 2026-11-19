@@ -51,11 +51,14 @@ struct MessageWebView: NSViewRepresentable {
 
     /// A message view that has loaded nothing and serves nothing: its own
     /// private data store, page scripts off, and both scheme handlers closed
-    /// until `assign` gives them one message's resources.
+    /// until `assign` gives them one message's resources. It shares only its
+    /// process pool with the other message views.
     static func makeUnassignedView() -> ContentSizedWebView {
         let configuration = WKWebViewConfiguration()
         configuration.defaultWebpagePreferences.allowsContentJavaScript = false
         configuration.websiteDataStore = .nonPersistent()
+        let sharing: any MessageProcessPoolSharing = configuration
+        sharing.joinMessageProcessPool()
         configuration.setURLSchemeHandler(InlineResourceHandler(), forURLScheme: InlineResourceMap.scheme)
         configuration.setURLSchemeHandler(RemoteImageHandler(scope: "", enabled: false), forURLScheme: RemoteImageResourceURL.scheme)
         let view = ContentSizedWebView(frame: .zero, configuration: configuration)
@@ -87,6 +90,7 @@ struct MessageWebView: NSViewRepresentable {
         }
         #if TERN_TEST_SUPPORT || TERN_PERFORMANCE
         ReaderLayoutDiagnostics.shared?.register(view)
+        PerformanceFrameEvents.note(.webViewMade)
         #endif
         NavigationPerformance.shared.increment(.webViewCreated)
         if forcesLightAppearance { view.appearance = NSAppearance(named: .aqua) }
@@ -126,6 +130,7 @@ struct MessageWebView: NSViewRepresentable {
         coordinator.setActive(false, in: view)
         #if TERN_TEST_SUPPORT || TERN_PERFORMANCE
         ReaderLayoutDiagnostics.shared?.recordRenderer(view, phase: .dismantle)
+        PerformanceFrameEvents.note(.webViewDismantled)
         #endif
         coordinator.onDismantle(view)
         MessageWebViewWarmup.messageViewDismantled(view)
@@ -416,7 +421,10 @@ struct MessageWebView: NSViewRepresentable {
         private func acceptHeightWithDiagnostics(_ measured: Double, in webView: WKWebView?,
                                                  source: ReaderLayoutDiagnostics.HeightSource,
                                                  requestEpoch: ReaderLayoutDiagnostics.Epoch?) {
+            let wasReadable = reportedReadable
             let accepted = acceptHeight(measured, in: webView)
+            if accepted?.published == true { PerformanceFrameEvents.note(.heightPublished) }
+            if reportedReadable, !wasReadable { PerformanceFrameEvents.note(.becameReadable) }
             guard let view = webView as? ContentSizedWebView else { return }
             ReaderLayoutDiagnostics.shared?.recordRenderer(view, phase: .height,
                 documentRevision: revision, active: isActive, readable: reportedReadable,
@@ -425,6 +433,35 @@ struct MessageWebView: NSViewRepresentable {
         }
         #endif
     }
+}
+
+/// Puts a configuration in the process pool that every message view shares.
+///
+/// A configuration left alone gets a pool of its own, and a new pool lists the
+/// Mac's fonts before its first page loads. In a probe on macOS 27 that took
+/// about 35 ms of the main thread for every message view, each time a message
+/// opened or scrolled into view. One pool lists the fonts once. Sharing it
+/// shares nothing a message can reach: each view keeps its own data store,
+/// content controller and web process.
+///
+/// WebKit deprecated `WKProcessPool` in macOS 12 with the note that several
+/// pools no longer have any effect. The two declarations that name it are
+/// marked deprecated themselves and are reached through this protocol, so
+/// the one use of it does not add a warning to every build.
+@MainActor
+private protocol MessageProcessPoolSharing {
+    func joinMessageProcessPool()
+}
+
+extension WKWebViewConfiguration: MessageProcessPoolSharing {
+    @available(macOS, deprecated: 12.0, message: "Wraps the deprecated processPool setter; see MessageProcessPoolSharing.")
+    fileprivate func joinMessageProcessPool() { processPool = MessageProcessPool.shared }
+}
+
+@available(macOS, deprecated: 12.0, message: "Holds the deprecated WKProcessPool; see MessageProcessPoolSharing.")
+@MainActor
+private enum MessageProcessPool {
+    static let shared = WKProcessPool()
 }
 
 /// Passes vertical scrolling to the enclosing scroll view, keeps horizontal

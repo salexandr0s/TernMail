@@ -55,9 +55,6 @@ final class MailServices: NSObject {
             error?.pointee = "Sign in to Tern to write a message." as NSString
             return
         }
-        Task {
-            guard let id = await mailbox.startMailto(request), app.mailbox === mailbox else { return }
-            app.mailURLs.composeDraftID = id
-        }
+        Task { await app.mailURLs.compose(request, in: mailbox) }
     }
 }

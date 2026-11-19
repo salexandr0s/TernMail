@@ -13,7 +13,12 @@ struct CalendarView: View {
     @Environment(\.openSettings) private var openSettings
     @Environment(\.undoManager) private var undoManager
     @Bindable var model: CalendarModel
+    /// Calendar is the section in front and on screen. It is false while
+    /// another section is in front and while the utility panel fills a narrow
+    /// window.
     var isActive = true
+    /// Calendar is the section in front, on screen or under the utility panel.
+    var isInFront = true
     var onDeactivateFocus: (() -> Void)?
     @State private var showActivity = false
     @State private var showImport = false
@@ -39,12 +44,16 @@ struct CalendarView: View {
     @State private var hourScroll = CalendarHourScroll()
     /// The grid's pane is narrower than a week's minimum width, so a week scrolls sideways.
     @State private var weekOverflows = false
+    /// The grid has the keyboard, or the results list while searching.
     @FocusState private var hasKeyboardFocus: Bool
+    /// Moves the keyboard to the grid or the results as Calendar comes to front.
+    @State private var keyboard = SectionKeyboard()
 
-    init(model: CalendarModel, isActive: Bool = true, sidebarState: CalendarSidebarState? = nil,
-         onDeactivateFocus: (() -> Void)? = nil) {
+    init(model: CalendarModel, isActive: Bool = true, isInFront: Bool? = nil,
+         sidebarState: CalendarSidebarState? = nil, onDeactivateFocus: (() -> Void)? = nil) {
         self.model = model
         self.isActive = isActive
+        self.isInFront = isInFront ?? isActive
         self.onDeactivateFocus = onDeactivateFocus
         self._sidebarState = State(initialValue: sidebarState ?? CalendarSidebarState())
         self.hasToolbarSidebar = sidebarState != nil
@@ -67,6 +76,7 @@ struct CalendarView: View {
         .padding(.top, Tokens.Border.hairline)
         .clipped()
         .disabled(!isActive)
+        .sectionKeyboard(keyboard, isInFront: isInFront, isShown: isActive)
         .onGeometryChange(for: Bool.self) { $0.size.width < Tokens.Calendar.compactWidth } action: {
             sidebarState.updateNarrow($0)
         }
@@ -289,6 +299,8 @@ struct CalendarView: View {
                 Divider()
                 CalendarSearchResults(events: model.searchResults, calendar: model.calendar, selectedID: $model.selectedEventID,
                                       edit: model.edit, delete: requestDelete, duplicate: model.duplicate)
+                    .focused($hasKeyboardFocus)
+                    .takesSectionKeyboard(keyboard, isEnabled: !model.searchResults.isEmpty) { hasKeyboardFocus = true }
             }
         } else {
             CalendarGridViews(presentationID: showsHeldGrid ? heldGridIdentity ?? currentGridIdentity : currentGridIdentity,
@@ -301,6 +313,10 @@ struct CalendarView: View {
                 .focusable()
                 .focusEffectDisabled()
                 .focused($hasKeyboardFocus)
+                // Calendar's `isActive` handler takes the keyboard from the grid, so
+                // that in a narrow window it can give it to the utility panel's Back
+                // button first.
+                .takesSectionKeyboard(keyboard) { hasKeyboardFocus = true }
                 .onGeometryChange(for: Bool.self) { $0.size.width < CalendarTimeGrid.minimumWidth(dayCount: 7) } action: {
                     weekOverflows = $0
                 }

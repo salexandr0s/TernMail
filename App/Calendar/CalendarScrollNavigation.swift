@@ -45,8 +45,8 @@ struct CalendarScrollNavigation: NSViewRepresentable {
         private func handle(_ event: NSEvent) -> Bool {
             guard isEnabled, let window, event.window === window, window.isKeyWindow,
                   window.attachedSheet == nil, NSApp.modalWindow == nil,
-                  !isHiddenOrHasHiddenAncestor, !visibleRect.isEmpty,
-                  visibleRect.contains(convert(event.locationInWindow, from: nil)),
+                  !isHiddenOrHasHiddenAncestor, !visibleBounds.isEmpty,
+                  visibleBounds.contains(convert(event.locationInWindow, from: nil)),
                   event.hasPreciseScrollingDeltas,
                   event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty,
                   NSEvent.pressedMouseButtons == 0 else {

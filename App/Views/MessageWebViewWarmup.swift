@@ -21,9 +21,10 @@ enum MessageWebViewWarmup {
         }
     }
 
-    /// Building the spare blocks the main thread for about 50 ms, and longer
-    /// the first time. It waits until nothing has been selected, typed,
-    /// clicked or scrolled for this long.
+    /// Building the spare blocks the main thread: 42 to 89 ms for the app's
+    /// first message view and under 6 ms after it, in a probe on macOS 27. It
+    /// waits until nothing has been selected, typed, clicked or scrolled for
+    /// this long.
     private static let idleDelay: Duration = .seconds(1)
     private static let emptyPage = """
         <!doctype html><html><head>

@@ -35,6 +35,38 @@ import Testing
         }
     }
 
+    /// Mail stays mounted behind Calendar and the attachment library.
+    @Test func aCoveredListLeavesTheKeyboardAndItsConversationsAlone() async throws {
+        let mailbox = try await mailbox()
+        defer { Task { await mailbox.stop() } }
+        let app = AppModel()
+        let controller = NSHostingController(rootView: ThreadListView(mailbox: mailbox).environment(app))
+        let window = host(controller, size: NSSize(width: 440, height: 520))
+        defer { window.close(); window.contentViewController = nil }
+        try await until { self.descendants(controller.view).contains { $0 is NSTableView } }
+        let table = try #require(descendants(controller.view).compactMap { $0 as? NSTableView }.first)
+        try #require(window.makeFirstResponder(table))
+        try await settleFocus()
+        let original = mailbox.listItems.map(\.id)
+        mailbox.selectListRows([original[0]])
+
+        // The list gives up the keyboard under Calendar and takes it back after.
+        app.destination = .calendar
+        try await until { window.firstResponder !== table }
+        app.destination = .mail
+        try await until { window.firstResponder === table }
+        try await settleFocus()
+
+        // Under the library, Delete leaves the selection in place even when the list keeps the keyboard.
+        mailbox.showAttachmentLibrary()
+        try await until { window.firstResponder !== table }
+        try #require(window.makeFirstResponder(table))
+        try sendKey("\u{7F}", code: 51, to: window)
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(mailbox.listItems.map(\.id) == original)
+        mailbox.leaveAttachmentLibrary()
+    }
+
     @Test
     func errorsPersistWhileInformationAndSendCancellationStillExpire() async throws {
         let mailbox = try await mailbox()
@@ -81,7 +113,8 @@ import Testing
             accounts: model.availableAccounts, selected: true, isKeyboardTarget: true)
         #expect(card != focusedCard, "Equatable must let focus changes redraw a selected card")
         let controller = NSHostingController(rootView: VStack {
-            AttachmentLibraryCollection(model: model, viewMode: .grid, availableWidth: 560)
+            AttachmentLibraryCollection(model: model, viewMode: .grid, availableWidth: 560,
+                keyboard: SectionKeyboard())
             TextField("Outside grid", text: .constant(""))
                 .accessibilityIdentifier("design-focus-outside").padding()
         }.background(Tokens.Surface.canvas))
@@ -108,6 +141,103 @@ import Testing
         try await Task.sleep(for: .milliseconds(80))
         #expect(model.selection == [first.id, second.id])
         try capture(controller.view, name: "design-grid-inactive-selected-dark")
+    }
+
+    /// Mail stays mounted behind the library, so the library's files take the
+    /// keyboard from it. A text field stands in for Mail's views and, like
+    /// them, hides and takes no clicks while the library is in front. Another
+    /// stands in for a field beside the library, such as the utility panel's.
+    @Test func libraryFilesTakeTheKeyboardFromMailBehindThem() async throws {
+        let mailbox = try await mailbox(attachments: true)
+        defer { Task { await mailbox.stop() } }
+        let model = AttachmentLibraryModel(mailbox: mailbox)
+        let observing = Task { await model.reload() }
+        defer { observing.cancel() }
+        try await until { model.items.count == 2 }
+        let keyboard = SectionKeyboard()
+        func show(files: Bool, as viewMode: AttachmentLibraryViewMode = .list, inFront: Bool) -> LibraryKeyboardHost {
+            LibraryKeyboardHost(model: model, keyboard: keyboard, showsFiles: files, viewMode: viewMode, isInFront: inFront)
+        }
+        let controller = NSHostingController(rootView: show(files: true, inFront: false))
+        let window = host(controller, size: NSSize(width: 560, height: 470))
+        defer { window.close(); window.contentViewController = nil }
+        // Like the toolbar's search field, this field is outside the window's content.
+        let search = NSTextField(frame: NSRect(x: 0, y: 0, width: 200, height: 22))
+        let accessory = NSTitlebarAccessoryViewController()
+        accessory.view = search
+        window.addTitlebarAccessoryViewController(accessory)
+        func table() -> NSTableView? { descendants(controller.view).compactMap { $0 as? NSTableView }.first }
+        func filesHaveKeyboard() -> Bool { table().map { window.firstResponder === $0 } ?? false }
+        func textField(_ placeholder: String) throws -> NSTextField {
+            try #require(descendants(controller.view).compactMap { $0 as? NSTextField }
+                .first { $0.placeholderString == placeholder })
+        }
+        func mailField() throws -> NSTextField { try textField("Another field") }
+        func hasKeyboard(_ field: NSTextField) -> Bool { (window.firstResponder as? NSText)?.delegate === field }
+        try await until { table() != nil }
+
+        // The library comes to front while a view behind it has the keyboard, then goes behind again.
+        let field = try mailField()
+        try #require(window.makeFirstResponder(field))
+        try await settleFocus()
+        controller.rootView = show(files: true, inFront: true)
+        try await until { filesHaveKeyboard() }
+        controller.rootView = show(files: true, inFront: false)
+        try await until { !filesHaveKeyboard() }
+
+        // A change of layout keeps the keyboard with the files, so arrow keys select a card.
+        controller.rootView = show(files: true, inFront: true)
+        try await until { filesHaveKeyboard() }
+        try await settleFocus()
+        controller.rootView = show(files: true, as: .grid, inFront: true)
+        try await until { table() == nil }
+        try await settleFocus()
+        try sendKey("\u{F703}", code: 124, modifiers: [.function, .numericPad], to: window)
+        try await until { model.selection == [model.items[0].id] }
+        controller.rootView = show(files: true, as: .list, inFront: true)
+        try await until { filesHaveKeyboard() }
+
+        // The toolbar's search field keeps the keyboard, since it searches the library.
+        controller.rootView = show(files: true, inFront: false)
+        try await until { !filesHaveKeyboard() }
+        try #require(window.makeFirstResponder(search))
+        try await settleFocus()
+        controller.rootView = show(files: true, inFront: true)
+        try await settleFocus()
+        #expect(hasKeyboard(search))
+
+        // A field the person can see keeps the keyboard.
+        controller.rootView = show(files: true, inFront: false)
+        try await settleFocus()
+        let beside = try textField("Beside field")
+        try #require(window.makeFirstResponder(beside))
+        try await settleFocus()
+        controller.rootView = show(files: true, inFront: true)
+        try await settleFocus()
+        #expect(hasKeyboard(beside))
+
+        // Files that show after the switch take the keyboard if nothing has it.
+        controller.rootView = show(files: false, inFront: false)
+        try await until { table() == nil }
+        let laterField = try mailField()
+        try #require(window.makeFirstResponder(laterField))
+        try await settleFocus()
+        controller.rootView = show(files: false, inFront: true)
+        try await until { window.firstResponder === window }
+        controller.rootView = show(files: true, inFront: true)
+        try await until { filesHaveKeyboard() }
+
+        // They leave it alone if it moved before they showed.
+        controller.rootView = show(files: false, inFront: false)
+        try await until { table() == nil }
+        controller.rootView = show(files: false, inFront: true)
+        try await settleFocus()
+        let movedTo = try mailField()
+        try #require(window.makeFirstResponder(movedTo))
+        controller.rootView = show(files: true, inFront: true)
+        try await until { table() != nil }
+        try await settleFocus()
+        #expect(hasKeyboard(movedTo))
     }
 
     @Test(arguments: [false, true])
@@ -210,6 +340,10 @@ import Testing
         window.sendEvent(event)
     }
 
+    /// SwiftUI's focus state learns of a new first responder an update or two
+    /// later. A person never switches sections that quickly.
+    private func settleFocus() async throws { try await Task.sleep(for: .milliseconds(200)) }
+
     private func until(sourceLocation: SourceLocation = #_sourceLocation, _ predicate: () -> Bool) async throws {
         let deadline = ContinuousClock.now + .seconds(5)
         while !predicate(), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(20)) }
@@ -300,4 +434,29 @@ private actor DesignInteractionTasksService: TasksService {
     func insertTask(listID: String, draft: GoogleTaskDraft) async throws -> GoogleTask { throw GmailError.notFound }
     func updateTask(listID: String, taskID: String, update: GoogleTaskUpdate, etag: String?) async throws -> GoogleTask { throw GmailError.notFound }
     func deleteTask(listID: String, taskID: String, etag: String?) async throws { throw GmailError.notFound }
+}
+
+/// The library's files, when shown, above a field that stands in for Mail's
+/// views and one that stands in for a field beside the library. Like Mail
+/// behind the library, the first field hides and takes no clicks while the
+/// library is in front.
+private struct LibraryKeyboardHost: View {
+    let model: AttachmentLibraryModel
+    let keyboard: SectionKeyboard
+    let showsFiles: Bool
+    let viewMode: AttachmentLibraryViewMode
+    let isInFront: Bool
+
+    var body: some View {
+        VStack {
+            if showsFiles {
+                AttachmentLibraryCollection(model: model, viewMode: viewMode, availableWidth: 560, keyboard: keyboard)
+            }
+            TextField("Another field", text: .constant("")).padding()
+                .opacity(isInFront ? 0 : 1)
+                .allowsHitTesting(!isInFront)
+            TextField("Beside field", text: .constant("")).padding()
+        }
+        .sectionKeyboard(keyboard, isInFront: isInFront)
+    }
 }

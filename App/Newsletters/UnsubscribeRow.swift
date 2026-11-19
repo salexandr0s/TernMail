@@ -61,7 +61,7 @@ struct UnsubscribeRow: View {
         .background(selected ? Color.accentColor.opacity(Tokens.Opacity.wash)
             : isHovered ? Color.primary.opacity(Tokens.Opacity.hover) : .clear)
         .contentShape(Rectangle())
-        .onHover { isHovered = $0 }
+        .ternOnHover { isHovered = $0 }
         .contextMenu {
             Button("Open latest message", systemImage: "envelope.open") { model.openLatestMessage(subscription) }
                 .disabled(unavailable)
@@ -231,7 +231,7 @@ struct UnsubscribeIconButton: View {
         }
         .buttonStyle(.borderless)
         .background(fill, in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
-        .onHover { isHovered = $0 }
+        .ternOnHover { isHovered = $0 }
         .help(title).accessibilityLabel(title)
     }
 

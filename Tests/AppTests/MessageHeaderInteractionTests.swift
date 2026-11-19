@@ -91,6 +91,13 @@ import WebKit
             try #require(button.press())
             try await eventually { state.expanded }
         }
+        // A row button takes a click with its own gesture, so a press through
+        // accessibility doesn't cover it.
+        try clickControl(try #require(element(id: disclosureID, in: window)), in: window)
+        try await eventually { !state.expanded }
+        try clickControl(try #require(element(id: disclosureID, in: window)), in: window)
+        // Details returns with the expanded header's next update.
+        try await eventually { state.expanded && self.element(id: "message-details-\(message.id)", in: window) != nil }
         let transitionsBeforeDetails = state.transitions
         try await focus(window)
         let details = try #require(element(id: "message-details-\(message.id)", in: window))
@@ -453,7 +460,7 @@ import WebKit
             for view in clickViews(in: window) {
                 let center = view.convert(NSPoint(x: view.bounds.midX, y: view.bounds.midY), to: nil)
                 let hit = routedHit(at: center, in: window)
-                print("Header routing: frame=\(view.frame), bounds=\(view.bounds), controlRects=\(view.controlRects), hit=\(hit.map { String(describing: type(of: $0)) } ?? "none")")
+                print("Header routing: frame=\(view.frame), bounds=\(view.bounds), hit=\(hit.map { String(describing: type(of: $0)) } ?? "none")")
             }
             print("Header content frame=\(window.contentView?.frame ?? .zero), superview=\(window.contentView?.superview?.frame ?? .zero)")
             throw error

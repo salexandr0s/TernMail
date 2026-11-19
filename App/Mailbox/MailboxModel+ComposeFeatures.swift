@@ -1,6 +1,7 @@
 import AppKit
 import MailStore
 import MessageContent
+import SyncEngine
 
 extension MailboxModel {
     func startMailto(_ request: MailtoRequest, accountID: String? = nil) async -> String? {
@@ -55,9 +56,14 @@ extension MailboxModel {
             }
         } else { selection = nil }
         do {
-            let draft = try await owner.engine.startReply(kind, to: messageID)
-            try await prepareComposeDefaults(draftID: draft.id, owner: owner)
-            if let selection { try await owner.engine.replaceSelectedQuote(localDraftID: draft.id, text: selection) }
+            // A quoted selection replaces the whole quote, so that reply waits
+            // for it. Any other opens without waiting for Gmail.
+            let draft = if selection == nil {
+                try await owner.engine.insertReplyShell(kind, to: messageID)
+            } else {
+                try await owner.engine.startReply(kind, to: messageID)
+            }
+            try await prepareComposeDefaults(draftID: draft.id, owner: owner, quoting: selection)
             return draft.id
         } catch { notice = Notice(message: "Couldn't start this reply.", isError: true); return nil }
     }
@@ -65,15 +71,15 @@ extension MailboxModel {
     func startForwardingAttachment(messageID: String, accountID: String) async -> String? {
         guard let owner = account(id: accountID) else { return nil }
         do {
-            let raw = try await owner.engine.rawMessage(id: messageID)
-            let draft = try await owner.engine.startMessage()
-            let record = try await cache.read { try $0.message(id: messageID, accountID: accountID) }
-            var content = draft.content; content.subject = "Fwd: " + (record?.subject ?? "Message")
-            _ = try await owner.engine.updateDraft(draft.id, content: content)
-            _ = try await owner.engine.attachData(raw, filename: "Forwarded Message.eml", mimeType: "message/rfc822", to: draft.id)
+            // The window opens without waiting for Gmail and gets the message's file when it comes.
+            let draft = try await owner.engine.insertForwardAsAttachment(of: messageID)
             try await prepareComposeDefaults(draftID: draft.id, owner: owner)
             return draft.id
-        } catch { notice = Notice(message: "Couldn't forward this message as an attachment.", isError: true); return nil }
+        } catch {
+            let message = (error as? ComposeError)?.errorDescription ?? "Couldn't forward this message as an attachment."
+            notice = Notice(message: message, isError: true)
+            return nil
+        }
     }
 
     func startSendAgain(messageID: String, accountID: String) async -> String? {
@@ -85,22 +91,49 @@ extension MailboxModel {
         } catch { notice = Notice(message: "Couldn't copy this sent message.", isError: true); return nil }
     }
 
-    private func prepareComposeDefaults(draftID: String, owner: AccountMailbox) async throws {
-        guard let draft = try await cache.read({ try $0.localDraft(id: draftID) }) else { return }
-        let identities = try await accountStore?.identities(accountID: owner.account.id) ?? []
-        let account = try await accountStore?.accounts().first { $0.id == owner.account.id } ?? owner.account
-        let original: MessageRecord?
-        if let source = draft.sourceMessageID { original = try await cache.read { try $0.message(id: source, accountID: account.id) } }
-        else { original = nil }
-        guard let sender = ComposeSender.preferred(in: ComposeSender.choices(account: account, identities: identities), original: original, kind: draft.kind) else { return }
+    /// Fills in what a draft the app just made starts with: the default
+    /// sender with its signature, the compose font, and a quoted selection in
+    /// place of the whole quote. A reply goes from the address its original
+    /// was sent to when that is one of `senders`. None of this counts as an
+    /// edit (`SyncEngine.setUpDraft`), so a reply nobody changed is discarded
+    /// when its window closes, even a window macOS restored. Returns the
+    /// stored draft, or nil when it no longer takes edits or its account is gone.
+    func setUpNewDraft(_ draft: LocalDraft, senders: [ComposeSender], original: MessageRecord?,
+                       quoting selection: String? = nil) async throws -> LocalDraft? {
+        guard let owner = account(id: draft.accountID) else { return nil }
         var content = draft.content
-        content.fromAddress = sender.address; content.composeFont = ComposePreferences.font
-        content.signatureHTML = sender.signature(for: draft.kind)
-        if let signature = try await accountStore?.composeSignature(accountID: account.id, address: sender.address, kind: draft.kind) {
-            content.signatureHTML = signature.html
-            content.signatureAboveQuote = signature.aboveQuote
-            content.signatureSeparator = signature.separator
+        let choices = senders.filter { $0.account.id == draft.accountID }
+        if let sender = ComposeSender.preferred(in: choices, original: original, kind: draft.kind) {
+            content.fromAddress = sender.address
+            content.composeFont = ComposePreferences.font
+            content.signatureHTML = sender.signature(for: draft.kind)
+            // The signature Settings pick for this address, or else its Gmail signature.
+            if let signature = try? await accountStore?.composeSignature(accountID: draft.accountID, address: sender.address, kind: draft.kind) {
+                content.signatureHTML = signature.html
+                content.signatureAboveQuote = signature.aboveQuote
+                content.signatureSeparator = signature.separator
+            }
         }
-        _ = try await owner.engine.updateDraft(draft.id, content: content)
+        return try await owner.engine.setUpDraft(draft.id, content: content, quoting: selection)
+    }
+
+    /// Sets up a draft just made, before its window opens (`setUpNewDraft`).
+    /// A draft that can't be set up is removed, so none is left without a
+    /// window. It never reached Gmail, so removing it makes no Gmail request.
+    private func prepareComposeDefaults(draftID: String, owner: AccountMailbox, quoting selection: String? = nil) async throws {
+        do {
+            guard let draft = try await cache.read({ try $0.localDraft(id: draftID) }) else { return }
+            let identities = (try? await accountStore?.identities(accountID: owner.account.id)) ?? []
+            let account = (try? await accountStore?.accounts())?.first { $0.id == owner.account.id } ?? owner.account
+            var original: MessageRecord?
+            if let source = draft.sourceMessageID {
+                original = try? await cache.read { try $0.message(id: source, accountID: draft.accountID) }
+            }
+            _ = try await setUpNewDraft(draft, senders: ComposeSender.choices(account: account, identities: identities),
+                                        original: original, quoting: selection)
+        } catch {
+            _ = try? await owner.engine.discardDraft(draftID, hold: 0)
+            throw error
+        }
     }
 }

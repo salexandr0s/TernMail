@@ -92,6 +92,41 @@ private struct RowSelectionFeedbackDiagnostic: View {
     }
 }
 
+/// A row's star. It shows on a starred, selected or focused row and under the
+/// pointer. The row's hover state is read here and not in the row, so the
+/// pointer crossing the list redraws this button and leaves the row's text alone.
+private struct MessageListStarButton: View {
+    let isStarred: Bool
+    let isRowSelected: Bool
+    let font: Font
+    @Binding var isRowHovered: Bool
+    let toggle: () -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.buttonsTakeKeyboardFocus) private var buttonsTakeFocus
+    @FocusState private var isFocused: Bool
+
+    private var isShown: Bool { isStarred || isRowHovered || isRowSelected || isFocused }
+
+    var body: some View {
+        Button(action: toggle) {
+            Image(systemName: isStarred ? "star.fill" : "star")
+                .font(font)
+                .foregroundStyle(isStarred ? Tokens.Status.star : Color.secondary)
+                .contentTransition(reduceMotion ? .identity : .symbolEffect(.replace))
+                .ternAnimation(value: isStarred, duration: Tokens.Motion.fast)
+                .frame(width: Tokens.Space.s5, height: Tokens.Space.s5)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.borderless)
+        .focused($isFocused, whileButtonsTakeFocus: buttonsTakeFocus)
+        // Keep the action's space even while hidden, so hover never moves the date.
+        .opacity(isShown ? 1 : 0)
+        .ternAnimation(value: isShown, duration: Tokens.Motion.fast)
+        .help(isStarred ? "Remove Star" : "Star")
+        .accessibilityLabel(isStarred ? "Remove Star" : "Star")
+    }
+}
+
 /// Selection changes reach each observer, while unchanged visual content keeps
 /// its existing view graph. Settings and row interaction state remain live here.
 private struct MessageListVisualRow: View, Equatable {
@@ -104,11 +139,10 @@ private struct MessageListVisualRow: View, Equatable {
     @AppStorage(ReadingPreferences.textScaleKey) private var textScale = 1.0
     @Environment(\.backgroundProminence) private var prominence
     @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.buttonsTakeKeyboardFocus) private var buttonsTakeFocus
     @Environment(ListSenderPopoverState.self) private var senderPopover: ListSenderPopoverState?
+    /// Only the star reads this, through a binding. The body must not read
+    /// it, or every row the pointer crosses lays its text out again.
     @State private var isHovered = false
-    @FocusState private var starFocused: Bool
 
     nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.mailbox === rhs.mailbox && lhs.selected == rhs.selected && lhs.dateKey == rhs.dateKey
@@ -125,7 +159,6 @@ private struct MessageListVisualRow: View, Equatable {
     private var displayedLabels: [LabelRecord] { item.visibleLabels }
     /// Only the unread gutter spans the row; the avatar belongs to the header.
     private var textLeading: CGFloat { Tokens.Space.s1 + Tokens.Space.s2 + Tokens.Space.s1_5 }
-    private var showsStar: Bool { thread.isStarred || isHovered || selected || starFocused }
     private var showsAccount: Bool {
         mailbox.listPreferences.showsAccountBadges && mailbox.listMixesAccounts && accountMark != nil
     }
@@ -189,7 +222,12 @@ private struct MessageListVisualRow: View, Equatable {
                     .accessibilityHidden(true)
             }
         }
-        .onHover { isHovered = $0 }
+        .ternOnHover { hovering in
+            isHovered = hovering
+            #if TERN_TEST_SUPPORT || TERN_PERFORMANCE
+            PerformancePointer.hoverChanges += 1
+            #endif
+        }
         .alignmentGuide(.listRowSeparatorLeading) { _ in separatorLeading }
         .alignmentGuide(.listRowSeparatorTrailing) { $0.width - Tokens.Space.s1 }
         // One element per row: VoiceOver reads the state, then who, what and when.
@@ -250,22 +288,10 @@ private struct MessageListVisualRow: View, Equatable {
                     Image(systemName: "exclamationmark").font(scaledFont(.caption1, weight: .semibold))
                         .foregroundStyle(Tokens.Status.important).accessibilityLabel("Important")
                 }
-                Button { mailbox.toggleListStar([item.id]) } label: {
-                    Image(systemName: thread.isStarred ? "star.fill" : "star")
-                        .font(scaledFont(.caption1))
-                        .foregroundStyle(thread.isStarred ? Tokens.Status.star : Color.secondary)
-                        .contentTransition(reduceMotion ? .identity : .symbolEffect(.replace))
-                        .ternAnimation(value: thread.isStarred, duration: Tokens.Motion.fast)
-                        .frame(width: Tokens.Space.s5, height: Tokens.Space.s5)
-                        .contentShape(Rectangle())
+                MessageListStarButton(isStarred: thread.isStarred, isRowSelected: selected,
+                    font: scaledFont(.caption1), isRowHovered: $isHovered) {
+                    mailbox.toggleListStar([item.id])
                 }
-                .buttonStyle(.borderless)
-                .focused($starFocused, whileButtonsTakeFocus: buttonsTakeFocus)
-                // Keep the action's space even while hidden, so hover never moves the date.
-                .opacity(showsStar ? 1 : 0)
-                .ternAnimation(value: showsStar, duration: Tokens.Motion.fast)
-                .help(thread.isStarred ? "Remove Star" : "Star")
-                .accessibilityLabel(thread.isStarred ? "Remove Star" : "Star")
                 Text(date).font(scaledFont(.caption1, weight: textWeight).monospacedDigit())
                 .foregroundStyle(thread.isUnread ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
                 .fixedSize()
@@ -490,9 +516,8 @@ struct MessageListMenu: View {
             let messages = item.messages.sorted { $0.message.date < $1.message.date }
             if let draft = messages.last(where: { $0.labels.contains(SystemLabel.draft) }) {
                 Button("Edit Draft", systemImage: "pencil") {
-                    Task {
-                        guard let id = await mailbox.startCompose(.editDraft(messageID: draft.message.id, accountID: item.id.accountID)) else { return }
-                        openWindow(id: ComposeWindow.sceneID, value: id)
+                    ComposeWindow.open(with: openWindow) {
+                        await mailbox.startCompose(.editDraft(messageID: draft.message.id, accountID: item.id.accountID))
                     }
                 }
             }
@@ -501,9 +526,8 @@ struct MessageListMenu: View {
                 Button("Reply All", systemImage: "arrowshape.turn.up.left.2") { reply(.replyAll, to: entry.message) }
                 Button("Forward", systemImage: "arrowshape.turn.up.right") { reply(.forward, to: entry.message) }
                 Button("Forward as Attachment", systemImage: "paperclip") {
-                    Task {
-                        guard let id = await mailbox.startForwardingAttachment(messageID: entry.message.id, accountID: entry.message.accountID) else { return }
-                        openWindow(id: ComposeWindow.sceneID, value: id)
+                    ComposeWindow.open(with: openWindow) {
+                        await mailbox.startForwardingAttachment(messageID: entry.message.id, accountID: entry.message.accountID)
                     }
                 }
             }
@@ -527,9 +551,8 @@ struct MessageListMenu: View {
     }
 
     private func reply(_ kind: ReplyKind, to message: MessageRecord) {
-        Task {
-            guard let id = await mailbox.requestReply(kind, messageID: message.id, accountID: message.accountID, selectedText: nil) else { return }
-            openWindow(id: ComposeWindow.sceneID, value: id)
+        ComposeWindow.open(with: openWindow) {
+            await mailbox.requestReply(kind, messageID: message.id, accountID: message.accountID, selectedText: nil)
         }
     }
 }

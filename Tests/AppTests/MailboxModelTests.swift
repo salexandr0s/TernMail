@@ -501,9 +501,13 @@ import Testing
         }
         mailbox.restoreMailbox(sent)
         #expect(mailbox.selectedMailbox == sent)
-        // A mailbox chosen since launch, such as by a link, stays.
-        mailbox.restoreMailbox(.account("audit", SystemLabel.trash))
-        #expect(mailbox.selectedMailbox == sent)
+        // A mailbox chosen since launch, such as by a link, stays, with mail in front.
+        mailbox.restoreMailbox(.account("audit", SystemLabel.trash), showingAttachmentLibrary: true)
+        #expect(mailbox.selectedMailbox == sent && !mailbox.showsAttachmentLibrary)
+        // The library comes back in front of the mailbox it covered.
+        mailbox.selectedMailbox = inbox
+        mailbox.restoreMailbox(sent, showingAttachmentLibrary: true)
+        #expect(mailbox.selectedMailbox == sent && mailbox.showsAttachmentLibrary)
         await mailbox.stop()
     }
 }

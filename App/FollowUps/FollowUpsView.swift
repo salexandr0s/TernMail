@@ -3,8 +3,13 @@ import SwiftUI
 
 struct FollowUpsView: View {
     @Bindable var model: FollowUpsModel
-    /// False while another section shows. The page stays mounted, and its rows stop following the clock.
+    /// The page is in front and on screen. It is false while another section is in front and while the
+    /// utility panel fills a narrow window. The page stays mounted, and its rows stop following the clock.
     var isActive = true
+    /// The page is in front, on screen or under the utility panel. Nil means the same as `isActive`.
+    var isInFront: Bool? = nil
+    /// Moves the keyboard to the list as the page comes to front.
+    @State private var keyboard = SectionKeyboard()
     @State private var direction: DirectionFilter = .all
     @State private var showsHistory = false
 
@@ -27,12 +32,14 @@ struct FollowUpsView: View {
         VStack(spacing: 0) {
             filters
             feedback
-            FollowUpsContent(model: model, direction: direction, showsHistory: showsHistory, isActive: isActive)
+            FollowUpsContent(model: model, direction: direction, showsHistory: showsHistory, isActive: isActive,
+                isInFront: isInFront ?? isActive, keyboard: keyboard)
             footer
         }
         // A banner that appears or leaves moves the list; animate that move.
         .ternAnimation(value: [model.errorMessage, model.notice])
         .background(Tokens.Surface.primary)
+        .sectionKeyboard(keyboard, isInFront: isInFront ?? isActive, isShown: isActive)
         .accessibilityIdentifier("follow-ups-view")
         .onChange(of: model.selectedEntryID, initial: true) { _, id in
             guard let entry = model.visibleEntries.first(where: { $0.id == id }),
@@ -136,8 +143,12 @@ private struct FollowUpsContent: View {
     let direction: FollowUpsView.DirectionFilter
     let showsHistory: Bool
     let isActive: Bool
+    /// The page is in front, on screen or under the utility panel.
+    let isInFront: Bool
+    let keyboard: SectionKeyboard
     /// The time a hidden page's rows keep, so they aren't rebuilt every minute.
     @State private var hiddenAt = Date.now
+    @FocusState private var listFocused: Bool
     @Environment(\.openWindow) private var openWindow
 
     private enum Phase { case list, loading, empty }
@@ -169,6 +180,11 @@ private struct FollowUpsContent: View {
         .onChange(of: isActive) { _, active in
             if !active { hiddenAt = MinuteClock.shared.now }
         }
+        // The list gives up the keyboard as the page goes behind. When the
+        // utility panel covers the page instead, its Back button takes it.
+        .onChange(of: isInFront) { _, inFront in
+            if !inFront { listFocused = false }
+        }
     }
 
     private func list(_ entries: [CommitmentEntry], now: Date) -> some View {
@@ -194,6 +210,8 @@ private struct FollowUpsContent: View {
             // Rows that arrive or leave fade, and the rest move to their place.
             .ternAnimation(value: entries.map(\.id))
             .accessibilityIdentifier("follow-ups-list")
+            .focused($listFocused)
+            .takesSectionKeyboard(keyboard) { listFocused = true }
             .onChange(of: model.selectedEntryID) { _, id in
                 if let id { proxy.scrollTo(id, anchor: .center) }
             }
@@ -212,9 +230,7 @@ private struct FollowUpsContent: View {
     }
 
     private func draft(_ entry: CommitmentEntry) {
-        Task {
-            if let id = await model.draftFollowUp(entry) { openWindow(id: ComposeWindow.sceneID, value: id) }
-        }
+        ComposeWindow.open(with: openWindow) { await model.draftFollowUp(entry) }
     }
 }
 

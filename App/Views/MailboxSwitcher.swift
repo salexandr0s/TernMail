@@ -2,11 +2,28 @@ import MailStore
 import SwiftUI
 
 struct MailboxSwitchOption: Identifiable, Equatable {
+    /// What choosing the option opens.
+    enum Target: Equatable {
+        case attachmentLibrary
+        case mailbox(MailboxID)
+    }
+
     let title: String
     let detail: String
-    let mailbox: MailboxID
+    let target: Target
     let symbol: String
-    var id: String { String(describing: mailbox) }
+    var id: String {
+        switch target {
+        case .attachmentLibrary: "attachment-library"
+        case .mailbox(let mailbox): String(describing: mailbox)
+        }
+    }
+}
+
+extension MailboxSwitchOption {
+    init(title: String, detail: String, mailbox: MailboxID, symbol: String) {
+        self.init(title: title, detail: detail, target: .mailbox(mailbox), symbol: symbol)
+    }
 }
 
 struct MailboxSwitcher: View {
@@ -46,12 +63,18 @@ struct MailboxSwitcher: View {
     }
 
     private func openSelected() { if let option = choices.first(where: { $0.id == selected }) ?? choices.first { open(option) } }
-    private func open(_ option: MailboxSwitchOption) { mailbox.selectedMailbox = option.mailbox; dismiss() }
+    private func open(_ option: MailboxSwitchOption) {
+        switch option.target {
+        case .attachmentLibrary: mailbox.showAttachmentLibrary()
+        case .mailbox(let target): mailbox.selectedMailbox = target
+        }
+        dismiss()
+    }
 }
 
 extension MailboxModel {
     var mailboxSwitchOptions: [MailboxSwitchOption] {
-        var options = [MailboxSwitchOption(title: "Attachments", detail: "Library", mailbox: .combined(AttachmentLibraryModel.mailboxID), symbol: "paperclip")]
+        var options = [MailboxSwitchOption(title: "Attachments", detail: "Library", target: .attachmentLibrary, symbol: "paperclip")]
         let primaryIDs = Set(SystemMailbox.all.map(\.id))
         if presentedAccounts.count > 1 {
             options += SystemMailbox.all.map { .init(title: $0.title, detail: "All Accounts", mailbox: .combined($0.id), symbol: $0.systemImage) }

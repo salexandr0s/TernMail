@@ -149,6 +149,27 @@ import Testing
         #expect(try await fixture.store.todayVisitBaseline(scope: .all, accountIDs: ["b"]).initializedAccountIDs == ["b"])
     }
 
+    @Test func visitKeepsItsReadWhenTheTaskThatBeganItIsCancelled() async throws {
+        let fixture = try await TodayFixture()
+        _ = try await fixture.create("a-work")
+        fixture.holdRead = true
+        let today = fixture.model()
+        defer { today.endVisit(); fixture.followUps.stop() }
+        // The page's view task begins the visit, and SwiftUI cancels it when the
+        // task's key changes. The task that replaces it finds the read running
+        // and returns, so the first task's read must still count.
+        let first = Task { await today.beginVisit() }
+        try await fixture.waitUntil { fixture.readContinuation != nil }
+        first.cancel()
+        await today.beginVisit()
+        fixture.holdRead = false
+        fixture.readContinuation?.resume(); fixture.readContinuation = nil
+        await first.value
+        #expect(today.historyReady)
+        #expect(!today.isLoadingHistory)
+        #expect(today.historyError == nil)
+    }
+
     @Test func endingVisitCancelsPendingAcknowledgementAndBackgroundCannotSeed() async throws {
         let fixture = try await TodayFixture()
         _ = try await fixture.create("tracked")

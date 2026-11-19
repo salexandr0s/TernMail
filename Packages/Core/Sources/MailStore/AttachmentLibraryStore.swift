@@ -65,8 +65,11 @@ extension CacheTransaction {
     }
 
     public func libraryAttachments(messageID: String, accountID: String) throws -> [AttachmentLibraryItem] {
-        try AttachmentLibraryItem.filter(Column("accountID") == accountID && Column("messageID") == messageID)
-            .order(Column("partID")).fetchAll(db)
+        // A cached statement: storing messages reads this for each one that changed.
+        try AttachmentLibraryItem.fetchAll(
+            db.cachedStatement(sql: "SELECT * FROM attachmentLibrary WHERE accountID = ? AND messageID = ? ORDER BY partID"),
+            arguments: [accountID, messageID]
+        )
     }
 
     public func libraryAttachment(accountID: String, messageID: String, partID: String) throws -> AttachmentLibraryItem? {

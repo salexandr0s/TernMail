@@ -25,7 +25,7 @@ struct AssistantView: View {
         VStack(spacing: 0) {
             if !isDetached { header }
             AssistantConversationView(model: model, scrollRequest: scrollRequest, onOpenSource: openSource,
-                                      onOpenDraft: { openWindow(id: ComposeWindow.sceneID, value: $0) }) {
+                                      onOpenDraft: { id in ComposeWindow.open(with: openWindow) { id } }) {
                 AssistantWelcomeView(model: model, setup: setupPrompt, onSettings: performSetupAction) { suggestion in
                     scrollRequest = UUID()
                     model.run(suggestion)
@@ -205,7 +205,7 @@ private struct AssistantToolbarButtonStyle: ButtonStyle {
                         .allowsHitTesting(false)
                 }
             }
-            .onHover { isHovered = $0 }
+            .ternOnHover { isHovered = $0 }
     }
 }
 

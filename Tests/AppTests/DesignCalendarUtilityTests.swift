@@ -98,7 +98,7 @@ import Testing
         #expect(attribute("accessibilityFocused", of: back) as? Bool == true
             || (nativeResponder != nil && nativeResponder?.isDescendant(of: calendar) == false))
         #expect(window.firstResponder !== results)
-        try sendReturn(to: window)
+        try sendKey("\r", code: 36, to: window)
         try await settle(window)
         #expect(app.calendar.editor == nil, "Return after hiding focused Calendar results must not edit a hidden event")
         // Return may activate the focused Back button; otherwise use its action.
@@ -129,6 +129,53 @@ import Testing
             #expect(defaults.double(forKey: AssistantSidebarLayout.widthKey) == 480)
         }
         try capture(controller.view, name: "calendar-assistant-restored-900")
+        await app.signOut()
+    }
+
+    /// Mail stays mounted behind the other sections, so each time one comes to
+    /// front it takes the keyboard from Mail's sidebar. Calendar's grid takes
+    /// it. Today has nothing that takes it, and Waiting For has no follow-ups
+    /// in the audit data, so they leave it with nothing.
+    @Test(.timeLimit(.minutes(1))) func sectionsTakeTheKeyboardFromMailBehindThem() async throws {
+        var launchMode = LaunchMode.current
+        launchMode.audit.calendar = true
+        let app = AppModel(launchMode: launchMode)
+        await app.start()
+        await app.calendar.start()
+        let mailbox = try #require(app.mailbox)
+        let suite = "DesignCalendarKeyboard-" + UUID().uuidString
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        app.destination = .mail
+        let controller = NSHostingController(rootView: WorkspaceView(mailbox: mailbox).environment(app)
+            .environment(\.workspaceToolbarID, MailWindowPreferences.toolbarID + "." + UUID().uuidString)
+            .defaultAppStorage(defaults))
+        let window = host(controller, width: 1_200, toolbar: true)
+        defer { window.close(); window.contentViewController = nil; window.toolbar = nil }
+        try await settle(window)
+        try await until { self.mailSidebar(in: controller.view) != nil }
+        for _ in 0..<2 {
+            let sidebar = try #require(mailSidebar(in: controller.view))
+            try #require(window.makeFirstResponder(sidebar))
+            try await settle(window)
+            app.destination = .calendar
+            try await until { window.firstResponder !== sidebar }
+            try await settle(window)
+            let date = app.calendar.date
+            try sendKey("\u{F703}", code: 124, modifiers: [.function, .numericPad], to: window)
+            try await until { app.calendar.date != date }
+            app.destination = .mail
+            try await settle(window)
+        }
+        for destination in [WorkspaceDestination.today, .followUps] {
+            let sidebar = try #require(mailSidebar(in: controller.view))
+            try #require(window.makeFirstResponder(sidebar))
+            try await settle(window)
+            app.destination = destination
+            try await until { window.firstResponder === window }
+            app.destination = .mail
+            try await settle(window)
+        }
         await app.signOut()
     }
 
@@ -351,11 +398,17 @@ import Testing
         return "\(type(of: object)) id=\(id) role=\(role) label=\(label) enabled=\(enabled) frame=\(frame) actions=\(actions)"
     }
 
-    private func sendReturn(to window: NSWindow) throws {
-        let event = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
+    private func sendKey(_ characters: String, code: UInt16, modifiers: NSEvent.ModifierFlags = [], to window: NSWindow) throws {
+        let event = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: modifiers,
             timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil,
-            characters: "\r", charactersIgnoringModifiers: "\r", isARepeat: false, keyCode: 36))
+            characters: characters, charactersIgnoringModifiers: characters, isARepeat: false, keyCode: code))
         window.sendEvent(event)
+    }
+
+    /// The list in Mail's sidebar column.
+    private func mailSidebar(in root: NSView) -> NSTableView? {
+        let probe = descendants(root).compactMap { $0 as? MailColumnProbe.ProbeView }.first { $0.pane == .navigation }
+        return probe.flatMap { EnclosingSplitDivider(of: $0) }.flatMap { descendants($0.pane).compactMap { $0 as? NSTableView }.first }
     }
 
     private func capture(_ view: NSView, name: String) throws {

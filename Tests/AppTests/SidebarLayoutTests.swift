@@ -107,7 +107,7 @@ import Testing
         let existingSplits = Set(descendants(in: controller.view).compactMap { $0 as? NSSplitView }.map(ObjectIdentifier.init))
 
         func openAttachments() async throws -> NSSplitView {
-            mailbox.selectedMailbox = .combined(AttachmentLibraryModel.mailboxID)
+            mailbox.showAttachmentLibrary()
             try await settle()
             // Calendar also contains a table, but only Attachments mounts a new split.
             let splits = descendants(in: controller.view).compactMap { $0 as? NSSplitView }.filter {
@@ -749,7 +749,7 @@ import Testing
         window.orderFront(nil)
         defer { window.close(); window.contentViewController = nil; window.toolbar = nil }
         app.destination = .mail
-        mailbox.selectedMailbox = .combined(AttachmentLibraryModel.mailboxID)
+        mailbox.showAttachmentLibrary()
 
         // Window resizing can change the native sidebar width. Leading controls
         // follow its edge; trailing controls retain their window positions.

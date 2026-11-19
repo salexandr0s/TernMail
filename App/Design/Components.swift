@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// A compact label whose text remains legible independently of its accent color.
@@ -214,8 +215,33 @@ private struct TernDelayedLoading: ViewModifier {
     }
 }
 
+/// Tells a hover change the pointer made from one the content made by moving
+/// under a pointer at rest. A list scrolling under the pointer changes its
+/// rows' hover many times a second, and fading each change keeps animations
+/// running for as long as the scroll lasts.
+@MainActor
+private enum PointerRest {
+    private static var location = NSPoint.zero
+    private static var movedAt = ContinuousClock.now
+
+    /// Runs a hover change. It skips its animations when the pointer has been
+    /// still for longer than a hover fade lasts.
+    static func applyHover(_ change: () -> Void) {
+        let now = ContinuousClock.now
+        let current = NSEvent.mouseLocation
+        if current != location {
+            location = current
+            movedAt = now
+        }
+        guard now - movedAt > .seconds(Tokens.Motion.fast) else { return change() }
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction, change)
+    }
+}
+
 /// Hover feedback for rows and chips that act on a click. The tint fades
-/// unless Reduce Motion is on.
+/// unless Reduce Motion is on or the content moved under a resting pointer.
 private struct TernHover: ViewModifier {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isHovered = false
@@ -238,7 +264,7 @@ private struct TernHover: ViewModifier {
                     .allowsHitTesting(false)
                     .accessibilityHidden(true)
             }
-            .onHover { isHovered = $0 }
+            .ternOnHover { isHovered = $0 }
             .pointerStyle(pointer)
     }
 }
@@ -253,6 +279,13 @@ extension View {
     /// set, replaces it at focus width.
     func ternOutline(radius: CGFloat, style: TernOutlineStyle = .hairline, focus: Color? = nil) -> some View {
         modifier(TernOutline(radius: radius, style: style, focus: focus))
+    }
+
+    /// `onHover` for state that views animate on. A change that comes from
+    /// content moving under a resting pointer, as when a list scrolls, applies
+    /// without those animations.
+    func ternOnHover(perform action: @escaping (Bool) -> Void) -> some View {
+        onHover { hovering in PointerRest.applyHover { action(hovering) } }
     }
 
     func ternAnimation<Value: Equatable>(value: Value, duration: Double = Tokens.Motion.base) -> some View {

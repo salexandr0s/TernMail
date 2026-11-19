@@ -15,7 +15,11 @@ struct WorkspaceToolbar: CustomizableToolbarContent {
     let followUps: FollowUpsModel
     let today: TodayModel
     let accounts: AccountPreferencesModel?
+    /// The section whose items show. It follows `frontSection` a moment later,
+    /// because swapping one section's items for another's is slow.
     let section: WorkspaceSection
+    /// The section in front. The section picker shows it at once.
+    let frontSection: WorkspaceSection
     let layout: WorkspaceToolbarLayout
     let sidebar: SidebarToggle?
     let onSelect: (WorkspaceSection) -> Void
@@ -35,7 +39,7 @@ struct WorkspaceToolbar: CustomizableToolbarContent {
 
     var body: some CustomizableToolbarContent {
         navigation
-        WorkspaceSectionToolbar(section: section, onSelect: onSelect)
+        WorkspaceSectionToolbar(section: frontSection, onSelect: onSelect)
         // Retain the existing identifier for saved toolbar configurations.
         ToolbarItem(id: "mail.compose", placement: .navigation) {
             Button {

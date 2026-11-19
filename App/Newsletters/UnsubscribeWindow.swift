@@ -98,8 +98,10 @@ private struct UnsubscribeWorkspace: View {
             } else if let url = item.mailtoURL,
                       let safe = NewsletterURLPolicy.mailtoURL(url.absoluteString) {
                 let request = try MailtoParser.parse(safe)
-                guard let draftID = await mailbox.startMailto(request, accountID: item.accountID),
-                      available(item.accountID) else { throw NewsletterActionError.unavailable }
+                let draftID = await ComposeWindow.makeDraft(isCurrent: { available(item.accountID) }) {
+                    await mailbox.startMailto(request, accountID: item.accountID)
+                }
+                guard let draftID else { throw NewsletterActionError.unavailable }
                 routes.composeID = draftID
             } else { throw NewsletterActionError.unavailable }
         }, openMessage: { item in

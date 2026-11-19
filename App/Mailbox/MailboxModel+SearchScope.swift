@@ -56,16 +56,18 @@ extension MailboxModel {
             && !listPreferences.filters.isEmpty && !search.results.isEmpty && listItems.isEmpty
     }
 
-    /// The sidebar's selection. Empty during a search, except for a saved
-    /// search's own row. Choosing a mailbox ends the search, including the
-    /// mailbox that was selected before it.
+    /// The sidebar's selection. Empty while the attachment library is in
+    /// front, and during a search except for a saved search's own row.
+    /// Choosing a mailbox shows mail and ends the search, including for the
+    /// mailbox that was selected before.
     var sidebarSelection: MailboxID? {
-        get { search.isActive && selectedSavedSearch == nil ? nil : selectedMailbox }
+        get { showsAttachmentLibrary || (search.isActive && selectedSavedSearch == nil) ? nil : selectedMailbox }
         set {
             // Collapsing or rebuilding native rows can clear List's selection.
             // The open mailbox and reader remain active until another row is chosen.
             guard let newValue else { return }
             if newValue == selectedMailbox {
+                leaveAttachmentLibrary()
                 if selectedSavedSearch == nil { search.clear() }
             } else {
                 selectedMailbox = newValue

@@ -25,7 +25,7 @@ extension CacheTransaction {
             if message.bcc != nil {
                 try finishRecipientHeaderBackfill(messageIDs: [message.id], accountID: message.accountID)
             }
-            let old = try MailAnalyticsRecord.fetchOne(db, key: ["accountID": message.accountID, "messageID": message.id])
+            let old = try analyticsRecord(messageID: message.id, accountID: message.accountID)
             let active = try analyticsIndexState(accountID: message.accountID)
             let marker = generation ?? (active?.isComplete == false ? active?.generation : nil) ?? old?.generation
             if let old, old.historyID > message.historyID {
@@ -44,22 +44,33 @@ extension CacheTransaction {
                 direction: labels.contains(SystemLabel.sent) ? .sent : .received,
                 isIncluded: labels.isDisjoint(with: [SystemLabel.draft, SystemLabel.spam, SystemLabel.trash, LocalSend.label]),
                 generation: marker)
-            guard record != old else { continue }
-            try record.upsert(db)
+            // Compared as stored: a Gmail date has milliseconds, and the
+            // stored copy's date doesn't always come back as the same Double.
+            if let old, record.databaseEquals(old) { continue }
+            // GRDB builds an upsert's SQL again on every call.
+            if old == nil { try record.insert(db) } else { try record.update(db) }
             try replaceAnalyticsContacts(record)
         }
+    }
+
+    private func analyticsRecord(messageID: String, accountID: String) throws -> MailAnalyticsRecord? {
+        // A cached statement: storing messages reads this for each one.
+        try MailAnalyticsRecord.fetchOne(
+            db.cachedStatement(sql: "SELECT * FROM mailAnalyticsMessage WHERE accountID = ? AND messageID = ?"),
+            arguments: [accountID, messageID]
+        )
     }
 
     private func replaceAnalyticsContacts(_ message: MailAnalyticsRecord) throws {
         let addresses = message.direction == .sent
             ? EmailAddress.parseList(message.recipients) + EmailAddress.parseList(message.cc ?? "") + EmailAddress.parseList(message.bcc ?? "")
             : EmailAddress.parseList(message.sender)
-        try db.execute(sql: "DELETE FROM mailAnalyticsContact WHERE accountID = ? AND messageID = ?",
-                       arguments: [message.accountID, message.messageID])
+        try db.cachedStatement(sql: "DELETE FROM mailAnalyticsContact WHERE accountID = ? AND messageID = ?")
+            .execute(arguments: [message.accountID, message.messageID])
         var seen = Set<String>()
         for address in addresses where address.isValid && seen.insert(address.normalized).inserted {
-            try db.execute(sql: "INSERT INTO mailAnalyticsContact (accountID,messageID,address,name) VALUES (?,?,?,?)",
-                           arguments: [message.accountID, message.messageID, address.normalized, address.name])
+            try db.cachedStatement(sql: "INSERT INTO mailAnalyticsContact (accountID,messageID,address,name) VALUES (?,?,?,?)")
+                .execute(arguments: [message.accountID, message.messageID, address.normalized, address.name])
         }
     }
 
@@ -74,7 +85,7 @@ extension CacheTransaction {
     public func applyAnalyticsLabelChange(messageID: String, added: [String], removed: [String],
                                          historyID: Int64, accountID: String) throws {
         guard try db.tableExists(MailAnalyticsRecord.databaseTableName),
-              var record = try MailAnalyticsRecord.fetchOne(db, key: ["accountID": accountID, "messageID": messageID]),
+              var record = try analyticsRecord(messageID: messageID, accountID: accountID),
               record.historyID <= historyID else { return }
         let labels = Set(record.labelIDs).union(added).subtracting(removed)
         record.labelIDs = labels.sorted()
@@ -87,7 +98,10 @@ extension CacheTransaction {
     }
 
     public func analyticsIndexState(accountID: String) throws -> MailAnalyticsIndexState? {
-        try MailAnalyticsIndexState.fetchOne(db, key: accountID)
+        // A cached statement: storing messages reads this for each one.
+        try MailAnalyticsIndexState.fetchOne(
+            db.cachedStatement(sql: "SELECT * FROM mailAnalyticsState WHERE accountID = ?"), arguments: [accountID]
+        )
     }
 
     public func beginAnalyticsHistory(accountID: String, restart: Bool = false) throws -> MailAnalyticsIndexState {

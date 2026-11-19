@@ -97,36 +97,94 @@ extension SyncEngine {
         return draft
     }
 
+    /// The file a message forwarded as an attachment goes out in.
+    public static let forwardedMessageFilename = "Forwarded Message.eml"
+
+    /// Starts a new message that forwards `messageID` as an attached file,
+    /// without waiting for Gmail. Its subject comes from the cached message,
+    /// and `importPending` marks the file as still to come
+    /// (`completeReplyImport`). Throws `ComposeError.fileTooLarge` when the
+    /// cached size shows the message can't fit, before anything downloads.
+    public func insertForwardAsAttachment(of messageID: String) async throws -> LocalDraft {
+        // Gmail doesn't know a provisional send yet, so it can't supply the message.
+        if LocalSend.isProvisional(messageID) { throw ComposeError.stillSending }
+        let accountID = accountID
+        let record = try await cache.read { tx in try tx.message(id: messageID, accountID: accountID) }
+        if let record, record.sizeEstimate > Self.attachmentByteLimit {
+            throw ComposeError.fileTooLarge(Self.forwardedMessageFilename)
+        }
+        var draft = LocalDraft(
+            accountID: accountID, kind: .new, content: DraftContent(subject: "Fwd: " + (record?.subject ?? "Message")),
+            rfcMessageID: MIMEMessage.newMessageID(for: sender), sourceMessageID: messageID, now: now()
+        )
+        draft.importPending = true
+        try await createDraft(draft)
+        return draft
+    }
+
     /// Adds what a reply or forward from `insertReplyShell` takes from its
     /// original: the quote, a forward's files and the quote's inline images.
-    /// Edits made meanwhile stay, and a selection quoted in place of the
-    /// whole message is set after this (`replaceSelectedQuote`). Returns the
-    /// draft, as it is when nothing is pending or a discard has taken it.
-    /// When the original can't be loaded this throws and the draft stays
-    /// pending, to try again or go without (`skipReplyImport`).
+    /// A message from `insertForwardAsAttachment` gets the file of the
+    /// message it forwards. Edits made meanwhile stay, and a selection quoted
+    /// in place of the whole message is set after this
+    /// (`replaceSelectedQuote`). A copy already saved to Gmail is saved again
+    /// with them, even when no window is open to do it. Returns the draft, as
+    /// it is when nothing is pending or a discard has taken it. When the
+    /// original can't be loaded this throws and the draft stays pending, to
+    /// try again or go without (`skipReplyImport`).
     @discardableResult
     public func completeReplyImport(localDraftID: String) async throws -> LocalDraft {
         let accountID = accountID
         let stored = try await cache.read { tx in try tx.localDraft(id: localDraftID) }
         guard let draft = stored, draft.accountID == accountID else { throw ComposeError.draftGone }
-        guard draft.importPending, let kind = ReplyKind(draft.kind), let source = draft.sourceMessageID else { return draft }
-        let parts = try await originalParts(kind, of: source, for: localDraftID)
+        guard draft.importPending, let source = draft.sourceMessageID else { return draft }
+        let parts: OriginalParts
+        if let kind = ReplyKind(draft.kind) {
+            parts = try await originalParts(kind, of: source, for: localDraftID)
+        } else if draft.kind == .new {
+            parts = try await forwardedFile(source, for: localDraftID)
+        } else {
+            return draft
+        }
         let now = now()
-        let completed: LocalDraft?
+        let completed: (draft: LocalDraft, inGmail: Bool)?
         do {
             completed = try await write { tx in
-                try tx.completeImport(localDraftID: localDraftID, quotedHTML: parts.quotedHTML,
-                                      quotedPlainText: parts.quotedPlainText, attachments: parts.copies, now: now)
+                let revision = try tx.localDraft(id: localDraftID)?.revision
+                guard let draft = try tx.completeImport(localDraftID: localDraftID, quotedHTML: parts.quotedHTML,
+                                                        quotedPlainText: parts.quotedPlainText, attachments: parts.copies, now: now)
+                else { return nil }
+                // The revision rises only for a draft that Gmail may hold without what this adds.
+                return (draft, draft.revision != revision)
             }
         } catch {
             removeFiles(parts.copies)
             throw error
         }
-        if let completed { return completed }
+        if let completed {
+            // What this adds is stored either way. A save that can't be
+            // queued leaves the draft unsaved, and the next save takes it along.
+            if completed.inGmail { try? await saveDraft(localDraftID) }
+            return completed.draft
+        }
         // A discard or another completion took the draft meanwhile.
         removeFiles(parts.copies)
         guard let current = try await cache.read({ tx in try tx.localDraft(id: localDraftID) }) else { throw ComposeError.draftGone }
         return current
+    }
+
+    /// Finishes the replies and forwards still waiting for their original:
+    /// those whose window was loading it when the app quit, or whose load
+    /// failed after their window closed. Gmail's copy gets the quote and
+    /// files too. One that fails again waits for the next launch, or for
+    /// its window to open.
+    func finishPendingImports() async {
+        let accountID = accountID
+        guard let drafts = try? await cache.read({ tx in try tx.localDrafts(accountID: accountID) }) else { return }
+        for draft in drafts where draft.importPending && draft.state == .editing {
+            guard !isStopped, !Task.isCancelled else { return }
+            _ = try? await completeReplyImport(localDraftID: draft.id)
+        }
     }
 
     /// Lets a reply or forward go out without what its original would add,
@@ -146,15 +204,21 @@ extension SyncEngine {
     /// The copy gets its own ID, Message-ID and files, and holds `content`,
     /// the window's text. The original's discard is queued in the same
     /// transaction, so the message is never in both accounts. Returns nil
-    /// when the draft isn't a new message or no longer takes edits, and
-    /// throws `CancellationError` when `destination` is stopping or stopped.
+    /// when the draft isn't a new message, no longer takes edits or still
+    /// waits for the message it forwards as an attachment, and throws
+    /// `CancellationError` when `destination` is stopping or stopped.
     public func moveDraft(_ localDraftID: String, content: DraftContent, to destination: SyncEngine) async throws -> LocalDraft? {
         guard destination !== self else { return nil }
         // This engine writes the destination's rows, so its write gate alone
         // can't keep them out of an account that is being removed.
         let destinationStopped = destination.stopRequested
         if destinationStopped.withLock({ $0 }) { throw CancellationError() }
-        let files = try await cache.read { tx in try tx.outgoingAttachments(localDraftID: localDraftID) }
+        let files = try await cache.read { tx -> [OutgoingAttachment]? in
+            // The other account can't download a message in this one.
+            if try tx.localDraft(id: localDraftID)?.importPending == true { return nil }
+            return try tx.outgoingAttachments(localDraftID: localDraftID)
+        }
+        guard let files else { return nil }
         let moved = LocalDraft(
             accountID: destination.accountID, kind: .new, content: content,
             rfcMessageID: MIMEMessage.newMessageID(for: destination.sender), now: now()
@@ -224,10 +288,10 @@ extension SyncEngine {
     }
 
     /// What a reply or forward takes from its original, with the files
-    /// saved for its draft.
+    /// saved for its draft. A message forwarded as an attachment quotes nothing.
     private struct OriginalParts: Sendable {
-        var quotedHTML: String
-        var quotedPlainText: String
+        var quotedHTML: String?
+        var quotedPlainText: String?
         var copies: [OutgoingAttachment]
     }
 
@@ -298,17 +362,33 @@ extension SyncEngine {
         return OriginalParts(quotedHTML: quote.quotedHTML, quotedPlainText: quote.quotedPlainText, copies: copies)
     }
 
+    /// The whole of `messageID` as Gmail stores it, saved as the file of a
+    /// message that forwards it as an attachment.
+    private func forwardedFile(_ messageID: String, for localDraftID: String) async throws -> OriginalParts {
+        let raw = try await rawMessage(id: messageID)
+        let name = Self.forwardedMessageFilename
+        let path = Self.outgoingPath(for: localDraftID, filename: name)
+        let url = outgoingDirectory.appending(path: path)
+        do {
+            // Written off the account's actor. The user's files can still
+            // push the total over Gmail's limit, which sending checks.
+            _ = try await OutgoingAttachmentIO.shared.write(raw, to: url, maximumBytes: Self.attachmentByteLimit, filename: name)
+        } catch {
+            await OutgoingAttachmentIO.shared.remove(url)
+            throw error
+        }
+        let file = OutgoingAttachment(localDraftID: localDraftID, filename: name, mimeType: "message/rfc822", size: raw.count, path: path)
+        return OriginalParts(quotedHTML: nil, quotedPlainText: nil, copies: [file])
+    }
+
     /// Inserts a reply or forward with what it takes from its original.
     private func insertReply(_ reply: LocalDraft, with parts: OriginalParts) async throws -> LocalDraft {
         var draft = reply
         draft.quotedHTML = parts.quotedHTML
         draft.quotedPlainText = parts.quotedPlainText
-        let now = now()
         do {
-            try await write { [draft] tx in
-                try tx.insertLocalDraft(draft)
-                for copy in parts.copies { _ = try tx.addOutgoingAttachment(copy, now: now) }
-            }
+            // A reply starts unchanged however much it takes from its original.
+            try await write { [draft] tx in try tx.insertLocalDraft(draft, attachments: parts.copies) }
         } catch {
             removeFiles(parts.copies)
             throw error

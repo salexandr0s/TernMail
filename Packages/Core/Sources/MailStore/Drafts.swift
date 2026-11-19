@@ -107,7 +107,8 @@ public struct LocalDraft: Codable, Sendable, Equatable, Identifiable, FetchableR
     /// consumes its draft, so a draft gone after that was sent.
     public var sendRequested: Bool
     /// Set while a reply or forward waits for what it takes from its
-    /// original, the quote and files (`completeImport`). It can't be sent
+    /// original, the quote and files, or a new message waits for the message
+    /// it forwards as an attachment (`completeImport`). It can't be sent
     /// until they arrive.
     public var importPending: Bool
     public var createdAt: Date
@@ -283,8 +284,11 @@ public struct AttachmentRecord: Codable, Sendable, Hashable, Identifiable, Fetch
 extension CacheTransaction {
     // MARK: Local drafts
 
-    public func insertLocalDraft(_ draft: LocalDraft) throws {
+    /// Stores a new draft with the files it starts with. Those aren't edits,
+    /// so the revision stays as `draft` has it.
+    public func insertLocalDraft(_ draft: LocalDraft, attachments: [OutgoingAttachment] = []) throws {
         try draft.insert(db)
+        try insertAttachmentRows(attachments)
     }
 
     public func localDraft(id: String) throws -> LocalDraft? {
@@ -312,27 +316,48 @@ extension CacheTransaction {
         return draft
     }
 
+    /// Stores what the app fills in on a draft it just made: its sender,
+    /// signature and font, and a quoted selection in place of the whole
+    /// quote. Those aren't edits, so as in `completeImport` the revision rises
+    /// only when Gmail may hold or be getting a copy without them. Returns
+    /// nil when the draft is gone or no longer takes edits.
+    @discardableResult
+    public func setUpLocalDraft(id: String, content: DraftContent, quoting selection: String? = nil, now: Date) throws -> LocalDraft? {
+        guard var draft = try localDraft(id: id), draft.state == .editing else { return nil }
+        let stored = draft
+        draft.content = content
+        if let selection { draft.replaceQuote(with: selection) }
+        guard draft != stored else { return draft }
+        if try mayBeInGmail(draft) { try raiseRevision(of: &draft, now: now) } else { try draft.update(db) }
+        return draft
+    }
+
     /// Adds what a reply or forward takes from its original to a draft
     /// waiting for it (`importPending`): the quote, and attachments whose
-    /// files are already in place. Edits made meanwhile stay. Returns the
-    /// draft, or nil when it is gone, has nothing pending or no longer takes
-    /// edits, and the caller removes the files.
+    /// files are already in place. Edits made meanwhile stay. The revision
+    /// rises only when Gmail may hold or be getting a copy without these, so
+    /// a draft nobody changed still counts as unchanged. Returns the draft,
+    /// or nil when it is gone, has nothing pending or no longer takes edits,
+    /// and the caller removes the files.
     @discardableResult
     public func completeImport(
         localDraftID: String, quotedHTML: String?, quotedPlainText: String?,
         attachments: [OutgoingAttachment], now: Date
     ) throws -> LocalDraft? {
         guard var draft = try localDraft(id: localDraftID), draft.importPending, draft.state == .editing else { return nil }
-        // A draft still as it started has no copy in Gmail. Otherwise Gmail
-        // may hold or be getting one without the quote, so it counts as an edit.
-        let untouched = try draft.revision == 0 && draft.gmailDraftID == nil && !draft.hasUnrecordedUpload
-            && composeRows(localDraftID: localDraftID).isEmpty
         draft.quotedHTML = quotedHTML
         draft.quotedPlainText = quotedPlainText
         draft.importPending = false
-        if untouched { try draft.update(db) } else { try raiseRevision(of: &draft, now: now) }
-        for attachment in attachments { _ = try addOutgoingAttachment(attachment, now: now) }
+        if try mayBeInGmail(draft) { try raiseRevision(of: &draft, now: now) } else { try draft.update(db) }
+        try insertAttachmentRows(attachments)
         return try localDraft(id: localDraftID)
+    }
+
+    private func insertAttachmentRows(_ attachments: [OutgoingAttachment]) throws {
+        for attachment in attachments {
+            var row = attachment
+            try row.insert(db)
+        }
     }
 
     /// Deletes a local draft and its attachment rows. Returns the attachments,
@@ -357,6 +382,12 @@ extension CacheTransaction {
         draft.revision += 1
         draft.updatedAt = now
         try draft.update(db)
+    }
+
+    /// Whether Gmail may hold a copy of the draft or be getting one. Gmail
+    /// gets a draft that never went there whole with its first save.
+    private func mayBeInGmail(_ draft: LocalDraft) throws -> Bool {
+        try draft.gmailDraftID != nil || draft.hasUnrecordedUpload || !composeRows(localDraftID: draft.id).isEmpty
     }
 
     // MARK: Outgoing attachments
@@ -492,7 +523,7 @@ extension CacheTransaction {
         standIn: (LocalDraft) throws -> String? = { _ in nil }
     ) throws -> PendingAction? {
         if let content { try updateLocalDraft(id: localDraftID, content: content, now: now) }
-        // A reply or forward can't be sent before its quote and files arrive.
+        // A draft can't be sent before what it waits for arrives (`importPending`).
         guard var draft = try localDraft(id: localDraftID), draft.state == .editing,
               kind != .sendDraft || !draft.importPending
         else { return nil }

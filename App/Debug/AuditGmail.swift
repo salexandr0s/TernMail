@@ -145,6 +145,10 @@ actor AuditGmail: GmailService {
         }
     }
 
+    static let readConversationThread = "performance-read-100"
+    /// Shares no search term with the unread conversations' subjects beyond "synthetic".
+    static let readConversationSubject = "Synthetic read thread"
+
     private static func performanceMail(countOverride: Int?) -> [Message] {
         let count = min(60_000, max(200, countOverride ?? LaunchMode.current.performance.mails))
         var result = (0..<count).map { index in
@@ -166,6 +170,13 @@ actor AuditGmail: GmailService {
                         html: true, labels: ["INBOX", "UNREAD"])
             }
             result.insert(contentsOf: conversation, at: 10)
+        }
+        // Read mail, so the conversation opens with only its newest message expanded.
+        // It goes last, which leaves the list's earlier rows where they were.
+        result += (0..<100).map { index in
+            Message(id: "\(readConversationThread)-\(index)", thread: readConversationThread, subject: readConversationSubject,
+                    text: String(repeating: "<p>Read conversation message \(index): synthetic text for layout.</p>", count: 10),
+                    html: true, labels: ["INBOX"])
         }
         // Untouched, separately named bodies make network-cache misses verifiable.
         // None is a file attachment or a neighbour of the ordinary list corpus.

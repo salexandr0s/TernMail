@@ -61,6 +61,16 @@ extension SyncEngine {
         return try await write { tx in try tx.updateLocalDraft(id: localDraftID, content: content, now: now) }
     }
 
+    /// Stores what the app fills in on a draft it just made, such as its
+    /// sender and signature, and a quoted selection in place of the whole
+    /// quote. That isn't an edit, so a draft nobody changed still counts as
+    /// unchanged. Returns nil when the draft no longer takes edits.
+    @discardableResult
+    public func setUpDraft(_ localDraftID: String, content: DraftContent, quoting selection: String? = nil) async throws -> LocalDraft? {
+        let now = now()
+        return try await write { tx in try tx.setUpLocalDraft(id: localDraftID, content: content, quoting: selection, now: now) }
+    }
+
     /// Queues an upload of the draft's newest revision, first storing `content` when given.
     public func saveDraft(_ localDraftID: String, content: DraftContent? = nil) async throws {
         let now = now()
@@ -71,15 +81,24 @@ extension SyncEngine {
 
     /// Queues the send for after `delay`, the undo send delay, first storing
     /// `content` when given. The message shows in its conversation and in
-    /// Sent at once (`LocalSend`). Returns false when the draft can't be sent.
+    /// Sent at once (`LocalSend`). Returns false when the draft can't be sent,
+    /// and throws `ComposeError.tooLarge` when its files are more than Gmail accepts.
     @discardableResult
     public func sendDraft(_ localDraftID: String, content: DraftContent? = nil, delay: TimeInterval) async throws -> Bool {
         let now = now()
         let rendering = await provisionalRendering(at: now)
         let row = try await write { tx in
-            try tx.enqueueSend(
+            let row = try tx.enqueueSend(
                 localDraftID: localDraftID, content: content, now: now, notBefore: now.addingTimeInterval(delay), rendering: rendering
             )
+            // Attaching a file checks the limit, but a forward's own files can
+            // arrive after the user's. This runs once `content` is stored, as it
+            // decides which inline images go out, and throwing undoes the send.
+            if row != nil, let draft = try tx.localDraft(id: localDraftID),
+               Self.includedAttachmentBytes(try tx.outgoingAttachments(localDraftID: localDraftID), draft: draft) > Self.attachmentByteLimit {
+                throw ComposeError.tooLarge
+            }
+            return row
         }
         scheduleSending()
         return row != nil

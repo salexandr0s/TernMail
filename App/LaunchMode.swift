@@ -124,6 +124,13 @@ struct PerformanceOptions: Sendable, Equatable {
     /// active, for a comparison when nobody can bring it to the front. Its
     /// report is marked and cannot pass acceptance.
     var unattended = false
+    /// Scrolls the mail list three times: with the pointer parked away from
+    /// it, resting on it, and parked again. This moves the real pointer and
+    /// returns it afterwards.
+    var pointerOnList = false
+    /// Scrolls each conversation twice: with the pointer parked, then resting
+    /// on the reader. This moves the real pointer and returns it afterwards.
+    var pointerOnReader = false
     /// Where reader layout diagnostics write their report: one absolute path.
     var readerLayoutReport: URL?
     /// Starts reader prefetches at once instead of after the 90 ms delay.
@@ -192,6 +199,8 @@ extension PerformanceOptions {
         fixedKeyLoop = arguments.contains("--performance-fixed-key-loop")
         startFile = arguments.value(after: "--performance-start-file=")
         unattended = arguments.contains("--performance-unattended")
+        pointerOnList = arguments.contains("--performance-pointer-on-list")
+        pointerOnReader = arguments.contains("--performance-pointer-on-reader")
         readerLayoutReport = ReaderLayoutDiagnostics.destination(in: arguments)
         readerPrefetchImmediate = arguments.contains("--reader-prefetch-immediate")
     }

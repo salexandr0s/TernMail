@@ -76,7 +76,7 @@ import Testing
                 mailbox.selectedMailbox = .combined(SystemLabel.inbox)
             case .attachments:
                 app.destination = .mail
-                mailbox.selectedMailbox = .combined(AttachmentLibraryModel.mailboxID)
+                mailbox.showAttachmentLibrary()
             case .calendar: app.destination = .calendar
             case .followUps: app.destination = .followUps
             case .today: app.destination = .today

@@ -906,6 +906,15 @@ let baseDate = Date(timeIntervalSince1970: 1_800_000_000)
         let folder = await engine.outgoingDirectory.appending(path: draft.id)
         let files = try? FileManager.default.contentsOfDirectory(atPath: folder.path(percentEncoded: false))
         #expect(files?.isEmpty ?? !FileManager.default.fileExists(atPath: folder.path(percentEncoded: false)))
+
+        // A forward's own files arrive without that check, so Send checks the total.
+        try await cache.write { tx in
+            _ = try tx.addOutgoingAttachment(OutgoingAttachment(
+                localDraftID: draft.id, filename: "forwarded.bin", mimeType: "application/octet-stream", size: 26_000_000, path: "forwarded.bin"
+            ), now: baseDate)
+        }
+        await #expect(throws: ComposeError.tooLarge) { try await engine.sendDraft(draft.id, delay: 10) }
+        #expect(try await cache.read { tx in try tx.localDraft(id: draft.id)?.state } == .editing)
     }
 
     @Test func aSendWhoseResponseWasLostIsReconciledWithoutSendingAgain() async throws {
@@ -1175,6 +1184,33 @@ let baseDate = Date(timeIntervalSince1970: 1_800_000_000)
         #expect(await gmail.metadataRequests.isEmpty)
     }
 
+    @Test func settingUpAReplyIsNotAnEdit() async throws {
+        let (engine, cache, _, _) = try await makeEngine()
+        let original = MessageRecord(
+            accountID: account, id: "m1", threadID: "t1", historyID: 1, date: baseDate, snippet: "",
+            sender: "Ana <ana@example.com>", recipients: "Me <me@example.com>", cc: nil, subject: "Lunch",
+            sizeEstimate: 0, rfcMessageID: "<lunch@example.com>"
+        )
+        try await cache.write { tx in
+            try tx.rebuildThreads(try tx.upsertMessages([.init(record: original, labelIDs: [SystemLabel.inbox])]), accountID: account)
+            try tx.saveBodies([MessageBodyRecord(accountID: account, messageID: "m1", html: nil, plainText: "Friday?", fetchedAt: baseDate)])
+        }
+        let reply = try await engine.startReply(.reply, to: "m1")
+
+        // Filling in the sender and a quoted selection isn't an edit.
+        var content = reply.content
+        content.fromAddress = "me@example.com"
+        let setUp = try #require(try await engine.setUpDraft(reply.id, content: content, quoting: "Friday"))
+        #expect(setUp.fromAddress == "me@example.com" && setUp.quotedPlainText == "Friday")
+        #expect(setUp.revision == reply.revision && !setUp.hasUnsavedChanges)
+
+        // Once a save is queued, Gmail may get a copy without what's filled in next, so it counts.
+        try await engine.saveDraft(reply.id)
+        content.signatureHTML = "<p>Me</p>"
+        let queued = try #require(try await engine.setUpDraft(reply.id, content: content))
+        #expect(queued.revision == reply.revision + 1)
+    }
+
     @Test func forwardFetchesTheOriginalAndCopiesItsFiles() async throws {
         let (engine, cache, gmail, _) = try await makeEngine()
         await gmail.add(try decode(GmailMessage.self, #"""
@@ -1228,15 +1264,70 @@ let baseDate = Date(timeIntervalSince1970: 1_800_000_000)
         #expect(shell.quotedPlainText == nil)
         #expect(try await engine.sendDraft(shell.id, delay: 10) == false)
 
-        // Text typed meanwhile stays when the quote and files arrive.
+        // Text typed meanwhile stays when the quote and files arrive. They
+        // aren't an edit of a draft Gmail doesn't have, so closing it unchanged still discards it.
         var content = shell.content
         content.body = ComposeDocument(plainText: "For Friday")
-        _ = try await engine.updateDraft(shell.id, content: content)
+        let typed = try #require(try await engine.updateDraft(shell.id, content: content))
         let draft = try await engine.completeReplyImport(localDraftID: shell.id)
-        #expect(!draft.importPending && draft.body.plainText() == "For Friday")
+        #expect(!draft.importPending && draft.body.plainText() == "For Friday" && draft.revision == typed.revision)
         #expect(draft.quotedPlainText?.contains("See attached") == true)
         #expect(try await cache.read { try $0.outgoingAttachments(localDraftID: draft.id) }.map(\.filename) == ["agenda.txt"])
+        #expect(await engine.sendDueDrafts() == 0)
         #expect(try await engine.sendDraft(draft.id, delay: 10))
+
+        // A copy saved to Gmail before the files arrive is saved again with them.
+        let saved = try await engine.insertReplyShell(.forward, to: "m1")
+        try await engine.saveDraft(saved.id, content: content)
+        #expect(await engine.sendDueDrafts() == 1)
+        let withFiles = try await engine.completeReplyImport(localDraftID: saved.id)
+        #expect(withFiles.hasUnsavedChanges)
+        #expect(await engine.sendDueDrafts() == 1)
+        #expect(await gmail.draftCalls == ["create", "update D1"])
+        let uploads = await gmail.uploads.map { String(decoding: $0.raw, as: UTF8.self) }
+        #expect(uploads.count == 2 && !uploads[0].contains("agenda.txt") && uploads[1].contains("agenda.txt"))
+    }
+
+    @Test func aReplyStillLoadingItsOriginalAtQuitGetsItAfterLaunch() async throws {
+        let (engine, cache, gmail, _) = try await makeEngine()
+        let record = MessageRecord(
+            accountID: account, id: "m1", threadID: "t1", historyID: 1, date: baseDate, snippet: "",
+            sender: "Ana <ana@example.com>", recipients: "Me <me@example.com>", cc: nil, subject: "Lunch",
+            sizeEstimate: 0, rfcMessageID: "<lunch@example.com>"
+        )
+        try await cache.write { tx in
+            try tx.rebuildThreads(try tx.upsertMessages([.init(record: record, labelIDs: [SystemLabel.inbox])]), accountID: account)
+        }
+        await gmail.add(try decode(GmailMessage.self, #"""
+            {"id":"m1","threadId":"t1","historyId":"200","labelIds":["INBOX"],
+            "payload":{"mimeType":"text/plain","headers":[
+              {"name":"From","value":"Ana <ana@example.com>"},{"name":"Subject","value":"Lunch"},
+              {"name":"Message-ID","value":"<lunch@example.com>"}],
+            "body":{"data":"Tm9vbj8="}}}
+            """#))
+        // Quitting saved the typed reply to Gmail before its original arrived.
+        let shell = try await engine.insertReplyShell(.reply, to: "m1")
+        var content = shell.content
+        content.body = ComposeDocument(plainText: "Sure")
+        try await engine.saveDraft(shell.id, content: content)
+        #expect(await engine.sendDueDrafts() == 1)
+
+        await engine.start()
+        try await withEngineStopped(engine) {
+            // Import completion stores the quote before enqueueing Gmail's save.
+            // With automatic sending disabled, wait for that durable action too.
+            try await waitForSyncCondition {
+                try await cache.read { tx in
+                    try tx.pendingActions(accountID: account).contains {
+                        $0.kind == .saveDraft && $0.localDraftID == shell.id
+                    }
+                }
+            }
+            let draft = try #require(try await cache.read { try $0.localDraft(id: shell.id) })
+            #expect(!draft.importPending && draft.quotedPlainText?.contains("Noon?") == true)
+            #expect(await engine.sendDueDrafts() == 1)
+            #expect(await gmail.draftCalls == ["create", "update D1"])
+        }
     }
 
     @Test func aReplyWhoseOriginalWontLoadStaysPendingUntilItGoesWithout() async throws {
@@ -1267,6 +1358,50 @@ let baseDate = Date(timeIntervalSince1970: 1_800_000_000)
         await #expect(throws: ComposeError.stillSending) {
             try await engine.insertReplyShell(.forward, to: LocalSend.messageID(localDraftID: shell.id))
         }
+    }
+
+    @Test func aMessageForwardedAsAnAttachmentOpensBeforeItsFileArrives() async throws {
+        let triage = RawMessages()
+        let (engine, cache, _, clock) = try await makeEngine(triage: triage)
+        let outgoing = await engine.outgoingDirectory
+        let updates = [("m1", "Agenda", 60), ("big", "Scans", SyncEngine.attachmentByteLimit + 1)].map { id, subject, size in
+            CacheTransaction.MessageUpdate(record: MessageRecord(
+                accountID: account, id: id, threadID: "t-\(id)", historyID: 1, date: baseDate, snippet: "",
+                sender: "Ana <ana@example.com>", recipients: "Me <me@example.com>", cc: nil, subject: subject, sizeEstimate: size
+            ), labelIDs: [SystemLabel.inbox])
+        }
+        try await cache.write { tx in try tx.rebuildThreads(try tx.upsertMessages(updates), accountID: account) }
+
+        // The message opens before Gmail gives its file, and can't be sent or change account yet.
+        let shell = try await engine.insertForwardAsAttachment(of: "m1")
+        #expect(shell.kind == .new && shell.importPending && shell.sourceMessageID == "m1" && shell.subject == "Fwd: Agenda")
+        #expect(try await engine.sendDraft(shell.id, delay: 10) == false)
+        let other = SyncEngine(
+            accountID: "second", sender: EmailAddress(address: "second@example.com"), outgoingDirectory: outgoing,
+            gmail: FakeGmail(), cache: cache, sendsAutomatically: false, now: clock.now
+        )
+        #expect(try await engine.moveDraft(shell.id, content: shell.content, to: other) == nil)
+
+        // A failed download leaves it waiting, to try again or go without.
+        await #expect(throws: GmailError.notFound) { try await engine.completeReplyImport(localDraftID: shell.id) }
+        #expect(try await cache.read { try $0.localDraft(id: shell.id)?.importPending } == true)
+
+        // The file isn't an edit of a draft Gmail doesn't have, so closing it unchanged still discards it.
+        let raw = Data("From: ana@example.com\r\nSubject: Agenda\r\n\r\nItems\r\n".utf8)
+        await triage.setRaw(raw, for: "m1")
+        let draft = try await engine.completeReplyImport(localDraftID: shell.id)
+        #expect(!draft.importPending && draft.quotedHTML == nil && draft.revision == shell.revision)
+        let files = try await cache.read { try $0.outgoingAttachments(localDraftID: draft.id) }
+        let file = try #require(files.first)
+        #expect(files.count == 1 && file.filename == "Forwarded Message.eml" && file.mimeType == "message/rfc822")
+        #expect(try Data(contentsOf: outgoing.appending(path: file.path)) == raw)
+        #expect(try await engine.sendDraft(draft.id, delay: 10))
+
+        // A message too large to attach is refused before any draft or download.
+        await #expect(throws: ComposeError.fileTooLarge("Forwarded Message.eml")) {
+            try await engine.insertForwardAsAttachment(of: "big")
+        }
+        #expect(try await cache.read { try $0.localDrafts(accountID: account) }.map(\.id) == [shell.id])
     }
 
     @Test func receivedAttachmentsDownloadOnceThroughTheirPartID() async throws {
@@ -1907,6 +2042,22 @@ actor FakeGmail: GmailService {
     }
 }
 
+/// Gmail's raw copy of a message, for forwarding it as an attachment. A
+/// message without one answers as Gmail does for a message it doesn't have.
+private actor RawMessages: TriageService {
+    private var raw: [String: Data] = [:]
+
+    func setRaw(_ data: Data, for id: String) { raw[id] = data }
+    func rawMessage(id: String) throws -> Data {
+        guard let data = raw[id] else { throw GmailError.notFound }
+        return data
+    }
+    func batchDeleteMessages(ids: [String]) {}
+    func trashMessages(ids: [String]) -> [String: GmailError] { [:] }
+    func untrashMessages(ids: [String]) -> [String: GmailError] { [:] }
+    func patchLabelVisibility(id: String, visibility: LabelListVisibility) throws -> GmailLabel { throw GmailError.notFound }
+}
+
 struct TestClock: Sendable {
     private let date = OSAllocatedUnfairLock(initialState: baseDate)
 
@@ -1920,7 +2071,7 @@ struct TestClock: Sendable {
 /// Pass `cache` to build a second engine over an existing cache, standing in
 /// for the next launch.
 func makeEngine(indexesAttachmentsAutomatically: Bool = false, undoHolds: UndoHolds = UndoHolds(), sendsAutomatically: Bool = false,
-                cache existing: MailCache? = nil, clock existingClock: TestClock? = nil,
+                cache existing: MailCache? = nil, clock existingClock: TestClock? = nil, triage: (any TriageService)? = nil,
                 sleep: (@Sendable (Duration) async throws -> Void)? = nil) async throws -> (SyncEngine, MailCache, FakeGmail, TestClock) {
     let cache = try existing ?? MailCache.inMemory()
     let gmail = FakeGmail()
@@ -1930,6 +2081,7 @@ func makeEngine(indexesAttachmentsAutomatically: Bool = false, undoHolds: UndoHo
         sender: EmailAddress(name: "Me", address: "me@example.com"),
         outgoingDirectory: FileManager.default.temporaryDirectory.appending(path: "TernTests-\(UUID().uuidString)", directoryHint: .isDirectory),
         gmail: gmail,
+        triage: triage,
         cache: cache,
         undoHolds: undoHolds,
         sendsAutomatically: sendsAutomatically,

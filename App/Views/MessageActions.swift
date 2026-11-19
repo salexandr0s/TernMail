@@ -17,6 +17,9 @@ struct MessageActions<SenderItems: View>: View {
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
+        #if TERN_TEST_SUPPORT || TERN_PERFORMANCE
+        let _ = PerformanceFrameEvents.note(.actionsBody)
+        #endif
         HStack(spacing: Tokens.Space.s1) {
             if message.labels.contains(SystemLabel.draft) {
                 if showsReply {
@@ -25,6 +28,7 @@ struct MessageActions<SenderItems: View>: View {
                     } label: {
                         MessageActionIcon("Edit Draft", systemImage: "pencil")
                     }
+                    .buttonStyle(RowButtonStyle())
                     .help("Edit Draft")
                     .accessibilityIdentifier("message-edit-draft-\(message.id)")
                     .ternHover()
@@ -36,6 +40,7 @@ struct MessageActions<SenderItems: View>: View {
                                           systemImage: message.isStarred ? "star.fill" : "star")
                             .foregroundStyle(message.isStarred ? AnyShapeStyle(Tokens.Status.star) : AnyShapeStyle(.secondary))
                     }
+                    .buttonStyle(RowButtonStyle())
                     .help(message.isStarred ? "Remove Star" : "Star")
                     .accessibilityIdentifier("message-star-\(message.id)")
                     .ternHover()
@@ -48,6 +53,7 @@ struct MessageActions<SenderItems: View>: View {
                         MessageActionIcon(primary == .replyAll ? "Reply All" : "Reply",
                                           systemImage: primary == .replyAll ? "arrowshape.turn.up.left.2" : "arrowshape.turn.up.left")
                     }
+                    .buttonStyle(RowButtonStyle())
                     .help(primary == .replyAll ? "Reply All" : "Reply")
                     .accessibilityIdentifier("message-reply-\(message.id)")
                     .ternHover()
@@ -57,16 +63,26 @@ struct MessageActions<SenderItems: View>: View {
                 MessageMenuItems(message: message, mailbox: mailbox, selectedText: selectedText,
                                  markUnreadFromHere: markUnreadFromHere, compose: compose)
                 senderItems
-            } label: { MessageActionIcon("More actions for this message", systemImage: "ellipsis") }
-            .menuStyle(.borderlessButton).menuIndicator(.hidden)
+            } label: {
+                // More keeps the size and color it had as an AppKit menu button.
+                MessageActionIcon("More actions for this message", systemImage: "ellipsis",
+                                  width: Tokens.Space.s5, height: Tokens.Space.s4)
+                    .foregroundStyle(.primary)
+            }
+            .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden)
             .fixedSize()
             .accessibilityLabel("More actions for this message")
             .accessibilityIdentifier("message-more-\(message.id)")
             .help("More actions for this message")
             .ternHover()
         }
-        .labelStyle(.iconOnly).buttonStyle(.borderless).imageScale(.medium)
+        // The buttons set their own style. A row style here would also reach
+        // the commands inside More.
+        .labelStyle(.iconOnly).buttonStyle(.plain).imageScale(.medium)
         .foregroundStyle(.secondary)
+        // A click that lands between two actions stays here, so it can't
+        // open or close the message behind them.
+        .contentShape(Rectangle())
     }
 }
 
@@ -74,16 +90,21 @@ struct MessageActions<SenderItems: View>: View {
 private struct MessageActionIcon: View {
     let title: String
     let systemImage: String
+    let width: CGFloat
+    let height: CGFloat
 
-    init(_ title: String, systemImage: String) {
+    init(_ title: String, systemImage: String, width: CGFloat = Tokens.Control.iconButton,
+         height: CGFloat = Tokens.Control.iconButton) {
         self.title = title
         self.systemImage = systemImage
+        self.width = width
+        self.height = height
     }
 
     var body: some View {
         Label(title, systemImage: systemImage)
             .labelStyle(.iconOnly)
-            .frame(width: Tokens.Control.iconButton, height: Tokens.Control.iconButton)
+            .frame(width: width, height: height)
             .contentShape(Rectangle())
     }
 }
@@ -100,6 +121,9 @@ struct MessageMenuItems: View {
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
+        #if TERN_TEST_SUPPORT || TERN_PERFORMANCE
+        let _ = PerformanceFrameEvents.note(.menuItemsBody)
+        #endif
         if message.labels.contains(SystemLabel.draft) {
             Button("Edit Draft", systemImage: "pencil") { editDraft() }
         } else {
@@ -163,18 +187,17 @@ struct MessageMenuItems: View {
         Button("Reply All") { reply(.replyAll) }
         Button("Forward") { reply(.forward) }
         Button("Forward as Attachment") {
-            Task {
-                guard let id = await mailbox.startForwardingAttachment(messageID: message.id, accountID: message.record.accountID) else { return }
-                openWindow(id: ComposeWindow.sceneID, value: id)
+            ComposeWindow.open(with: openWindow) {
+                await mailbox.startForwardingAttachment(messageID: message.id, accountID: message.record.accountID)
             }
         }
         if message.labels.contains(SystemLabel.sent) {
             Button("Send Again") {
                 guard let owner = mailbox.account(id: message.record.accountID) else { return }
-                Task {
+                ComposeWindow.open(with: openWindow) {
                     guard let id = await mailbox.startSendAgain(messageID: message.id, accountID: message.record.accountID),
-                          mailbox.account(id: message.record.accountID) === owner else { return }
-                    openWindow(id: ComposeWindow.sceneID, value: id)
+                          mailbox.account(id: message.record.accountID) === owner else { return nil }
+                    return id
                 }
             }
         }
@@ -203,9 +226,8 @@ struct MessageMenuItems: View {
 
     static func reply(_ kind: ReplyKind, to message: MessageDetail, in mailbox: MailboxModel, selectedText: String,
                       openWindow: OpenWindowAction) {
-        Task {
-            guard let id = await mailbox.requestReply(kind, messageID: message.id, accountID: message.record.accountID, selectedText: selectedText) else { return }
-            openWindow(id: ComposeWindow.sceneID, value: id)
+        ComposeWindow.open(with: openWindow) {
+            await mailbox.requestReply(kind, messageID: message.id, accountID: message.record.accountID, selectedText: selectedText)
         }
     }
 
@@ -216,12 +238,7 @@ struct MessageMenuItems: View {
     private func editDraft() {
         let start = MailboxModel.ComposeStart.editDraft(messageID: message.id, accountID: message.record.accountID)
         if let compose { compose(start) }
-        else {
-            Task {
-                guard let id = await mailbox.startCompose(start) else { return }
-                openWindow(id: ComposeWindow.sceneID, value: id)
-            }
-        }
+        else { ComposeWindow.open(with: openWindow) { await mailbox.startCompose(start) } }
     }
 
     private func printMessage(pdf: Bool = false) {
@@ -243,48 +260,63 @@ struct MessageAddressMenu: View {
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
+        #if TERN_TEST_SUPPORT || TERN_PERFORMANCE
+        let _ = PerformanceFrameEvents.note(.addressMenuBody)
+        #endif
         if showsFullAddress {
             HStack(alignment: .top, spacing: Tokens.Space.s1) {
                 Text(address.displayString)
                     .fixedSize(horizontal: false, vertical: true)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                addressMenu.fixedSize()
+                addressMenu {
+                    Label("Address actions", systemImage: "ellipsis")
+                        .labelStyle(.iconOnly)
+                        .frame(width: Tokens.Space.s6, height: Tokens.Space.s6)
+                        .contentShape(Rectangle())
+                }
+                // Only an open details popover builds these, so they keep the
+                // AppKit menu button.
+                .menuStyle(.borderlessButton)
+                .fixedSize()
             }
         } else {
-            addressMenu
+            addressMenu {
+                HStack(spacing: Tokens.Space.s1) {
+                    Text(displayName ?? address.name ?? address.address)
+                        .lineLimit(1)
+                        .foregroundStyle(Color(nsColor: .textColor))
+                    Image(systemName: "chevron.down")
+                        .font(.caption2.weight(.bold))
+                        .imageScale(.small)
+                        .accessibilityHidden(true)
+                }
+                .padding(.leading, Tokens.Space.s0_5)
+                .padding(.trailing, Tokens.Space.s1_5)
+                .contentShape(Rectangle())
+            }
+            // Every message header builds this menu, so SwiftUI draws it. The
+            // label draws the chevron and the text color that the AppKit menu
+            // button drew.
+            .menuStyle(.button)
+            .buttonStyle(.plain)
         }
     }
 
-    private var addressMenu: some View {
-        Menu {
+    private func addressMenu<MenuLabel: View>(@ViewBuilder label: () -> MenuLabel) -> some View {
+        Menu(content: {
             Text(address.address)
             Divider()
             Button("Copy Address") { NSPasteboard.general.replaceContents(with: address.address) }
             Button("New Message") {
-                Task {
-                    guard let id = await mailbox.startMessage(to: address, accountID: accountID) else { return }
-                    openWindow(id: ComposeWindow.sceneID, value: id)
-                }
+                ComposeWindow.open(with: openWindow) { await mailbox.startMessage(to: address, accountID: accountID) }
             }
             Divider()
             Button("Search Messages From") { mailbox.searchFromAddress(address.address, accountID: accountID) }
             Button("Search Messages To") { mailbox.searchToAddress(address.address, accountID: accountID) }
             Button("Create Filter…") { mailbox.requestFilter(sender: address.address, recipients: nil, subject: nil, accountID: accountID) }
-        } label: {
-            if showsFullAddress {
-                Label("Address actions", systemImage: "ellipsis")
-                    .labelStyle(.iconOnly)
-                    .frame(width: Tokens.Space.s6, height: Tokens.Space.s6)
-                    .contentShape(Rectangle())
-            } else {
-                Text(displayName ?? address.name ?? address.address)
-                    .lineLimit(1)
-                    .frame(minHeight: Tokens.Space.s6, alignment: .leading)
-            }
-        }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(showsFullAddress ? .hidden : .visible)
+        }, label: label)
+        .menuIndicator(.hidden)
         .ternHover()
         .help(address.displayString)
         .accessibilityLabel("Address actions for \(address.displayString)")

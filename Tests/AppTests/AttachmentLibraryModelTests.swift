@@ -269,10 +269,10 @@ import Testing
         let attachment = AttachmentRecord(accountID: "audit", messageID: "m4", partID: "1", attachmentID: nil,
             filename: "old-invoice.pdf", mimeType: "application/pdf", size: 20, isInline: false)
         let item = AttachmentLibraryItem(attachment: attachment, threadID: "t3", sender: "Mira", subject: "Old invoice", date: .distantPast)
-        mailbox.selectedMailbox = .combined(AttachmentLibraryModel.mailboxID)
+        mailbox.showAttachmentLibrary()
         #expect(await model.openSource(item))
         #expect(model.sourceLink == MailLink(accountID: "audit", threadID: "t3", messageID: "m4"))
-        #expect(mailbox.selectedMailbox == .combined(AttachmentLibraryModel.mailboxID))
+        #expect(mailbox.showsAttachmentLibrary)
         #expect(try await mailbox.cache.read { try $0.thread(id: "t3", accountID: "audit") } != nil)
         model.unavailableAccountIDs = ["audit"]
         #expect(model.sourceLink == nil)

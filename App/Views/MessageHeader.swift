@@ -18,6 +18,9 @@ struct MessageHeader<SenderItems: View>: View {
     @State private var showsSender = false
 
     var body: some View {
+        #if TERN_TEST_SUPPORT || TERN_PERFORMANCE
+        let _ = PerformanceFrameEvents.note(.headerBody)
+        #endif
         HStack(alignment: .top, spacing: Tokens.Space.s2) {
             Button(action: onToggle) {
                 Image(systemName: "chevron.right")
@@ -26,24 +29,22 @@ struct MessageHeader<SenderItems: View>: View {
                     .frame(width: Tokens.Control.iconButton, height: Tokens.Control.iconButton)
                     .contentShape(Rectangle())
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(RowButtonStyle(system: .plain))
             .foregroundStyle(.secondary)
             .ternHover()
             .help(isExpanded ? "Collapse message" : "Expand message")
             .accessibilityLabel(isExpanded ? "Collapse message" : "Expand message")
             .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
             .accessibilityIdentifier("message-disclosure-\(message.id)")
-            .messageHeaderControl()
 
             Button { showsSender = true } label: {
                 ContactAvatar(accountID: message.record.accountID, address: message.senderAddress,
                               name: message.senderDisplayName, cache: mailbox.cache, accounts: mailbox.accountStore)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(RowButtonStyle(system: .plain))
             .help("Show sender details")
             .accessibilityLabel("Show details for \(message.senderDisplayName)")
             .accessibilityIdentifier("sender-profile-\(message.id)")
-            .messageHeaderControl()
             .popover(isPresented: $showsSender, arrowEdge: .bottom) {
                 SenderProfilePopover(accountID: message.record.accountID, address: message.senderAddress,
                                      name: message.senderDisplayName, mailbox: mailbox)
@@ -56,11 +57,10 @@ struct MessageHeader<SenderItems: View>: View {
         }
         .padding(.horizontal, Tokens.Space.s3)
         .padding(.vertical, Tokens.Space.s2)
-        .overlayPreferenceValue(MessageHeaderControlBounds.self) { bounds in
-            GeometryReader { geometry in
-                MessageHeaderClickSurface(messageID: message.id, isExpanded: isExpanded,
-                    controlRects: bounds.map { geometry[$0] }, onToggle: onToggle)
-            }
+        // Behind the content, so each control takes its own clicks and the
+        // surface takes the rest. Text here opts out of hit testing for that.
+        .background {
+            MessageHeaderClickSurface(messageID: message.id, isExpanded: isExpanded, onToggle: onToggle)
         }
         .ternHover(radius: Tokens.Radius.md)
         .menuIndicator(.hidden)
@@ -95,7 +95,6 @@ struct MessageHeader<SenderItems: View>: View {
                                        accountID: message.record.accountID, mailbox: mailbox)
                         .font(.body.weight(message.isUnread ? .semibold : .medium))
                         .accessibilityIdentifier("message-sender-\(message.id)")
-                        .messageHeaderControl()
                 }
                 .frame(minWidth: isNarrow ? 0 : Tokens.Layout.senderMinWidth, maxWidth: .infinity, alignment: .leading)
 
@@ -107,7 +106,6 @@ struct MessageHeader<SenderItems: View>: View {
                 MessageActions(message: message, mailbox: mailbox, selectedText: selectedText, compose: compose,
                                showsReply: isExpanded && !isNarrow, showsStar: !isNarrow || message.isStarred,
                                markUnreadFromHere: onMarkUnreadFromHere) { senderItems }
-                    .messageHeaderControl()
             }
 
             if isExpanded {
@@ -125,7 +123,7 @@ struct MessageHeader<SenderItems: View>: View {
                         .frame(minHeight: Tokens.Space.s6)
                         .contentShape(RoundedRectangle(cornerRadius: Tokens.Radius.sm))
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(RowButtonStyle(system: .plain))
                     .foregroundStyle(showsDetails ? Color.accentColor : .secondary)
                     .background(showsDetails ? Color.accentColor.opacity(Tokens.Opacity.wash) : .clear,
                         in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
@@ -135,13 +133,11 @@ struct MessageHeader<SenderItems: View>: View {
                     .accessibilityValue(showsDetails ? "Expanded" : "Collapsed")
                     .accessibilityIdentifier("message-details-\(message.id)")
                     .fixedSize()
-                    .messageHeaderControl()
                     Spacer(minLength: 0)
                 }
                 .font(.caption).foregroundStyle(.secondary)
                 if message.labels.contains(SystemLabel.sent), let messageID = message.record.rfcMessageID {
                     ReadReceiptBadge(accountID: message.record.accountID, rfcMessageID: messageID, cache: mailbox.cache)
-                        .messageHeaderControl()
                 }
             } else {
                 Text(MessagePreview.text(for: message))

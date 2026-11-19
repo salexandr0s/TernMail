@@ -94,6 +94,7 @@ struct SidebarView: View {
             }
         }
         .listStyle(.sidebar)
+        .tracksKeyboardNavigation()
         .contentMargins(.horizontal, 0, for: .scrollContent)
         // Favorites that arrive or leave fade, and the rows below move to their place.
         .ternAnimation(value: mailbox.navigation.favorites.map(\.id))
@@ -397,6 +398,8 @@ struct SidebarDisclosureButton: View {
     let isHovered: Bool
     var childrenTitle = "Accounts"
     let toggle: () -> Void
+    /// The button binds its focus only while Keyboard navigation lets it take it.
+    @Environment(\.buttonsTakeKeyboardFocus) private var buttonsTakeFocus
     @FocusState private var isFocused: Bool
 
     var body: some View {
@@ -406,7 +409,7 @@ struct SidebarDisclosureButton: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.borderless)
-        .focused($isFocused)
+        .focused($isFocused, whileButtonsTakeFocus: buttonsTakeFocus)
         .accessibilityLabel("\(isExpanded ? "Hide" : "Show") \(childrenTitle.lowercased()) in \(title)")
         .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
         .help("\(isExpanded ? "Hide" : "Show") \(childrenTitle)")
@@ -448,7 +451,7 @@ private struct MailboxRow: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
-        .onHover { isHovered = $0 }
+        .ternOnHover { isHovered = $0 }
         .badge(count)
     }
 }
@@ -614,7 +617,7 @@ private struct LabelRow: View {
         .badge(label.threadsUnread ?? 0)
         .selectionDisabled(isPending)
         .conversationDropTarget(.account(label.accountID, label.id), mailbox: mailbox)
-        .onHover { isHovered = $0 }
+        .ternOnHover { isHovered = $0 }
         .tag(SidebarRowSelection(mailbox: .account(label.accountID, label.id)))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(isPending ? "\(label.name), waiting for Gmail" : label.name)

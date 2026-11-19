@@ -20,6 +20,9 @@ struct ContactAvatar: View {
     }
 
     var body: some View {
+        #if TERN_TEST_SUPPORT || TERN_PERFORMANCE
+        let _ = PerformanceFrameEvents.note(.avatarBody)
+        #endif
         AddressAvatar(accountID: accountID, address: address, name: name, size: size,
                       context: AddressAvatarContext(cache: cache, accounts: accounts,
                           profileAccountIDs: context.profileAccountIDs, identity: context.identity)) {

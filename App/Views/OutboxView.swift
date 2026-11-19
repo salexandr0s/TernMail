@@ -37,7 +37,10 @@ struct OutboxView: View {
                 }
             }
         } primaryAction: { ids in
-            ids.forEach(open)
+            // Only the window opened last, which ends up in front, takes the keys typed meanwhile.
+            let ids = Array(ids)
+            ids.dropLast().forEach { openWindow(id: ComposeWindow.sceneID, value: $0) }
+            if let last = ids.last { open(last) }
         }
         .onChange(of: mailbox.selectedOutbox.map(\.id)) { _, ids in
             if let selection, !ids.contains(selection) { self.selection = nil }
@@ -51,14 +54,13 @@ struct OutboxView: View {
         activity.canCancelSend
     }
 
+    /// Opens a draft's window, which takes what is typed until then.
     private func open(_ id: String) {
-        openWindow(id: ComposeWindow.sceneID, value: id)
+        ComposeWindow.open(with: openWindow) { id }
     }
 
     private func undoSend(_ id: String) {
-        Task {
-            if await mailbox.undoSend(id) { open(id) }
-        }
+        ComposeWindow.open(with: openWindow) { await mailbox.undoSend(id) ? id : nil }
     }
 }
 

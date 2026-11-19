@@ -125,6 +125,31 @@ import Testing
         }
     }
 
+    @Test func theLibraryCoversMailUntilAMailboxIsChosen() async throws {
+        try await withMailbox { mailbox in
+            let box = MailboxID.account("a", "projects")
+            let conversation: Set<ThreadKey> = [ThreadKey(accountID: "a", threadID: "retained")]
+            mailbox.sidebarSelection = box
+            mailbox.selectedThreadIDs = conversation
+            // Mail stays as it was behind the library, and the sidebar selects no mailbox.
+            mailbox.showAttachmentLibrary()
+            #expect(mailbox.sidebarSelection == nil)
+            mailbox.leaveAttachmentLibrary()
+            #expect(mailbox.selectedMailbox == box && mailbox.selectedThreadIDs == conversation)
+            #expect(mailbox.sidebarSelection == box)
+            // Choosing the mailbox behind the library shows it as it was.
+            mailbox.showAttachmentLibrary()
+            mailbox.sidebarSelection = box
+            #expect(!mailbox.showsAttachmentLibrary && mailbox.selectedThreadIDs == conversation)
+            // A mailbox replaced because its account is hidden changes behind the library.
+            mailbox.showAttachmentLibrary()
+            mailbox.applyAccountPresentation(preferences: [], visibleAccountIDs: ["b"])
+            #expect(mailbox.showsAttachmentLibrary && mailbox.selectedMailbox == .account("b", SystemLabel.inbox))
+            mailbox.go(to: SystemLabel.inbox)
+            #expect(!mailbox.showsAttachmentLibrary)
+        }
+    }
+
     @Test func nestedLabelsRevealExistingAncestorsAndRespectExpansionAndAccountOwnership() async throws {
         try await withMailbox { mailbox in
             let owner = try #require(mailbox.account(id: "a"))

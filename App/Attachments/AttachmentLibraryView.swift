@@ -7,11 +7,17 @@ import SyncEngine
 struct AttachmentLibraryView: View {
     @Bindable var model: AttachmentLibraryModel
     let viewMode: AttachmentLibraryViewMode
+    /// False while the library is mounted behind Mail. It then stops observing
+    /// the cache, closes its popovers and gives up the keyboard.
+    var isActive = true
     /// Moves focus to the window's search field, which searches the library.
     var focusSearch: () -> Void = {}
     @State private var showsFilters = false
     @State private var showsCoverage = false
     @State private var pane = PaneSize()
+    /// Moves the keyboard between the files and Mail as the library comes to
+    /// front and goes behind.
+    @State private var keyboard = SectionKeyboard()
 
     /// The library's height, which caps the Filters popover. Only the popover reads it,
     /// and only when it opens, so it is kept outside the view's state: resizing the
@@ -49,7 +55,7 @@ struct AttachmentLibraryView: View {
                             // Rows from the previous query stay up while the next page loads.
                             // They ignore clicks until then, because commands act on `items`.
                             AttachmentLibraryCollection(model: model, viewMode: viewMode,
-                                availableWidth: geometry.size.width)
+                                availableWidth: geometry.size.width, keyboard: keyboard)
                                 .allowsHitTesting(!model.isPresentingEarlierPage)
                                 .ternTransition(.fade)
                         }
@@ -63,11 +69,15 @@ struct AttachmentLibraryView: View {
             footer(showsIndexProgress: showsIndexProgress)
         }
         .background(Tokens.Surface.canvas)
+        .sectionKeyboard(keyboard, isInFront: isActive)
         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { pane.height = $0 }
         .quickLookPreview($model.previewURL, in: model.previewURLs)
         .protectAttachmentPreview(model.previewURL)
-        .task(id: model.coverageKey) { await model.start() }
-        .task(id: model.observationKey) { await model.reload() }
+        .task(id: isActive ? model.coverageKey : nil) { if isActive { await model.start() } }
+        .task(id: isActive ? model.observationKey : nil) { if isActive { await model.reload() } }
+        .onChange(of: isActive) { _, active in
+            if !active { showsFilters = false; showsCoverage = false }
+        }
     }
 
     /// Category shortcuts and the Filters popover. Search, the layout and the

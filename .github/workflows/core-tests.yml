@@ -35,11 +35,41 @@ jobs:
       - name: Cache SwiftPM dependencies
         uses: actions/cache@v4
         with:
-          path: |
-            ~/Library/Caches/org.swift.swiftpm
-            Packages/Core/.build/repositories
-          key: spm-${{ runner.os }}-${{ hashFiles('Packages/Core/Package.resolved') }}
-          restore-keys: spm-${{ runner.os }}-
+          # SwiftPM populates .build/repositories from this shared source cache.
+          # Caching both duplicates Git history; no compiled output is reused.
+          path: ~/Library/Caches/org.swift.swiftpm/repositories
+          key: spm-sources-v2-${{ runner.os }}-${{ hashFiles('Packages/Core/Package.resolved') }}
+          restore-keys: spm-sources-v2-${{ runner.os }}-
 
       - name: Test
-        run: swift test --package-path Packages/Core
+        id: tests
+        # pipefail keeps a failing test red even when tee succeeds.
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/ci-core-tests
+          /usr/bin/time -lp -o build/ci-core-tests/time.txt \
+            swift test --package-path Packages/Core \
+            2>&1 | tee build/ci-core-tests/test.log
+
+      - name: Summarize test timing
+        if: ${{ !cancelled() && steps.tests.outcome != 'skipped' }}
+        run: |
+          {
+            echo '### Full Core suite'
+            echo "Revision: \`$GITHUB_SHA\`"
+            echo 'Invocation timing (seconds; excludes runner setup and cache transfer):'
+            echo '```text'
+            cat build/ci-core-tests/time.txt
+            echo '```'
+            echo 'Use the job start/end timestamps for runner time and rounded compute cost.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Retain test evidence
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: core-tests-${{ github.run_id }}-${{ github.run_attempt }}
+          path: build/ci-core-tests/
+          if-no-files-found: ignore
+          retention-days: 7

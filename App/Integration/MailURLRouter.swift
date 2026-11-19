@@ -51,9 +51,7 @@ final class MailURLRouter {
                 do {
                     if url.scheme?.lowercased() == "mailto" {
                         let request = try MailtoParser.parse(url)
-                        guard let id = await mailbox.startMailto(request), app.mailbox === mailbox else { continue }
-                        guard generation == current, !Task.isCancelled else { return }
-                        composeDraftID = id
+                        await compose(request, in: mailbox) { generation == current && !Task.isCancelled }
                     } else {
                         guard let link = MailLink(url: url) else { throw MailRoutingError.invalidLink }
                         try await open(link, in: app, mailbox: mailbox, generation: current)
@@ -62,6 +60,21 @@ final class MailURLRouter {
                 catch { self.error = "Couldn't open this mail link. Check that its account is signed in." }
             }
         }
+    }
+
+    /// Opens a new message with the fields of `request` in its own window,
+    /// for a mail link, Services, Shortcuts or a script. It opens only if
+    /// `mailbox` is still the app's and `isCurrent` holds once it is saved.
+    /// Returns whether it opens.
+    @discardableResult
+    func compose(_ request: MailtoRequest, in mailbox: MailboxModel,
+                 isCurrent: () -> Bool = { true }) async -> Bool {
+        let id = await ComposeWindow.makeDraft(isCurrent: { app?.mailbox === mailbox && isCurrent() }) {
+            await mailbox.startMailto(request)
+        }
+        guard let id else { return false }
+        composeDraftID = id
+        return true
     }
 
     func openConversation(_ link: MailLink) {

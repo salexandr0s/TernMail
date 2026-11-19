@@ -327,7 +327,7 @@ struct MailCommands: Commands {
         CommandMenu("Go") {
             Button("Mail", systemImage: "envelope") {
                 app.destination = .mail
-                if mailbox?.selectedLabelID == AttachmentLibraryModel.mailboxID { mailbox?.go(to: SystemLabel.inbox) }
+                mailbox?.leaveAttachmentLibrary()
             }
                 .labelStyle(.titleAndIcon)
                 .keyboardShortcut(ShortcutCatalog.goMail.shortcut)
@@ -338,7 +338,7 @@ struct MailCommands: Commands {
                 .disabled(!isMainWindowFocused)
             Button("Attachments", systemImage: "paperclip") {
                 app.destination = .mail
-                mailbox?.selectedMailbox = .combined(AttachmentLibraryModel.mailboxID)
+                mailbox?.showAttachmentLibrary()
             }
                 .labelStyle(.titleAndIcon)
                 .keyboardShortcut(ShortcutCatalog.goAttachments.shortcut)
@@ -468,36 +468,32 @@ struct MailCommands: Commands {
 
     private func reply(_ kind: ReplyKind) {
         guard let mailbox = focusedMailbox ?? (conversationLink == nil ? nil : app.mailbox) else { return }
-        Task {
-            if let link = conversationLink {
-                let quote = selectedQuote.flatMap { $0.belongsTo(accountID: link.accountID, threadID: link.threadID,
-                    messageID: link.messageID) ? $0 : nil }
-                guard let messageID = await mailbox.nativeReplyMessageID(for: link, preferredMessageID: quote?.messageID),
-                    let id = await mailbox.requestReply(kind, messageID: messageID,
-                    accountID: link.accountID, selectedText: quote?.text) else { return }
-                openWindow(id: ComposeWindow.sceneID, value: id)
-                return
-            }
-            guard let id = await mailbox.startReply(kind, quote: selectedQuote) else { return }
-            openWindow(id: ComposeWindow.sceneID, value: id)
+        let link = conversationLink, selectedQuote = selectedQuote
+        ComposeWindow.open(with: openWindow) {
+            guard let link else { return await mailbox.startReply(kind, quote: selectedQuote) }
+            let quote = selectedQuote.flatMap { $0.belongsTo(accountID: link.accountID, threadID: link.threadID,
+                messageID: link.messageID) ? $0 : nil }
+            guard let messageID = await mailbox.nativeReplyMessageID(for: link, preferredMessageID: quote?.messageID)
+            else { return nil }
+            return await mailbox.requestReply(kind, messageID: messageID, accountID: link.accountID, selectedText: quote?.text)
         }
     }
 
     /// Forwards the message Reply would answer as a file.
     private func forwardAsAttachment() {
         guard let mailbox = focusedMailbox ?? (conversationLink == nil ? nil : app.mailbox) else { return }
-        Task {
+        let link = conversationLink
+        ComposeWindow.open(with: openWindow) {
             let target: (messageID: String, accountID: String)?
-            if let link = conversationLink {
+            if let link {
                 target = await mailbox.nativeReplyMessageID(for: link, preferredMessageID: nil).map { ($0, link.accountID) }
             } else if case .reply(_, let messageID, let accountID)? = await mailbox.replyStart(.forward) {
                 target = (messageID, accountID)
             } else {
                 target = nil
             }
-            guard let target,
-                  let id = await mailbox.startForwardingAttachment(messageID: target.messageID, accountID: target.accountID) else { return }
-            openWindow(id: ComposeWindow.sceneID, value: id)
+            guard let target else { return nil }
+            return await mailbox.startForwardingAttachment(messageID: target.messageID, accountID: target.accountID)
         }
     }
 
@@ -516,18 +512,13 @@ struct MailCommands: Commands {
     /// Stops the newest send and reopens its window.
     private func undoSend() {
         guard let mailbox = app.mailbox, let id = mailbox.undoableSendID else { return }
-        Task {
-            if await mailbox.undoSend(id) { openWindow(id: ComposeWindow.sceneID, value: id) }
-        }
+        ComposeWindow.open(with: openWindow) { await mailbox.undoSend(id) ? id : nil }
     }
 
     /// Opens a compose window once its draft exists. A failure shows in the mailbox window.
     private func open(_ start: MailboxModel.ComposeStart) {
         guard let mailbox else { return }
-        Task {
-            guard let id = await mailbox.startCompose(start) else { return }
-            openWindow(id: ComposeWindow.sceneID, value: id)
-        }
+        ComposeWindow.open(with: openWindow) { await mailbox.startCompose(start) }
     }
 
     /// Conversations are selected in the mailbox window, which is in front.

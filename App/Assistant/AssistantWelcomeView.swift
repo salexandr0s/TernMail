@@ -155,7 +155,7 @@ private struct AssistantSuggestionRow: View {
         .buttonStyle(.plain).disabled(requirement != nil)
         .contentShape(.focusEffect, RoundedRectangle(cornerRadius: Tokens.Radius.lg))
         .ternOutline(radius: Tokens.Radius.lg)
-        .onHover { isHovered = $0 }
+        .ternOnHover { isHovered = $0 }
         .help(requirement ?? "Ask the assistant now")
         .accessibilityHint(requirement ?? "Ask the assistant now")
     }

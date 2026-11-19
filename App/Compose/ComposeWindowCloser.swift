@@ -1,7 +1,7 @@
 import Foundation
 
-/// Decides whether the compose window may close. A draft that closing
-/// would store goes first, and the window closes once that worked. A store
+/// Decides whether the compose window may close. A draft with changes Gmail
+/// lacks is saved first, and the window closes once that worked. A save
 /// that fails keeps the window open with the error and the draft.
 @MainActor
 final class ComposeWindowCloser {

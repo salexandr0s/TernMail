@@ -86,7 +86,11 @@ final class AppModel {
     func composeFromDock() {
         showMainWindow()
         guard let mailbox else { return }
-        Task { if let id = await mailbox.startCompose(.newMessage) { mailbox.draftToReopen = id } }
+        Task {
+            if let id = await ComposeWindow.makeDraft({ await mailbox.startCompose(.newMessage) }) {
+                mailbox.draftToReopen = id
+            }
+        }
     }
 
     var mailURLs: MailURLRouter {
@@ -222,7 +226,7 @@ final class AppModel {
     /// A conversation window has it open, or the mailbox shows it selected.
     private func isConversationOnScreen(_ key: ThreadKey) -> Bool {
         if visibleConversationKeys.contains(key) { return true }
-        guard destination == .mail, let mailbox else { return false }
+        guard destination == .mail, let mailbox, !mailbox.showsAttachmentLibrary else { return false }
         return mailbox.selectedThreadIDs.contains(key)
     }
 
@@ -384,7 +388,9 @@ final class AppModel {
         case .reply:
             // The main window opens the reply's own window, as the Dock's New Message does.
             showMainWindow()
-            guard let id = await mailbox.requestReply(.reply, messageID: target.messageID, accountID: target.accountID, selectedText: nil) else { return }
+            guard let id = await ComposeWindow.makeDraft({
+                await mailbox.requestReply(.reply, messageID: target.messageID, accountID: target.accountID, selectedText: nil)
+            }) else { return }
             mailbox.draftToReopen = id
         case .perform(let action):
             do {
@@ -1503,8 +1509,10 @@ final class AppModel {
         }
         // An empty list says "Downloading mail…" only for an account that
         // has never synced, so the window learns that before it shows the
-        // mailbox.
-        await mailbox.restoreSyncState()
+        // mailbox. The same read brings the saved labels, so they are in the
+        // sidebar's first frame rather than arriving with the observation
+        // that starts below.
+        await mailbox.restoreSavedState()
         self.mailbox = mailbox
         bindMailNotificationRoutes()
         phase = .signedIn(first)

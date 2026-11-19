@@ -1,12 +1,12 @@
 import AppKit
 import SwiftUI
 
-/// The native overlay yields the measured control rectangles to SwiftUI.
-/// AppKit supplies click counts using the user's double-click speed.
+/// A native view behind the header's content. Each control in front takes its
+/// own clicks, and this takes the rest. AppKit supplies click counts using the
+/// user's double-click speed.
 struct MessageHeaderClickSurface: NSViewRepresentable {
     let messageID: String
     let isExpanded: Bool
-    var controlRects: [CGRect] = []
     let onToggle: () -> Void
 
     func makeNSView(context: Context) -> MessageHeaderClickView {
@@ -16,19 +16,19 @@ struct MessageHeaderClickSurface: NSViewRepresentable {
     }
 
     func updateNSView(_ view: MessageHeaderClickView, context: Context) {
-        if view.messageID != messageID { view.resetClickSequence() }
-        view.messageID = messageID
+        if view.messageID != messageID {
+            view.resetClickSequence()
+            view.messageID = messageID
+            view.setAccessibilityIdentifier("message-header-surface-\(messageID)")
+        }
         view.isExpanded = isExpanded
-        view.controlRects = controlRects
         view.onToggle = onToggle
-        view.setAccessibilityIdentifier("message-header-surface-\(messageID)")
     }
 }
 
 final class MessageHeaderClickView: NSView {
     var messageID = ""
     var isExpanded = false
-    var controlRects: [CGRect] = []
     var onToggle: () -> Void = {}
     private var beganExpanded = false
     private var mouseDownPoint: NSPoint?
@@ -38,12 +38,6 @@ final class MessageHeaderClickView: NSView {
     override var isFlipped: Bool { true }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
     override func isAccessibilityElement() -> Bool { false }
-
-    override func hitTest(_ point: NSPoint) -> NSView? {
-        let local = convert(point, from: superview)
-        guard !isHidden, bounds.contains(local), !controlRects.contains(where: { $0.contains(local) }) else { return nil }
-        return self
-    }
 
     override func mouseDown(with event: NSEvent) {
         mouseDownPoint = event.locationInWindow
@@ -77,18 +71,5 @@ final class MessageHeaderClickView: NSView {
         beganExpanded = false
         mouseDownPoint = nil
         dragged = false
-    }
-}
-
-struct MessageHeaderControlBounds: PreferenceKey {
-    static var defaultValue: [Anchor<CGRect>] { [] }
-    static func reduce(value: inout [Anchor<CGRect>], nextValue: () -> [Anchor<CGRect>]) {
-        value.append(contentsOf: nextValue())
-    }
-}
-
-extension View {
-    func messageHeaderControl() -> some View {
-        anchorPreference(key: MessageHeaderControlBounds.self, value: .bounds) { [$0] }
     }
 }

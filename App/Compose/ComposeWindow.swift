@@ -37,12 +37,43 @@ struct ComposeWindow: View {
             }
         }
         .frame(minWidth: ComposeView.minWidth, minHeight: ComposeView.minHeight)
-        .background { ComposeTypeAheadAnchor(typeAhead: typeAhead) }
+        .background { ComposeTypeAheadAnchor(typeAhead: typeAhead, localDraftID: localDraftID) }
         .background { WindowEditedMarker(isEdited: isEdited) }
         .background { WindowCloseGuard { [closer] _ in closer.shouldClose() } }
         .background { ComposeWindowCascade() }
         .task(id: app.phase) {
             if localDraftID == nil || app.phase == .signedOut { dismiss() }
         }
+    }
+
+    /// Opens the window of the draft `makeDraft` returns. What is typed while
+    /// the draft is made goes to that window, which it was meant for.
+    static func open(with openWindow: OpenWindowAction, makeDraft: @escaping @MainActor () async -> String?) {
+        let keys = ComposeTypeAhead.catchKeys()
+        Task {
+            guard let id = await makeDraft() else {
+                keys.drop()
+                return
+            }
+            keys.wait(for: id)
+            openWindow(id: sceneID, value: id)
+        }
+    }
+
+    /// Makes a draft for a window that a mail link, another app, the Dock or
+    /// a notification opens. Tern may not have been in front, so keys typed
+    /// in any of Tern's windows are kept for the new window until it opens,
+    /// with the exceptions `ComposeTypeAhead.catchKeysInAnyWindow()` lists.
+    /// `isCurrent` runs once the draft exists. When it fails, or there is no
+    /// draft, the kept keys are dropped and this returns nil.
+    static func makeDraft(isCurrent: () -> Bool = { true },
+                          _ make: @MainActor () async -> String?) async -> String? {
+        let keys = ComposeTypeAhead.catchKeysInAnyWindow()
+        guard let id = await make(), isCurrent() else {
+            keys.drop()
+            return nil
+        }
+        keys.wait(for: id)
+        return id
     }
 }

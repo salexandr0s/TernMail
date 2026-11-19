@@ -93,14 +93,32 @@ import Testing
         model.start()
         try await waitUntil { model.phase == .open }
 
-        // A normal close asks nothing.
-        await model.requestClose()
+        // A normal close asks nothing and doesn't wait: the window goes at
+        // once, and the draft goes after it.
+        #expect(model.closesAtOnce)
+        model.windowClosed()
         #expect(model.phase == .closed && model.alert == nil)
         let deadline = ContinuousClock.now.advanced(by: .seconds(3))
         while try await cache.read({ try $0.localDraft(id: id) }) != nil, ContinuousClock.now < deadline {
             try await Task.sleep(for: .milliseconds(10))
         }
         #expect(try await cache.read { try $0.localDraft(id: id) } == nil)
+
+        // The menu's Reply gets its sender in its window, which isn't an edit
+        // either. After a crash macOS restores the window, which opens the
+        // reply again, and closing it unchanged still discards it.
+        try await waitUntil { mailbox.hasSyncedOnce }
+        let replyID = try #require(await mailbox.startCompose(.reply(.reply, messageID: "m1", accountID: "audit")))
+        let crashed = ComposeModel(localDraftID: replyID, mailbox: mailbox)
+        crashed.start()
+        try await waitUntil { crashed.phase == .open }
+        let restored = ComposeModel(localDraftID: replyID, mailbox: mailbox)
+        restored.start()
+        try await waitUntil { restored.phase == .open }
+        #expect(restored.content.fromAddress == "audit@example.invalid" && !restored.isEdited)
+        await restored.requestClose()
+        let closedReply = try await cache.read { try $0.localDraft(id: replyID) }
+        #expect(restored.phase == .closed && (closedReply == nil || closedReply?.state == .discarding))
         await mailbox.stop()
     }
 
@@ -135,10 +153,10 @@ import Testing
         let model = ComposeModel(localDraftID: id, mailbox: mailbox)
         model.start()
         try await waitUntil { model.phase == .open }
-        #expect(!model.closesAtOnce)
 
         try file.refuse("UPDATE", on: "localDraft")
         model.content.subject = "Plan"
+        #expect(!model.closesAtOnce)
         await model.requestClose()
         // Still open, showing the error, with the edit this Mac doesn't have.
         #expect(model.phase == .open && model.isEditable && model.content.subject == "Plan")
@@ -377,6 +395,89 @@ import Testing
         await mailbox.stop()
     }
 
+    @Test func repliesOpenBeforeTheirOriginalLoads() async throws {
+        let (mailbox, cache) = try await makeMailbox()
+        try await waitUntil { mailbox.hasSyncedOnce }
+        // Cached headers with a Message-ID let a reply open without Gmail.
+        // Gmail has m1, and no longer has the other message. The cache keeps
+        // the newer copy, and the synced m1 is at history 200.
+        let headers: [(id: String, thread: String, subject: String, sender: String)] = [
+            ("m1", "t1", "Field notes", "River <river@example.invalid>"), ("gone", "t-gone", "Lunch", "pat@example.invalid"),
+        ]
+        let records = headers.map { header in
+            CacheTransaction.MessageUpdate(record: MessageRecord(
+                accountID: "audit", id: header.id, threadID: header.thread, historyID: 1_000, date: .now, snippet: "",
+                sender: header.sender, recipients: "audit@example.invalid", cc: nil, subject: header.subject,
+                sizeEstimate: 1, rfcMessageID: "<\(header.id)@example.invalid>"
+            ), labelIDs: [SystemLabel.inbox])
+        }
+        try await cache.write { tx in _ = try tx.upsertMessages(records) }
+
+        // The forward gets its quote while open, and closing it unchanged still discards it.
+        let forwardID = try #require(await mailbox.startCompose(.reply(.forward, messageID: "m1", accountID: "audit")))
+        #expect(try await cache.read { try $0.localDraft(id: forwardID) }?.importPending == true)
+        let forward = ComposeModel(localDraftID: forwardID, mailbox: mailbox)
+        forward.start()
+        try await waitUntil { forward.phase == .open && !forward.awaitsOriginal }
+        #expect(forward.draft?.quotedPlainText?.contains("field notes") == true)
+        await forward.requestClose()
+        let closed = try await cache.read { try $0.localDraft(id: forwardID) }
+        #expect(forward.phase == .closed && (closed == nil || closed?.state == .discarding))
+
+        // A reply from the reader's buttons gets its sender before the window
+        // opens. That isn't an edit, so closing it unchanged discards it too.
+        let buttonReplyID = try #require(await mailbox.requestReply(.reply, messageID: "m1", accountID: "audit", selectedText: nil))
+        let buttonReply = ComposeModel(localDraftID: buttonReplyID, mailbox: mailbox)
+        buttonReply.start()
+        try await waitUntil { buttonReply.phase == .open && !buttonReply.awaitsOriginal }
+        await buttonReply.requestClose()
+        let closedReply = try await cache.read { try $0.localDraft(id: buttonReplyID) }
+        #expect(buttonReply.phase == .closed && (closedReply == nil || closedReply?.state == .discarding))
+
+        // A reply whose original won't load waits until it goes without.
+        let replyID = try #require(await mailbox.startCompose(.reply(.reply, messageID: "gone", accountID: "audit")))
+        let reply = ComposeModel(localDraftID: replyID, mailbox: mailbox)
+        reply.start()
+        try await waitUntil { reply.phase == .open && reply.originalImportFailed }
+        #expect(reply.awaitsOriginal && reply.content.subject == "Re: Lunch")
+        #expect(await reply.send() == false)
+        #expect(reply.alert == ComposeModel.Problem(title: "Can't Send Message",
+                                                    message: "The original message couldn't be loaded. Retry, or leave it out."))
+        reply.leaveOutOriginal()
+        try await waitUntil { !reply.awaitsOriginal && !reply.originalImportFailed }
+        #expect(reply.draft?.quotedPlainText == nil)
+        #expect(await reply.send())
+        await mailbox.stop()
+    }
+
+    @Test func forwardAsAttachmentOpensBeforeItsFileArrives() async throws {
+        let (mailbox, cache) = try await makeMailbox()
+        try await waitUntil { mailbox.hasSyncedOnce }
+        // This Gmail can't give a message's raw copy, so the file never arrives.
+        let id = try #require(await mailbox.startForwardingAttachment(messageID: "m1", accountID: "audit"))
+        let model = ComposeModel(localDraftID: id, mailbox: mailbox)
+        model.start()
+        try await waitUntil { model.phase == .open && model.originalImportFailed }
+        #expect(model.awaitsOriginal && model.content.subject == "Fwd: Field notes" && !model.isEdited)
+        let hold = "“Forwarded Message.eml” couldn't be attached. Retry, or leave it out."
+        #expect(await model.send() == false)
+        #expect(model.alert == ComposeModel.Problem(title: "Can't Send Message", message: hold))
+
+        // The other account can't download the message either, so it stays here.
+        let second = AccountRecord(id: "second", email: "second@example.invalid", displayName: nil, grantedScopes: [], addedAt: .now)
+        await mailbox.addAccount(second, gmail: AuditGmail(.second))
+        model.move(to: "second")
+        try await waitUntil { model.phase == .open }
+        #expect(model.alert == ComposeModel.Problem(title: "Can't Change Account", message: hold))
+        #expect(try await cache.read { try $0.localDraft(id: id) }?.accountID == "audit")
+
+        // Closing it unchanged discards it, as it does a forward.
+        await model.requestClose()
+        let closed = try await cache.read { try $0.localDraft(id: id) }
+        #expect(model.phase == .closed && (closed == nil || closed?.state == .discarding))
+        await mailbox.stop()
+    }
+
     @Test func aNewMessageMovesToAnotherAccountWithTheWindowsEdits() async throws {
         let (mailbox, cache) = try await makeMailbox()
         let second = AccountRecord(id: "second", email: "second@example.invalid", displayName: nil, grantedScopes: [], addedAt: .now)
@@ -583,13 +684,6 @@ import Testing
     /// A shortcut and another window's keys are left alone, and the keys are
     /// dropped when no field has the cursor or the window closes.
     @Test func keysTypedBeforeAFieldHasTheCursorAreTypedIntoIt() async throws {
-        func key(_ character: String, modifiers: NSEvent.ModifierFlags = [], in window: NSWindow) throws -> NSEvent {
-            let event = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: modifiers,
-                timestamp: 1, windowNumber: window.windowNumber, context: nil,
-                characters: character, charactersIgnoringModifiers: character, isARepeat: false, keyCode: 6))
-            try #require(event.window === window)
-            return event
-        }
         let compose = TypeAheadTestWindow(), other = TypeAheadTestWindow()
         let field = NSTextView()
         let typeAhead = ComposeTypeAhead()
@@ -610,8 +704,11 @@ import Testing
         let third = try key("!", in: compose)
         #expect(typeAhead.monitoredEventHandler(third) == nil)
         compose.reportedFirstResponder = field
-        try await waitUntil { compose.sent.count == 3 }
-        #expect(compose.sent.elementsEqual([first, second, third]) { $0 === $1 })
+        // The kept keys aren't typed yet, so a key that comes now goes after them.
+        let fourth = try key(".", in: compose)
+        #expect(typeAhead.monitoredEventHandler(fourth) == nil)
+        try await waitUntil { compose.sent.count == 4 }
+        #expect(compose.sent.elementsEqual([first, second, third, fourth]) { $0 === $1 })
         // The field has the cursor, so it gets its own keys from here on.
         let later = try key("?", in: compose)
         #expect(typeAhead.monitoredEventHandler(later) === later)
@@ -633,7 +730,139 @@ import Testing
         compose.reportedFirstResponder = field
         typeAhead.release(waitingForCursor: false)
         #expect(typeAhead.monitoredEventHandler(later) === later)
-        #expect(compose.sent.count == 3 && other.sent.isEmpty)
+        #expect(compose.sent.count == 4 && other.sent.isEmpty)
+    }
+
+    /// A command makes the draft before its window opens, so the keys typed
+    /// meanwhile go to the window in front. They are kept for the draft's
+    /// window, until it takes the keyboard, and typed into it with its own.
+    /// A draft that can't be made takes them with it.
+    @Test func keysTypedBeforeTheWindowOpensGoToIt() throws {
+        let main = TypeAheadTestWindow(), compose = TypeAheadTestWindow()
+        let opening = ComposeTypeAhead.catchKeys(from: main)
+        defer { opening.drop() }
+        #expect(ComposeTypeAhead.keepsKeys(typedIn: main) && !ComposeTypeAhead.keepsKeys(typedIn: compose))
+        let shortcut = try key("n", modifiers: .command, in: main)
+        #expect(opening.monitoredEventHandler(shortcut) === shortcut)
+        #expect(opening.monitoredEventHandler(try key("h", in: main)) == nil)
+
+        opening.wait(for: "opening-draft")
+        let typeAhead = ComposeTypeAhead()
+        typeAhead.attach(to: compose, takingKeysFor: "opening-draft")
+        defer { typeAhead.attach(to: nil) }
+        #expect(typeAhead.monitoredEventHandler(try key("i", in: main)) == nil)
+        #expect(typeAhead.monitoredEventHandler(try key("!", in: compose)) == nil)
+        // The window has the keyboard now, so the other one gets its keys again.
+        let back = try key("x", in: main)
+        #expect(typeAhead.monitoredEventHandler(back) === back)
+        #expect(!ComposeTypeAhead.keepsKeys(typedIn: main))
+
+        compose.reportedFirstResponder = NSTextView()
+        typeAhead.release(waitingForCursor: false)
+        #expect(compose.sent.map(\.characters) == ["h", "i", "!"])
+        #expect(compose.sent.allSatisfy { $0.window === compose } && main.sent.isEmpty)
+
+        let failed = ComposeTypeAhead.catchKeys(from: main)
+        #expect(failed.monitoredEventHandler(try key("q", in: main)) == nil)
+        failed.drop()
+        let after = try key("w", in: main)
+        #expect(failed.monitoredEventHandler(after) === after)
+        #expect(!ComposeTypeAhead.keepsKeys(typedIn: main))
+    }
+
+    /// A mail link or another app can open a compose window while Tern isn't
+    /// in front, so the keys typed meanwhile can reach any of its windows.
+    /// They are kept for the new window, except those typed where a field
+    /// has the cursor, in another compose window or in a panel.
+    @Test func keysTypedInAnyWindowWhileALinkOpensAMessageGoToIt() throws {
+        let main = TypeAheadTestWindow(), reader = TypeAheadTestWindow(), compose = TypeAheadTestWindow()
+        let other = TypeAheadTestWindow()
+        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 20, height: 20),
+            styleMask: .borderless, backing: .buffered, defer: false)
+        let otherTypeAhead = ComposeTypeAhead()
+        otherTypeAhead.attach(to: other)
+        defer { otherTypeAhead.attach(to: nil) }
+        let opening = ComposeTypeAhead.catchKeysInAnyWindow()
+        defer { opening.drop() }
+        #expect(ComposeTypeAhead.keepsKeys(typedIn: main) && ComposeTypeAhead.keepsKeys(typedIn: reader))
+        let shortcut = try key("n", modifiers: .command, in: main)
+        #expect(opening.monitoredEventHandler(shortcut) === shortcut)
+        #expect(opening.monitoredEventHandler(try key("h", in: main)) == nil)
+        reader.reportedFirstResponder = NSTextView()
+        let typing = try key("x", in: reader)
+        #expect(opening.monitoredEventHandler(typing) === typing)
+        reader.reportedFirstResponder = nil
+        #expect(opening.monitoredEventHandler(try key("e", in: reader)) == nil)
+        for window in [other, panel] as [NSWindow] {
+            let own = try key("y", in: window)
+            #expect(opening.monitoredEventHandler(own) === own)
+        }
+
+        opening.wait(for: "linked-draft")
+        let typeAhead = ComposeTypeAhead()
+        typeAhead.attach(to: compose, takingKeysFor: "linked-draft")
+        defer { typeAhead.attach(to: nil) }
+        // Keys typed elsewhere reach the new window until it takes the keyboard.
+        #expect(typeAhead.monitoredEventHandler(try key("l", in: reader)) == nil)
+        #expect(typeAhead.monitoredEventHandler(try key("o", in: compose)) == nil)
+        let back = try key("z", in: main)
+        #expect(typeAhead.monitoredEventHandler(back) === back)
+        #expect(!ComposeTypeAhead.keepsKeys(typedIn: main))
+
+        compose.reportedFirstResponder = NSTextView()
+        typeAhead.release(waitingForCursor: false)
+        #expect(compose.sent.map(\.characters) == ["h", "e", "l", "o"])
+        #expect(compose.sent.allSatisfy { $0.window === compose })
+        #expect(main.sent.isEmpty && reader.sent.isEmpty && other.sent.isEmpty)
+    }
+
+    /// Edit Draft on a draft whose window is open only brings that window
+    /// forward, so it never attaches again. It takes the keys the command
+    /// kept once it has the keyboard, ahead of the ones typed in it meanwhile.
+    @Test func keysTypedForADraftWhoseWindowIsOpenGoToItOnceItIsKey() async throws {
+        let main = TypeAheadTestWindow(), compose = TypeAheadTestWindow()
+        let typeAhead = ComposeTypeAhead()
+        typeAhead.attach(to: compose, takingKeysFor: "open-draft")
+        defer { typeAhead.attach(to: nil) }
+        compose.reportedFirstResponder = NSTextView()
+        typeAhead.release(waitingForCursor: false)
+
+        let opening = ComposeTypeAhead.catchKeys(from: main)
+        defer { opening.drop() }
+        #expect(opening.monitoredEventHandler(try key("h", in: main)) == nil)
+        opening.wait(for: "open-draft")
+        // Keys typed in the other window are kept until this one gets one of its own.
+        #expect(typeAhead.monitoredEventHandler(try key("e", in: main)) == nil)
+        #expect(typeAhead.monitoredEventHandler(try key("l", in: compose)) == nil)
+        let back = try key("z", in: main)
+        #expect(typeAhead.monitoredEventHandler(back) === back)
+        #expect(compose.sent.isEmpty)
+
+        compose.reportedIsKey = true
+        try await waitUntil { compose.sent.count == 3 }
+        #expect(compose.sent.map(\.characters) == ["h", "e", "l"])
+        let typed = try key("o", in: compose)
+        #expect(typeAhead.monitoredEventHandler(typed) === typed)
+    }
+
+    /// A double click can run a command twice for one draft. Its window gets
+    /// the keys both runs kept, in the order they were typed.
+    @Test func aDraftOpenedTwiceGetsTheKeysOfBothCommands() throws {
+        let main = TypeAheadTestWindow(), compose = TypeAheadTestWindow()
+        let first = ComposeTypeAhead.catchKeys(from: main), second = ComposeTypeAhead.catchKeys(from: main)
+        defer { first.drop(); second.drop() }
+        #expect(first.monitoredEventHandler(try key("h", in: main, at: 1)) == nil)
+        #expect(second.monitoredEventHandler(try key("e", in: main, at: 2)) == nil)
+        #expect(first.monitoredEventHandler(try key("y", in: main, at: 3)) == nil)
+        first.wait(for: "clicked-twice")
+        second.wait(for: "clicked-twice")
+
+        let typeAhead = ComposeTypeAhead()
+        typeAhead.attach(to: compose, takingKeysFor: "clicked-twice")
+        defer { typeAhead.attach(to: nil) }
+        compose.reportedFirstResponder = NSTextView()
+        typeAhead.release(waitingForCursor: false)
+        #expect(compose.sent.map(\.characters) == ["h", "e", "y"])
     }
 
     /// The editor draws a preview of an inline image that was decoded
@@ -690,6 +919,15 @@ import Testing
         return (mailbox, cache)
     }
 
+    private func key(_ character: String, modifiers: NSEvent.ModifierFlags = [], in window: NSWindow,
+                     at timestamp: TimeInterval = 1) throws -> NSEvent {
+        let event = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: modifiers,
+            timestamp: timestamp, windowNumber: window.windowNumber, context: nil,
+            characters: character, charactersIgnoringModifiers: character, isARepeat: false, keyCode: 6))
+        try #require(event.window === window)
+        return event
+    }
+
     private func waitUntil(_ condition: () -> Bool) async throws {
         let deadline = ContinuousClock.now.advanced(by: .seconds(3))
         while !condition(), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
@@ -697,13 +935,16 @@ import Testing
     }
 }
 
-/// Never ordered onscreen. It reports the first responder a test gives it and
-/// records the keys it is sent, so a test neither takes the keyboard nor
-/// relies on AppKit delivering keys to a window that isn't shown.
+/// Never ordered onscreen. It reports the first responder and key state a
+/// test gives it and records the keys it is sent, so a test neither takes
+/// the keyboard nor relies on AppKit delivering keys to a window that isn't
+/// shown.
 @MainActor private final class TypeAheadTestWindow: NSWindow {
     var reportedFirstResponder: NSResponder?
+    var reportedIsKey = false
     private(set) var sent: [NSEvent] = []
     override var firstResponder: NSResponder? { reportedFirstResponder }
+    override var isKeyWindow: Bool { reportedIsKey }
 
     init() {
         super.init(contentRect: NSRect(x: 0, y: 0, width: 20, height: 20),

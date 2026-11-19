@@ -111,10 +111,7 @@ final class MailScriptingBridge {
         outgoingMessages = Array((outgoingMessages + [message]).suffix(20))
         let request = message.request
         app.showMainWindow()
-        Task {
-            guard let id = await mailbox.startMailto(request), app.mailbox === mailbox else { return }
-            app.mailURLs.composeDraftID = id
-        }
+        Task { await app.mailURLs.compose(request, in: mailbox) }
     }
 
     fileprivate func isValid(generation: Int, accountID: String) -> Bool {

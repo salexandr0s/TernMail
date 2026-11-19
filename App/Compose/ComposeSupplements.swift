@@ -1,4 +1,5 @@
 import SwiftUI
+import SyncEngine
 
 /// Supplement disclosure and sheets stay attached to this draft while their viewport scrolls.
 struct ComposeSupplements: View {
@@ -36,7 +37,9 @@ struct ComposeSupplements: View {
                 .ternTransition(.disclosure)
             }
             if model.content.signatureAboveQuote { signature }
-            if let quote = model.draft?.quotedPlainText, !quote.isEmpty {
+            if model.awaitsOriginal {
+                originalStatus
+            } else if let quote = model.draft?.quotedPlainText, !quote.isEmpty {
                 quotedText(quote)
             }
             if !model.content.signatureAboveQuote { signature }
@@ -123,4 +126,51 @@ struct ComposeSupplements: View {
         .ternAnimation(value: showsQuote, duration: Tokens.Motion.slow)
     }
 
+    /// Stands where the quote goes until Gmail gives the original, or the
+    /// message that a new message forwards as an attachment.
+    private var originalStatus: some View {
+        let kind = model.draft?.kind
+        let isFile = kind == .new
+        let failed = model.originalImportFailed
+        let name = switch kind {
+        case .forward?: "Forwarded Message"
+        case .new?: SyncEngine.forwardedMessageFilename
+        default: "Quoted Text"
+        }
+        let leaveOutHelp = switch kind {
+        case .forward?: "Forward without the original message and its files."
+        case .new?: "Send without the forwarded message."
+        default: "Reply without quoting the original message."
+        }
+        return HStack(spacing: Tokens.Space.s2) {
+            HStack(spacing: Tokens.Space.s2) {
+                // Keeps the icon and name where the quote's toggle puts them.
+                Color.clear.frame(width: Tokens.Space.s3, height: 0)
+                Image(systemName: failed ? "exclamationmark.triangle" : isFile ? "paperclip" : "text.quote")
+                    .frame(width: Tokens.Control.icon)
+                Text(name)
+                    .font(.caption.weight(.medium))
+                Spacer(minLength: Tokens.Space.s2)
+                if failed {
+                    Text(isFile ? "Couldn't attach" : "Couldn't load").font(.caption)
+                } else {
+                    Text(isFile ? "Attaching…" : "Loading…").font(.caption).ternDelayedLoading()
+                }
+            }
+            .foregroundStyle(.secondary)
+            if failed {
+                Button("Retry") { model.retryOriginal() }
+                Button("Leave Out") { model.leaveOutOriginal() }
+                    .help(leaveOutHelp)
+            }
+        }
+        .controlSize(.small)
+        .disabled(!model.isEditable)
+        .padding(.horizontal, Tokens.Compose.gutter)
+        .padding(.vertical, Tokens.Space.s2)
+        .background(Tokens.Surface.muted)
+        .overlay(alignment: .top) { Divider() }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("compose-original-status")
+    }
 }

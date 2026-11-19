@@ -14,7 +14,6 @@ final class MailNavigationModel {
     var isShowingSwitcher = false
     var searchToEdit: SavedMailSearch?
     var isCreatingSearch = false
-    var isEditingFavorites = false
     @ObservationIgnored private let store: AccountStore?
 
     init(store: AccountStore?) { self.store = store }
@@ -107,8 +106,8 @@ extension MailboxModel {
         guard selectedLabelID?.hasPrefix(MailNavigationModel.searchPrefix) == true else { return }
         guard let saved = selectedSavedSearch else {
             if presentedAccounts.count == 1, let first = presentedAccounts.first {
-                selectedMailbox = .account(first.account.id, SystemLabel.inbox)
-            } else { selectedMailbox = .combined(SystemLabel.inbox) }
+                replaceSelectedMailbox(with: .account(first.account.id, SystemLabel.inbox))
+            } else { replaceSelectedMailbox(with: .combined(SystemLabel.inbox)) }
             return
         }
         activateSavedSearch(saved)

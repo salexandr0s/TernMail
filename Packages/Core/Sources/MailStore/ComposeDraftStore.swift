@@ -14,13 +14,21 @@ extension CacheTransaction {
         return attachment
     }
 
+    /// Stores an edit of the quote and raises the revision.
     public func replaceDraftQuote(id: String, text: String, now: Date) throws {
         guard var draft = try localDraft(id: id), draft.state == .editing else { return }
-        let isEmpty = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        draft.quotedPlainText = isEmpty ? nil : text
-        draft.quotedHTML = isEmpty ? nil : "<blockquote>" + ComposeDocument(plainText: text).html() + "</blockquote>"
+        draft.replaceQuote(with: text)
         draft.revision += 1; draft.updatedAt = now
         try draft.update(db)
+    }
+}
+
+extension LocalDraft {
+    /// Quotes `text` in place of the original. Blank text removes the quote.
+    mutating func replaceQuote(with text: String) {
+        let isEmpty = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        quotedPlainText = isEmpty ? nil : text
+        quotedHTML = isEmpty ? nil : "<blockquote>" + ComposeDocument(plainText: text).html() + "</blockquote>"
     }
 }
 

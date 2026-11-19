@@ -12,6 +12,7 @@ enum PerformanceAudit {
         case workspaceOnly = "workspace-only"
         case readerOnly = "reader-only"
         case scrollOnly = "scroll-only"
+        case composeOnly = "compose-only"
     }
 
     private static var hasRun = false
@@ -39,6 +40,10 @@ enum PerformanceAudit {
         var transportAtStart: PerformanceAuditTransport.Statistics?
         var transportAtEnd: PerformanceAuditTransport.Statistics?
         let timings: NavigationPerformance.Report
+        /// From each switch to the toolbar showing the new section's items with
+        /// the main thread free again. The toolbar follows the content, so
+        /// `timings` ends before this does.
+        var toolbarFollow: NavigationPerformance.Summary? = nil
     }
 
     struct Report: Encodable {
@@ -59,6 +64,7 @@ enum PerformanceAudit {
         let imageCorpora: [AuditGmail.ImageCorpus]
         let scenarios: [Scenario]
         let scrolling: [PerformanceScrollAudit.Result]
+        let compose: [PerformanceComposeAudit.Result]
         let mainActorResponsiveness: PerformanceMainThreadAudit.Result
         let initialPhysicalFootprintBytes: UInt64?
         let finalPhysicalFootprintBytes: UInt64?
@@ -173,6 +179,13 @@ enum PerformanceAudit {
         _ = await wait { !mailbox.listItems.isEmpty }
         try? await Task.sleep(for: .milliseconds(500))
 
+        if scope == .composeOnly {
+            let compose = await runCompose(mailbox: mailbox, count: count)
+            await finish(app: app, mailbox: mailbox, scope: scope, visibleRows: mailbox.listItems.count, scenarios: [],
+                         scrolling: [], compose: compose, heartbeat: heartbeat, initialMemory: initialMemory)
+            return
+        }
+
         if scope == .scrollOnly {
             let visibleRows = mailbox.listItems.count
             let scrolling = await runScrollScenarios(app: app, mailbox: mailbox, window: window)
@@ -182,18 +195,20 @@ enum PerformanceAudit {
         }
 
         if scope != .readerOnly {
-            record(await exercise("workspace-warm", kind: .workspace, count: count * 2) { index in
+            record(await exercise("workspace-warm", kind: .workspace, count: count * 2, followsToolbar: true) { index in
                 app.destination = index.isMultiple(of: 2) ? .calendar : .mail
             })
+            app.destination = .mail
+            record(await exercise("attachments-return", kind: .workspace, count: count * 2, followsToolbar: true) { index in
+                if index.isMultiple(of: 2) { mailbox.showAttachmentLibrary() } else { mailbox.leaveAttachmentLibrary() }
+            })
             if scope == .workspaceOnly {
+                mailbox.selectedMailbox = .combined(SystemLabel.inbox)
+                _ = await wait { mailbox.listItems.count >= 2 }
                 await finish(app: app, mailbox: mailbox, scope: scope, visibleRows: mailbox.listItems.count, scenarios: scenarios,
                              scrolling: [], heartbeat: heartbeat, initialMemory: initialMemory)
                 return
             }
-            app.destination = .mail
-            record(await exercise("attachments-return", kind: .mailbox, count: count * 2) { index in
-                mailbox.selectedMailbox = .combined(index.isMultiple(of: 2) ? AttachmentLibraryModel.mailboxID : SystemLabel.inbox)
-            })
         }
         mailbox.selectedMailbox = .combined(SystemLabel.inbox)
         _ = await wait { mailbox.listItems.count >= 2 }
@@ -256,12 +271,12 @@ enum PerformanceAudit {
                 let driver = conditionDriver(mode, mailbox: mailbox, calendar: app.calendar)
                 // Verify the chosen condition is exercised through real engines.
                 _ = await wait(timeout: .seconds(5)) { conditionDriverStarted }
-                record(await exercise("workspace-" + mode.rawValue, kind: .workspace, count: count * 2) { index in
+                record(await exercise("workspace-" + mode.rawValue, kind: .workspace, count: count * 2, followsToolbar: true) { index in
                     app.destination = index.isMultiple(of: 2) ? .calendar : .mail
                 })
                 app.destination = .mail
-                record(await exercise("attachments-" + mode.rawValue, kind: .mailbox, count: count * 2) { index in
-                    mailbox.selectedMailbox = .combined(index.isMultiple(of: 2) ? AttachmentLibraryModel.mailboxID : SystemLabel.inbox)
+                record(await exercise("attachments-" + mode.rawValue, kind: .workspace, count: count * 2, followsToolbar: true) { index in
+                    if index.isMultiple(of: 2) { mailbox.showAttachmentLibrary() } else { mailbox.leaveAttachmentLibrary() }
                 })
                 mailbox.selectedMailbox = .combined(SystemLabel.inbox)
                 record(await exercise("reader-" + mode.rawValue, kind: .reader, count: count) { index in
@@ -333,41 +348,79 @@ enum PerformanceAudit {
                      scrolling: scrolling, heartbeat: heartbeat, initialMemory: initialMemory)
     }
 
+    /// Only its own scope opens compose windows, so `all` keeps its main-thread
+    /// heartbeat comparable with reports from before this was added.
+    private static func runCompose(mailbox: MailboxModel, count: Int) async -> [PerformanceComposeAudit.Result] {
+        mailbox.search.clear()
+        _ = await wait { !mailbox.search.isActive && mailbox.listItems.count >= 2 }
+        return await PerformanceComposeAudit.run(mailbox: mailbox, count: count, mayStart: { auditMayContinue },
+                                                 hadInput: { unexpectedNativeInputEvents > 0 },
+                                                 interruption: { auditInterruptionReason })
+    }
+
     private static func runScrollScenarios(app: AppModel, mailbox: MailboxModel,
                                            window: NSWindow) async -> [PerformanceScrollAudit.Result] {
         var scrolling: [PerformanceScrollAudit.Result] = []
         mailbox.search.clear()
         _ = await wait { !mailbox.search.isActive && mailbox.listItems.count >= 20 }
-        scrolling.append(await measureScroll("mailbox", in: window, surface: .mailbox))
-        for size in [20, 100] {
+        let placesPointer = LaunchMode.current.performance.pointerOnList
+        scrolling.append(await measureScroll("mailbox", in: window, surface: .mailbox,
+                                             pointer: placesPointer ? .parked : .untouched))
+        if placesPointer {
+            // The second parked scroll shows how much the list alone changed between the first two.
+            scrolling.append(await measureScroll("mailbox-pointer", in: window, surface: .mailbox, pointer: .onSurface))
+            scrolling.append(await measureScroll("mailbox-after", in: window, surface: .mailbox, pointer: .parked))
+        }
+        // The unread conversations open with every message expanded. The read one opens
+        // with only its newest message expanded, so scrolling it brings in collapsed rows.
+        // It opens at that message, below the first screen, so its scroll first goes back
+        // to the top, where earlier runs started it.
+        let conversations = [20, 100].map { (name: "reader-\($0)", thread: "performance-long-\($0)",
+                                             subject: "Synthetic \($0)-message conversation", scrollsToTop: false) }
+            + [(name: "reader-read-100", thread: AuditGmail.readConversationThread,
+                subject: AuditGmail.readConversationSubject, scrollsToTop: true)]
+        for conversation in conversations {
+            let name = conversation.name
             guard auditMayContinue else {
-                scrolling.append(.failure(name: "reader-\(size)", reason: auditInterruptionReason))
+                scrolling.append(.failure(name: name, reason: auditInterruptionReason))
                 continue
             }
             // Explicit fixture identity avoids accidentally omitting a long thread
             // because its row is outside the currently loaded list page.
-            let key = ThreadKey(accountID: "ui-audit", threadID: "performance-long-\(size)")
-            guard await prepareFixtureList("Synthetic \(size)-message conversation", keys: [key], mailbox: mailbox) else {
-                scrolling.append(.failure(name: "reader-\(size)", reason: "Long-conversation list snapshot did not load."))
+            let key = ThreadKey(accountID: "ui-audit", threadID: conversation.thread)
+            guard await prepareFixtureList(conversation.subject, keys: [key], mailbox: mailbox) else {
+                scrolling.append(.failure(name: name, reason: "Long-conversation list snapshot did not load."))
                 continue
             }
             do { try selectFixture(key, in: mailbox) } catch {
-                scrolling.append(.failure(name: "reader-\(size)", reason: "Long-conversation row was missing."))
+                scrolling.append(.failure(name: name, reason: "Long-conversation row was missing."))
                 continue
             }
             guard let generation = NavigationPerformance.shared.currentGeneration(for: .reader),
-                  await NavigationPerformance.shared.waitForCompletion(.reader, generation: generation, timeout: .seconds(15))?.outcome == .visibleCommit else {
-                scrolling.append(.failure(name: "reader-\(size)", reason: "Long conversation did not become readable."))
+                  await NavigationPerformance.shared.waitForCompletion(.reader, generation: generation,
+                                                                       timeout: .seconds(15))?.outcome == .visibleCommit else {
+                scrolling.append(.failure(name: name, reason: "Long conversation did not become readable."))
                 continue
             }
-            scrolling.append(await measureScroll("reader-\(size)", in: window, surface: .reader))
+            if conversation.scrollsToTop {
+                guard await scrollReaderToTop(in: window) else {
+                    scrolling.append(.failure(name: name, reason: "The read conversation did not stay at its top."))
+                    continue
+                }
+            }
+            let placesReaderPointer = LaunchMode.current.performance.pointerOnReader
+            scrolling.append(await measureScroll(name, in: window, surface: .reader,
+                                                 pointer: placesReaderPointer ? .parked : .untouched))
+            if placesReaderPointer {
+                scrolling.append(await measureScroll("\(name)-pointer", in: window, surface: .reader, pointer: .onSurface))
+            }
         }
         app.destination = .calendar
         try? await Task.sleep(for: .milliseconds(300))
         scrolling.append(await measureScroll("calendar", in: window, surface: .calendar))
         app.destination = .mail
         if await storeLibraryFiles(in: mailbox.cache) {
-            mailbox.selectedMailbox = .combined(AttachmentLibraryModel.mailboxID)
+            mailbox.showAttachmentLibrary()
             try? await Task.sleep(for: .milliseconds(300))
             scrolling.append(await measureScroll("attachments", in: window, surface: .attachments))
         } else {
@@ -404,6 +457,7 @@ enum PerformanceAudit {
 
     private static func finish(app: AppModel, mailbox: MailboxModel, scope: Scope, visibleRows: Int,
                                scenarios: [Scenario], scrolling: [PerformanceScrollAudit.Result],
+                               compose: [PerformanceComposeAudit.Result] = [],
                                heartbeat: PerformanceMainThreadAudit, initialMemory: UInt64?) async {
         #if DEBUG
         let optimized = false
@@ -418,9 +472,9 @@ enum PerformanceAudit {
                             automaticKeyViewLoopDuringAudit: keyViewLoopDuringAudit,
                             isOptimizedBuild: optimized, syntheticAccountCount: mailbox.accounts.count,
                             fixtureVisibleThreadCount: visibleRows,
-                            fixtureConfiguredMessagesPerAccount: LaunchMode.current.performance.mails + 822,
+                            fixtureConfiguredMessagesPerAccount: LaunchMode.current.performance.mails + 922,
                             fixtureEventCount: app.calendar.events.count, imageCorpora: AuditGmail.performanceImageCorpora,
-                            scenarios: scenarios, scrolling: scrolling,
+                            scenarios: scenarios, scrolling: scrolling, compose: compose,
                             mainActorResponsiveness: responsiveness,
                             initialPhysicalFootprintBytes: initialMemory,
                             finalPhysicalFootprintBytes: NavigationPerformance.physicalFootprint(),
@@ -485,8 +539,11 @@ enum PerformanceAudit {
         }
     }
 
+    /// `followsToolbar` is for actions that change the section in front. Each one
+    /// then waits for the toolbar to take that section's items, so the next
+    /// switch starts from a settled window and the toolbar's pass is timed too.
     private static func exercise(_ name: String, kind: NavigationInteractionKind, count: Int,
-                                 warmup: Int = 6, timeout: Duration = .seconds(5),
+                                 warmup: Int = 6, timeout: Duration = .seconds(5), followsToolbar: Bool = false,
                                  action: (Int) async throws -> Void) async -> Scenario {
         let performance = NavigationPerformance.shared
         let transportStart = await PerformanceAuditTransport.shared.statistics()
@@ -498,6 +555,7 @@ enum PerformanceAudit {
             if let generation = performance.latestGeneration(for: kind) {
                 _ = await performance.waitForCompletion(kind, generation: generation, timeout: timeout)
             }
+            if followsToolbar { _ = await toolbarSettled() }
         }
         performance.reset()
         // Reset after warmup; an explicit zero distinguishes no work from an
@@ -509,10 +567,12 @@ enum PerformanceAudit {
         var completed = 0
         var failureReason: String?
         var memory = [await memorySample(completed: 0)]
+        var toolbarFollow: [Double] = []
         for index in 0..<count {
             guard auditMayContinue else { failures += count - index; failureReason = auditInterruptionReason; break }
             guard !Task.isCancelled else { failures += count - index; failureReason = "Audit cancelled."; break }
             let previous = performance.latestGeneration(for: kind)
+            let started = ContinuousClock.now
             do { try await action(index + warmup) } catch {
                 failures += count - index
                 failureReason = "Fixture action failed or an expected cache miss was unavailable."
@@ -527,20 +587,51 @@ enum PerformanceAudit {
                 failureReason = auditInterruptionReason
                 break
             }
-            if result?.outcome == .visibleCommit { completed += 1 } else { failures += 1 }
+            var toolbarFollowed = true
+            if followsToolbar {
+                if let settled = await toolbarSettled() {
+                    toolbarFollow.append(NavigationPerformance.milliseconds(settled - started))
+                } else {
+                    toolbarFollowed = false
+                    failureReason = "The toolbar did not take the section's items."
+                }
+            }
+            if result?.outcome == .visibleCommit, toolbarFollowed { completed += 1 } else { failures += 1 }
             if (index + 1).isMultiple(of: 10) || index + 1 == count {
                 memory.append(await memorySample(completed: completed))
                 writeCurrentProgress(Scenario(name: name, requestedInteractions: count, completedInteractions: completed,
                                               failures: failures, failureReason: failureReason, memorySamples: memory,
                                               transportAtStart: transportStart, transportAtEnd: await PerformanceAuditTransport.shared.statistics(),
-                                              timings: performance.report()))
+                                              timings: performance.report(), toolbarFollow: NavigationPerformance.Summary(toolbarFollow)))
             }
             if failures >= 3, completed == 0 { failures += count - index - 1; break }
         }
         return Scenario(name: name, requestedInteractions: count, completedInteractions: completed,
                         failures: failures, failureReason: failureReason, memorySamples: memory,
                         transportAtStart: transportStart, transportAtEnd: await PerformanceAuditTransport.shared.statistics(),
-                        timings: performance.report())
+                        timings: performance.report(), toolbarFollow: NavigationPerformance.Summary(toolbarFollow))
+    }
+
+    /// Waits for the toolbar to show the section in front and for the main thread
+    /// to come free after the pass that changed it. Returns when that was, or
+    /// nil if the toolbar had not followed after two seconds.
+    private static func toolbarSettled() async -> ContinuousClock.Instant? {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(2))
+        while !PerformanceToolbar.showsFrontSection {
+            guard clock.now < deadline, !Task.isCancelled else { return nil }
+            do { try await Task.sleep(for: .milliseconds(2)) } catch { return nil }
+        }
+        // The pass holds the main thread, so a short sleep that returns on time
+        // twice running means it is over.
+        var settled = clock.now
+        var onTime = 0
+        while onTime < 2, clock.now < deadline {
+            let before = clock.now
+            do { try await Task.sleep(for: .milliseconds(8)) } catch { return nil }
+            if clock.now - before < .milliseconds(16) { onTime += 1 } else { onTime = 0; settled = clock.now }
+        }
+        return settled
     }
 
     private static func memorySample(completed: Int) async -> MemorySample {
@@ -574,8 +665,10 @@ enum PerformanceAudit {
     }
 
     private enum Surface: String { case mailbox, reader, calendar, attachments }
+    private enum PointerPlacement { case untouched, parked, onSurface }
 
-    private static func measureScroll(_ name: String, in window: NSWindow, surface: Surface) async -> PerformanceScrollAudit.Result {
+    private static func measureScroll(_ name: String, in window: NSWindow, surface: Surface,
+                                      pointer: PointerPlacement = .untouched) async -> PerformanceScrollAudit.Result {
         guard auditMayContinue else { return .failure(name: name, reason: auditInterruptionReason) }
         // A surface that was just shown may still be laying out or reading its first page.
         var found: NSScrollView?
@@ -586,7 +679,26 @@ enum PerformanceAudit {
         guard let scroll = found else {
             return .failure(name: name, reason: "The explicitly identified scrolling surface was missing or had no scrollable content.")
         }
-        return await PerformanceScrollAudit.run(name: name, scroll: scroll)
+        guard pointer != .untouched else {
+            let inWindow = window.frame.contains(NSEvent.mouseLocation)
+            var result = await PerformanceScrollAudit.run(name: name, scroll: scroll)
+            result.pointerInWindowAtStart = inWindow
+            return result
+        }
+        let home = PerformancePointer.location
+        defer { PerformancePointer.restore(home) }
+        guard pointer == .onSurface ? PerformancePointer.rest(on: scroll.contentView) : PerformancePointer.park(in: window) else {
+            return .failure(name: name, reason: "The pointer could not be placed.")
+        }
+        // Hover for the new place settles before the count starts.
+        do { try await Task.sleep(for: .milliseconds(300)) } catch { return .failure(name: name, reason: "Audit cancelled.") }
+        PerformancePointer.hoverChanges = 0
+        let inWindow = window.frame.contains(NSEvent.mouseLocation)
+        var result = await PerformanceScrollAudit.run(name: name, scroll: scroll)
+        result.pointerInWindowAtStart = inWindow
+        result.pointerOverSurface = pointer == .onSurface
+        result.hoverChanges = PerformancePointer.hoverChanges
+        return result
     }
 
     private static func scrollView(in window: NSWindow, surface: Surface) -> NSScrollView? {
@@ -606,6 +718,37 @@ enum PerformanceAudit {
         let identifier = NSUserInterfaceItemIdentifier("tern-performance-scroll-" + surface.rawValue)
         let identified = candidates.filter { $0.identifier == identifier }
         return identified.count == 1 ? identified.first : nil
+    }
+
+    /// Waits until the reader holds still where the conversation opened, then
+    /// scrolls it to the top and checks that it stays there for 300 ms.
+    private static func scrollReaderToTop(in window: NSWindow) async -> Bool {
+        var found: NSScrollView?
+        _ = await wait(timeout: .seconds(5)) {
+            found = scrollView(in: window, surface: .reader)
+            return found != nil
+        }
+        guard let scroll = found else { return false }
+        let clip = scroll.contentView
+        var origin = clip.bounds.origin.y
+        var since = ContinuousClock.now
+        guard await wait(timeout: .seconds(5), until: {
+            if abs(clip.bounds.origin.y - origin) >= 1 { origin = clip.bounds.origin.y; since = .now }
+            return ContinuousClock.now - since >= .milliseconds(300)
+        }) else { return false }
+        var bounds = clip.bounds
+        // Extreme coordinates lose the top inset when AppKit constrains bounds.
+        bounds.origin.y = (scroll.documentView?.frame.minY ?? 0) - scroll.contentInsets.top
+        let top = clip.constrainBoundsRect(bounds).origin
+        since = .now
+        return await wait(timeout: .seconds(5)) {
+            if abs(clip.bounds.origin.y - top.y) >= 1 {
+                clip.scroll(to: top)
+                scroll.reflectScrolledClipView(clip)
+                since = .now
+            }
+            return ContinuousClock.now - since >= .milliseconds(300)
+        }
     }
 
     private static func wait(timeout: Duration = .seconds(10), until ready: () -> Bool) async -> Bool {
@@ -647,9 +790,12 @@ enum PerformanceAudit {
                 let pause = options.memoryPause
                 Task {
                     if pause > 0 { try? await Task.sleep(for: .seconds(pause)) }
-                    // Leave the Swift task before AppKit enters its termination
-                    // run loop, so the delegate's async quit review can execute.
-                    DispatchQueue.main.async { NSApp.terminate(nil) }
+                    // The delegate answers terminateLater, so terminate(_:) waits in
+                    // a nested event loop for its async quit review. That loop skips
+                    // main-queue work when it starts inside a main-actor job or a
+                    // DispatchQueue.main block, so the review would never run and the
+                    // harness would end the app. A run loop timer starts it outside both.
+                    NSApp.perform(#selector(NSApplication.terminate(_:)), with: nil, afterDelay: 0)
                 }
             }
         }
@@ -664,5 +810,15 @@ enum PerformanceAudit {
             print("Tern performance audit: report could not be written (\(type(of: error))).")
         }
     }
+}
+
+/// The main window's sections as its main view last drew them. The toolbar
+/// takes a section's items a moment after the content changes, and the audit
+/// waits on this between switches.
+@MainActor
+enum PerformanceToolbar {
+    static var content = WorkspaceSection.mail
+    static var toolbar = WorkspaceSection.mail
+    static var showsFrontSection: Bool { content == toolbar }
 }
 #endif

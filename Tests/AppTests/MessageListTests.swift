@@ -42,7 +42,7 @@ import Testing
         let deadline = ContinuousClock.now.advanced(by: .seconds(2))
         while mailbox.labels.count < 3, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
         #expect(mailbox.isVisibleInSidebar(hidden) == false)
-        func title(_ id: String) -> String? { mailbox.mailboxSwitchOptions.first { $0.mailbox == .account("a", id) }?.title }
+        func title(_ id: String) -> String? { mailbox.mailboxSwitchOptions.first { $0.target == .mailbox(.account("a", id)) }?.title }
         #expect(title("hidden") == "Hidden")
         #expect(title(SystemLabel.important) == "Important")
         #expect(title("CATEGORY_PURCHASES") == "Purchases")

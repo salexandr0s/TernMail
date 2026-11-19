@@ -51,7 +51,7 @@ struct AttachmentChip<Accessory: View>: View {
                 .strokeBorder(isHovered && open != nil ? Color.accentColor : .clear, lineWidth: Tokens.Border.hairline)
                 .allowsHitTesting(false)
         }
-        .onHover { isHovered = $0 }
+        .ternOnHover { isHovered = $0 }
         .ternAnimation(value: isHovered)
     }
 

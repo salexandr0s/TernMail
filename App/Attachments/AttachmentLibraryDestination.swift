@@ -9,28 +9,27 @@ struct AttachmentLibraryDestination: View {
     @Environment(\.openWindow) private var openWindow
     @Bindable var model: AttachmentLibraryModel
     @Bindable var toolbar: AttachmentLibraryToolbarState
+    /// Whether the library is in front. After its first use it stays mounted
+    /// behind Mail, where it takes no input and observes no pages.
+    let isActive: Bool
     private var mailbox: MailboxModel { model.mailbox }
+    private var isReady: Bool { isActive && model.isPageReady }
 
     var body: some View {
         TernSidebarSplit(isPresented: toolbar.showsSidebar, sidebarWidth: $toolbar.sidebarWidth,
                          minimumWidth: Tokens.Layout.sidebarMinWidth, maximumWidth: toolbar.sidebarMaximumWidth) {
             SidebarView(mailbox: mailbox)
         } detail: {
-            AttachmentLibraryView(model: model, viewMode: toolbar.viewMode,
+            AttachmentLibraryView(model: model, viewMode: toolbar.viewMode, isActive: isActive,
                 focusSearch: { toolbar.searchFocusRequest += 1 })
                 .background {
-                    ZStack {
-                        VisibleContentProbe(kind: .workspace, isActive: model.isPageReady,
-                                            revision: model.pagePresentationRevision)
-                        VisibleContentProbe(kind: .mailbox, isActive: model.isPageReady,
-                                            revision: model.pagePresentationRevision)
-                    }
+                    VisibleContentProbe(kind: .workspace, isActive: isReady, revision: model.pagePresentationRevision)
                 }
-                .onChange(of: model.isPageReady, initial: true) { _, ready in
+                .onChange(of: isReady, initial: true) { _, ready in
                     if ready { reportReady() }
                 }
                 .onChange(of: model.pagePresentationRevision) { _, _ in
-                    if model.isPageReady { reportReady() }
+                    if isReady { reportReady() }
                 }
         }
         // Bound the native split below the toolbar before clipping its material.
@@ -42,6 +41,9 @@ struct AttachmentLibraryDestination: View {
         .toolbar(removing: .sidebarToggle)
         .modifier(MailNoticeOverlay(mailbox: mailbox))
         .onDisappear { model.dismissPresentation(); toolbar.isPopoverPresented = false }
+        .onChange(of: isActive) { _, active in
+            if !active { model.dismissPresentation(); toolbar.isPopoverPresented = false }
+        }
         .onChange(of: toolbar.searchText) { _, text in if model.search != text { model.search = text } }
         .onChange(of: model.search, initial: true) { _, text in if toolbar.searchText != text { toolbar.searchText = text } }
         .onChange(of: toolbar.sort) { _, sort in if model.sort != sort { model.sort = sort } }
@@ -65,9 +67,8 @@ struct AttachmentLibraryDestination: View {
     }
 
     private func reportReady() {
-        guard app.destination == .mail, mailbox.selectedLabelID == AttachmentLibraryModel.mailboxID else { return }
+        guard app.destination == .mail, mailbox.showsAttachmentLibrary else { return }
         NavigationPerformance.shared.contentReady(.workspace, cacheTier: .retained)
-        NavigationPerformance.shared.contentReady(.mailbox, cacheTier: .retained)
     }
 }
 
@@ -82,13 +83,15 @@ struct AttachmentLibraryPresentation: ViewModifier {
     }
 }
 
-/// Retains the last library page while its views and observations are offscreen.
+/// Builds the library on its first use and keeps it behind Mail afterwards, as
+/// the workspace keeps its other sections, so a later switch only shows it.
 private struct AttachmentLibraryPresentationContent<Content: View>: View {
     @Environment(AppModel.self) private var app
     let mailbox: MailboxModel
     let toolbar: AttachmentLibraryToolbarState
     let content: Content
     @State private var model: AttachmentLibraryModel
+    @State private var hasPresented = false
 
     init(mailbox: MailboxModel, toolbar: AttachmentLibraryToolbarState, content: Content) {
         self.mailbox = mailbox
@@ -98,13 +101,22 @@ private struct AttachmentLibraryPresentationContent<Content: View>: View {
     }
 
     var body: some View {
-        let isPresented = app.destination == .mail && mailbox.selectedLabelID == AttachmentLibraryModel.mailboxID
+        let isPresented = app.destination == .mail && mailbox.showsAttachmentLibrary
         ZStack {
             content
                 .opacity(isPresented ? 0 : 1)
                 .allowsHitTesting(!isPresented)
                 .accessibilityHidden(isPresented)
-            if isPresented { AttachmentLibraryDestination(model: model, toolbar: toolbar) }
+            if isPresented || hasPresented {
+                AttachmentLibraryDestination(model: model, toolbar: toolbar, isActive: isPresented)
+                    .opacity(isPresented ? 1 : 0)
+                    .allowsHitTesting(isPresented)
+                    .accessibilityHidden(!isPresented)
+                    .disabled(!isPresented)
+            }
+        }
+        .onChange(of: isPresented, initial: true) { _, shown in
+            if shown { hasPresented = true }
         }
     }
 }

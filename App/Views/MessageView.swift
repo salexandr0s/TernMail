@@ -107,6 +107,9 @@ struct MessageView: View {
     private var readingResources: ReadingResourceSnapshot? { resourceSnapshot ?? initialResources?.snapshot }
 
     var body: some View {
+        #if TERN_TEST_SUPPORT || TERN_PERFORMANCE
+        let _ = PerformanceFrameEvents.note(.messageBody)
+        #endif
         VStack(alignment: .leading, spacing: 0) {
             header
 
@@ -146,6 +149,9 @@ struct MessageView: View {
             if !visible, isInViewport { retainsViewportBody = rendered != nil }
             isInViewport = visible
             if visible { onVisible() }
+            #if TERN_TEST_SUPPORT || TERN_PERFORMANCE
+            PerformanceFrameEvents.note(visible ? .rowEntered : .rowLeft)
+            #endif
         }
         .task(id: isReaderActive && isExpanded && !isInViewport) {
             guard isReaderActive, isExpanded, !isInViewport else {
@@ -197,9 +203,16 @@ struct MessageView: View {
             if !realized {
                 rendered = nil; resourceSnapshot = nil
                 inlineResources = InlineResourceMap()
+                #if TERN_TEST_SUPPORT || TERN_PERFORMANCE
+                PerformanceFrameEvents.note(.bodyReleased)
+                #endif
             }
         }
         .onChange(of: selectedText) { _, text in reportSelection(text) }
+        #if TERN_TEST_SUPPORT || TERN_PERFORMANCE
+        .onAppear { PerformanceFrameEvents.note(.rowBuilt) }
+        .onDisappear { PerformanceFrameEvents.note(.rowDropped) }
+        #endif
         .onDisappear { reportSelection(""); onHoverLink(nil) }
         .onChange(of: ImagePermission(allows: allowsImages, isKnown: imagePermissionKnown)) { old, new in
             guard old.allows != new.allows else { return }
@@ -359,6 +372,9 @@ struct MessageView: View {
             preparationTier = requiredNetwork ? .network : (cached == nil ? .local : .prepared)
             inlineResources = result.resources
             rendered = result.rendered
+            #if TERN_TEST_SUPPORT || TERN_PERFORMANCE
+            PerformanceFrameEvents.note(.bodyPrepared)
+            #endif
             if !hasNoText { hasShownNoText = false }
             hasNoText = result.rendered == nil
             finder.setSearchableText(result.searchableText, for: message.id)

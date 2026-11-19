@@ -233,8 +233,7 @@ struct MessagePrefetchModifier: ViewModifier {
     @State private var controller = MessagePrefetchController()
 
     private var plan: MessagePrefetchPlan {
-        guard app.destination == .mail,
-              mailbox.selectedLabelID != AttachmentLibraryModel.mailboxID else {
+        guard app.destination == .mail, !mailbox.showsAttachmentLibrary else {
             return MessagePrefetchPlan(keys: [], accounts: [], selected: [])
         }
         return MessagePrefetchPlan(

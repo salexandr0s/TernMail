@@ -223,6 +223,16 @@ struct ThreadView: View {
                 expanded.insert(message.id)
             }
         }
+        .background {
+            // Only the message the conversation opened at reports where it is.
+            if paging.opening?.messageID == message.id {
+                Color.clear.onGeometryChange(for: CGFloat.self) { $0.frame(in: .named(Self.contentSpace)).minY } action: { top in
+                    guard paging.opening?.messageID == message.id else { return }
+                    paging.opening?.top = top
+                    holdOpening(pageChanged: false)
+                }
+            }
+        }
         .id(message.id)
     }
 
@@ -284,6 +294,7 @@ struct ThreadView: View {
                                     app.openAssistantSource(source)
                                     return
                                 }
+                                releaseOpening()
                                 expanded.insert(messageID)
                                 Task { @MainActor in
                                     // Let the newly expanded message enter layout before scrolling.
@@ -302,11 +313,30 @@ struct ThreadView: View {
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(Tokens.Space.s4)
+                        .coordinateSpace(.named(Self.contentSpace))
                         .followsThreadSummary(summaryMotion)
                         .background { PerformanceScrollSurfaceMarker(name: "reader", isActive: isReaderActive) }
                     }
                     .scrollPosition($scrollPosition)
-                    .onScrollGeometryChange(for: ReaderPage.self, of: ReaderPage.init) { _, page in paging.page = page }
+                    .onScrollGeometryChange(for: ReaderPage.self, of: ReaderPage.init) { _, page in
+                        paging.page = page
+                        if paging.opening != nil { holdOpening(pageChanged: true) }
+                    }
+                    .onScrollPhaseChange { _, phase in
+                        // Scrolling by hand ends the hold on the opening message.
+                        if phase == .tracking || phase == .interacting || phase == .decelerating { releaseOpening() }
+                    }
+                    .onAppear {
+                        guard let id = paging.opening?.messageID else { return }
+                        Task { @MainActor in
+                            // The lazy stack builds a message below the first screen
+                            // only once the reader scrolls to it, so this first move
+                            // goes by identity, after the scroll view is in place.
+                            await Task.yield()
+                            guard paging.opening?.messageID == id, paging.opening?.beginScrollToMessage() == true else { return }
+                            scroll.scrollTo(id, anchor: .top)
+                        }
+                    }
                     .focusable(isReaderActive)
                     .focusEffectDisabled()
                     .focused($readerFocused)
@@ -332,6 +362,7 @@ struct ThreadView: View {
                     .onChange(of: messages.map(\.id), initial: true) { _, ids in finder.order = ids }
                     .onChange(of: finder.requestRevision) { _, _ in
                         guard isReaderActive, let id = finder.requestedMessageID else { return }
+                        releaseOpening()
                         expanded.insert(id)
                         scroll.scrollTo(id, anchor: .top)
                     }
@@ -342,6 +373,7 @@ struct ThreadView: View {
                     .onChange(of: app.mailURLs.focusRequest?.id, initial: true) { _, _ in
                         guard isReaderActive, let request = app.mailURLs.focusRequest, request.key == key,
                               detail.messages.contains(where: { $0.id == request.messageID }) else { return }
+                        releaseOpening()
                         expanded.insert(request.messageID)
                         Task { @MainActor in
                             await Task.yield()
@@ -382,6 +414,7 @@ struct ThreadView: View {
     private var readerSceneContent: some View {
         conversationContent
         .logoLookup(logoLookup)
+        .tracksKeyboardNavigation()
         .disabled(!isReaderActive)
         .background(Tokens.Surface.canvas)
         .background {
@@ -411,7 +444,10 @@ struct ThreadView: View {
             ReaderReadiness.shared.clear(previous)
         }
         .onChange(of: detail, initial: true) { _, detail in if let detail { onDetailChange?(detail) } }
-        .onChange(of: selectedMessageID) { _, _ in selectedMailQuote = nil }
+        .onChange(of: selectedMessageID) { _, _ in selectedMailQuote = nil; releaseOpening() }
+        // Opening or closing a message ends the hold on the opening message.
+        // The first change is the opening expansion itself.
+        .onChange(of: expanded) { old, _ in if !old.isEmpty { releaseOpening() } }
         .onChange(of: retainsSourceSnapshot) { _, retain in
             guard !retain, !isReaderActive else { return }
             detail = nil; hasLoaded = false; primaryBodyReady = false
@@ -445,6 +481,13 @@ struct ThreadView: View {
                 if !initializedExpansion, let detail, !detail.messages.isEmpty {
                     expanded = Self.openingExpansion(of: detail, selected: selectedMessageID)
                     initializedExpansion = true
+                    // The conversation opens at its first open message. The lazy
+                    // stack builds a message below the first screen only once the
+                    // reader scrolls to it.
+                    let shown = selectedMessageID == nil ? orderedMessages(detail) : []
+                    if let first = shown.first(where: { expanded.contains($0.id) }), first.id != shown.first?.id {
+                        paging.opening = ReaderOpening(messageID: first.id)
+                    }
                 }
                 self.detail = detail
                 hasLoaded = true
@@ -521,6 +564,7 @@ struct ThreadView: View {
         .onChange(of: isReaderActive, initial: true) { _, active in
             if !active {
                 delayedRead.cancel(); finder.hide(); selectedMailQuote = nil; linkHover.clear(); readerFocused = false
+                releaseOpening()
                 ReaderReadiness.shared.clear(key)
                 // A hidden reader keeps only its retained body. The next
                 // activation reads these again.
@@ -537,6 +581,9 @@ struct ThreadView: View {
     /// and read their own when they are shown. Neighbour prefetch prepares
     /// the same number.
     private nonisolated static let openingResourceLimit = 2
+
+    /// The conversation's content, where the opening message measures its top.
+    private nonisolated static let contentSpace = "ThreadView.content"
 
     /// The messages a conversation opens with expanded. The opening read and
     /// the first publication share this, so the read brings resources for the
@@ -612,10 +659,7 @@ struct ThreadView: View {
 
     /// Opens a compose window once its draft exists. A failure shows as a notice.
     private func compose(_ start: MailboxModel.ComposeStart) {
-        Task {
-            guard let id = await mailbox.startCompose(start) else { return }
-            openWindow(id: ComposeWindow.sceneID, value: id)
-        }
+        ComposeWindow.open(with: openWindow) { await mailbox.startCompose(start) }
     }
 
     private func orderedMessages(_ detail: ThreadDetail) -> [MessageDetail] {
@@ -626,6 +670,7 @@ struct ThreadView: View {
     /// nothing focused yet they start from the first open message.
     private func moveFocus(by delta: Int, in messages: [MessageDetail], scroll: ScrollViewProxy) {
         guard !messages.isEmpty else { return }
+        releaseOpening()
         let current = messages.firstIndex { $0.id == focusedMessageID }
             ?? messages.firstIndex { expanded.contains($0.id) }
             ?? (delta > 0 ? -1 : messages.count)
@@ -647,18 +692,36 @@ struct ThreadView: View {
         let page = paging.page
         let bottom = page.contentHeight - page.visibleHeight
         guard page.visibleHeight > 0, page.offset < bottom - Tokens.Border.hairline else { return .ignored }
+        releaseOpening()
         withAnimation(reduceMotion ? nil : Tokens.Motion.standard()) {
             scrollPosition.scrollTo(y: min(page.offset + page.visibleHeight - Tokens.Space.s8, bottom))
         }
         return .handled
     }
+
+    /// Ends the hold that keeps the opening message at the top of the reader.
+    private func releaseOpening() { paging.opening = nil }
+
+    /// Scrolls the reader back to the opening message after a height or the
+    /// reader's size moved it. The scroll waits for the next turn of the main
+    /// actor, so it never happens inside a layout pass.
+    private func holdOpening(pageChanged: Bool) {
+        guard let y = paging.holdOpening(pageChanged: pageChanged) else { return }
+        Task { @MainActor in
+            await Task.yield()
+            guard paging.opening?.beginScroll(to: y) == true else { return }
+            scrollPosition.scrollTo(y: y)
+        }
+    }
 }
 
-/// Where the reader is scrolled, for Space paging.
+/// Where the reader is scrolled, for Space paging and the opening message.
 private struct ReaderPage: Equatable {
     var offset: CGFloat = 0
     var visibleHeight: CGFloat = 0
     var contentHeight: CGFloat = 0
+    var topInset: CGFloat = 0
+    var bottomInset: CGFloat = 0
 
     init() {}
 
@@ -666,7 +729,16 @@ private struct ReaderPage: Equatable {
         offset = geometry.contentOffset.y
         visibleHeight = geometry.containerSize.height
         contentHeight = geometry.contentSize.height
+        topInset = geometry.contentInsets.top
+        bottomInset = geometry.contentInsets.bottom
     }
+
+    /// The position in the terms of `ScrollPosition.scrollTo(y:)`. It is zero
+    /// at the top, where the offset is the top inset below zero.
+    var position: CGFloat { offset + topInset }
+
+    /// The furthest position the content allows.
+    var lastPosition: CGFloat { max(0, contentHeight + bottomInset - visibleHeight) }
 }
 
 /// Holds what scrolling changes outside SwiftUI state, so scrolling doesn't
@@ -677,6 +749,90 @@ private final class ReaderPaging {
     /// The message that last scrolled into view. A hidden reader keeps that
     /// message's body.
     var lastVisibleMessageID: String?
+    /// Keeps the conversation's first open message at the top while it opens.
+    var opening: ReaderOpening?
+
+    /// The position that puts the opening message back at the top, when the
+    /// reader has to move. `pageChanged` says the page changed, rather than
+    /// the message's place in the content.
+    func holdOpening(pageChanged: Bool) -> CGFloat? {
+        guard var hold = opening else { return nil }
+        let step = hold.step(on: page, pageChanged: pageChanged)
+        opening = step == .release ? nil : hold
+        if case .scroll(let position) = step { return position }
+        return nil
+    }
+}
+
+/// Keeps the conversation's opening message at the top of the reader while
+/// the heights above and below it settle. A scroll the hold didn't make ends
+/// it, except when the reader stays at the end of content that changed
+/// height, and so does the time limit.
+private struct ReaderOpening {
+    enum Step: Equatable { case stay, scroll(CGFloat), release }
+
+    /// How long the hold lasts at most.
+    static let limit: Duration = .seconds(2)
+
+    let messageID: String
+    /// The message's top in the content, once the lazy stack has built it.
+    var top: CGFloat?
+    private let ends = ContinuousClock.now.advanced(by: Self.limit)
+    /// Where the reader is when only the hold has moved it.
+    private var expected: CGFloat?
+    /// The reader was at the end of the content at `expected`.
+    private var wasAtEnd = false
+    /// A scroll the hold asked for that hasn't started.
+    private var requested: CGFloat?
+    /// The hold started a scroll that the reader hasn't reported yet.
+    private var isScrolling = false
+
+    init(messageID: String) { self.messageID = messageID }
+
+    mutating func step(on page: ReaderPage, pageChanged: Bool) -> Step {
+        guard ContinuousClock.now < ends else { return .release }
+        let position = page.position
+        if pageChanged {
+            let atEnd = abs(position - page.lastPosition) < 1
+            if isScrolling {
+                // The first change after the hold's own scroll is that scroll.
+                isScrolling = false
+            } else if let expected, abs(position - expected) >= 1 {
+                // A reader at the end stays there when the content changes
+                // height, and shorter content pulls a reader up to its end.
+                // Any other move came from somewhere else.
+                guard atEnd, wasAtEnd || position < expected else { return .release }
+            }
+            expected = position
+            wasAtEnd = atEnd
+        }
+        guard let top, !isScrolling, page.visibleHeight > 0 else { return .stay }
+        let wanted = min(top, page.lastPosition)
+        if abs(position - wanted) < 1 {
+            expected = position
+            requested = nil
+            return .stay
+        }
+        if let requested, abs(requested - wanted) < 1 { return .stay }
+        requested = wanted
+        return .scroll(wanted)
+    }
+
+    /// Starts the first move, which goes to the message by identity because
+    /// the lazy stack hasn't built it yet.
+    mutating func beginScrollToMessage() -> Bool {
+        guard top == nil else { return false }
+        isScrolling = true
+        return true
+    }
+
+    /// Starts the scroll to `position` if it is still the one the hold wants.
+    mutating func beginScroll(to position: CGFloat) -> Bool {
+        guard requested == position else { return false }
+        requested = nil
+        isScrolling = true
+        return true
+    }
 }
 
 /// The link under the pointer. Only the readout observes it, so moving over

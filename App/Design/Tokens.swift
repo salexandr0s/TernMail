@@ -73,6 +73,9 @@ enum Tokens {
         static let pressed = 0.10
         static let tint = 0.14
         static let disabled = 0.5
+        /// A pressed label under a style that draws its own. The system's
+        /// plain button style dims a pressed label this far.
+        static let pressedLabel = 0.75
         /// A colored wash behind an icon, chip or banner, quieter than a selection.
         static let wash = 0.08
         /// Accent outlines, and outline symbols such as an unselected checkmark circle.
@@ -292,6 +295,10 @@ enum Tokens {
         static let slow: Double = 0.22
         /// A loading indicator waits this long, so a load that ends sooner shows none.
         static let loadingDelay: Duration = .milliseconds(150)
+        /// The toolbar takes a new section's items this long after the
+        /// section's content changes: two refreshes of a 60 Hz display, so the
+        /// content's pass has begun before the toolbar's is asked for.
+        static let toolbarFollowDelay: Duration = .milliseconds(34)
 
         /// `motion.easing.standard`: cubic-bezier(0.2, 0.8, 0.2, 1).
         static func standard(duration: Double = base) -> Animation {

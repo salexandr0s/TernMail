@@ -21,10 +21,10 @@ def validate(report):
     elif native_input:
         errors.append(f'Unexpected native input invalidated the report ({native_input} events).')
     scope = report.get('requestedScenario')
-    if scope not in {'all', 'workspace-only', 'reader-only', 'scroll-only'}:
+    if scope not in {'all', 'workspace-only', 'reader-only', 'scroll-only', 'compose-only'}:
         errors.append('Unknown requested scenario scope.')
     expected = {'reader-recent', 'reader-local'} if scope == 'reader-only' else {'workspace-warm'}
-    if scope == 'scroll-only':
+    if scope in {'scroll-only', 'compose-only'}:
         expected = set()
     if scope == 'all':
         expected |= {'attachments-return', 'reader-recent', 'reader-local', 'reader-network',
@@ -56,6 +56,12 @@ def validate(report):
             for destination in destinations:
                 values = [r['elapsedMilliseconds'] for r in records if r['kind'] == 'workspace' and r.get('destination') == destination]
                 check_budget(name + '.' + destination, values, 100, 200)
+            # The toolbar takes the section's items after the content, so the
+            # timings above end before it does. A switch counts only when the
+            # toolbar was seen to follow.
+            follow = scenario.get('toolbarFollow') or {}
+            if follow.get('count', 0) < scenario['requestedInteractions']:
+                errors.append(name + ': the toolbar was not seen to follow every switch')
         if name.startswith('reader-') and not name.startswith('reader-stress-'):
             if name == 'reader-network':
                 values = [r['readyToVisibleMilliseconds'] for r in readers if r.get('readyToVisibleMilliseconds') is not None]
@@ -100,7 +106,7 @@ def validate(report):
             if any(s['preparedDocumentBytes'] > 56 * 1024 * 1024 for s in samples):
                 errors.append(name + ': prepared-document budget exceeded')
     scrolls = report.get('scrolling', [])
-    expected_scrolls = {'mailbox', 'reader-20', 'reader-100', 'calendar', 'attachments'} if scope in {'all', 'scroll-only'} else set()
+    expected_scrolls = {'mailbox', 'reader-20', 'reader-100', 'reader-read-100', 'calendar', 'attachments'} if scope in {'all', 'scroll-only'} else set()
     if expected_scrolls - {s['name'] for s in scrolls}:
         errors.append('Required scrolling scenarios are missing.')
     for scroll in scrolls:
@@ -108,6 +114,16 @@ def validate(report):
             errors.append(scroll['name'] + ': incomplete sustained scrolling')
         if scroll.get('mainRunLoopStallsOver100ms', 0) or scroll.get('delayedCallbackFraction', 1) >= .01:
             errors.append(scroll['name'] + ': display-link callback proxy exceeds budget')
+        if scroll.get('addedBusyMilliseconds'):
+            errors.append(scroll['name'] + ': diagnostic run with work added to every callback')
+    # Opening a compose window has no budget yet, so only completeness is checked.
+    compose = report.get('compose', [])
+    expected_compose = {'compose-new', 'compose-reply'} if scope == 'compose-only' else set()
+    if expected_compose - {c['name'] for c in compose}:
+        errors.append('Required compose scenarios are missing.')
+    for item in compose:
+        if item.get('failureReason') or item.get('completedOpenings', 0) < item.get('requestedOpenings', 1):
+            errors.append(item['name'] + ': incomplete compose openings')
     return errors
 
 
@@ -119,6 +135,10 @@ if __name__ == '__main__':
         print(error, file=sys.stderr)
     print('Measured scope: ' + str(report.get('requestedScenario')))
     for scenario in report.get('scenarios', []):
+        follow = scenario.get('toolbarFollow')
+        if follow:
+            print(scenario['name'] + ' toolbar settled after the switch: p50 %.0f ms, p95 %.0f ms, longest %.0f ms'
+                  % (follow['p50Milliseconds'], follow['p95Milliseconds'], follow['maximumMilliseconds']))
         if scenario.get('name', '').startswith('reader-'):
             tiers = {}
             for record in scenario.get('timings', {}).get('records', []):
@@ -126,5 +146,9 @@ if __name__ == '__main__':
                     tier = record.get('cacheTier', 'unknown')
                     tiers[tier] = tiers.get(tier, 0) + 1
             print(scenario['name'] + ' visible cache tiers: ' + json.dumps(tiers, sort_keys=True))
+    for item in report.get('compose', []):
+        parts = ['%s p50 %.0f ms, p95 %.0f ms' % (key, item[key]['p50Milliseconds'], item[key]['p95Milliseconds'])
+                 for key in ['draftOnly', 'key', 'window', 'cursor', 'settled'] if item.get(key)]
+        print(item['name'] + ': ' + ('; '.join(parts) or 'no timings') + (' (' + item['failureReason'] + ')' if item.get('failureReason') else ''))
     print('Selection feedback is a native-row drawing proxy. GPU frame presentation, normal-mailbox performance and memory-plateau slope still require separate evidence.')
     sys.exit(bool(errors))

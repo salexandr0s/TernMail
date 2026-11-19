@@ -47,7 +47,7 @@ struct NoticeView: View {
         .frame(maxWidth: Tokens.Toast.width)
         .ternSurface()
         .shadow(color: Tokens.Shadow.mdColor, radius: Tokens.Shadow.mdRadius, y: Tokens.Shadow.mdY)
-        .onHover { isHovering = $0 }
+        .ternOnHover { isHovering = $0 }
         .task(id: isInteracting) {
             guard !isInteracting, !notice.isError else { return }
             try? await Task.sleep(for: notice.duration ?? Tokens.Toast.info)
@@ -98,9 +98,9 @@ struct MailNoticeOverlay: ViewModifier {
         case .action(let row):
             mailbox.undo(row)
         case .send(let id):
-            Task { if await mailbox.undoSend(id) { openWindow(id: ComposeWindow.sceneID, value: id) } }
+            ComposeWindow.open(with: openWindow) { await mailbox.undoSend(id) ? id : nil }
         case .discard(let id):
-            Task { if await mailbox.undoDiscard(id) { openWindow(id: ComposeWindow.sceneID, value: id) } }
+            ComposeWindow.open(with: openWindow) { await mailbox.undoDiscard(id) ? id : nil }
         }
     }
 }

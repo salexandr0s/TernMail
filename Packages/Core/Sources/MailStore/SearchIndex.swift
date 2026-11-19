@@ -29,8 +29,11 @@ extension CacheTransaction {
         var conditions: [String] = []
         var arguments: StatementArguments = [accountID]
         if query.runsLocally, let root = query.root {
-            var compiler = SearchCompiler(labelIDs: try labelIDsByName(accountID: accountID), timeZone: timeZone, now: now)
             let required = SearchCompiler.requiredMatch(root)
+            // Without text to match first, every message of the account is
+            // checked, so each label's messages are read once as a set.
+            var compiler = SearchCompiler(labelIDs: try labelIDsByName(accountID: accountID), timeZone: timeZone, now: now,
+                                          labelSetAccountID: required == nil ? accountID : nil)
             let predicate = compiler.sql(root, matched: required != nil)
             var sql: String
             if let required {
@@ -57,12 +60,14 @@ extension CacheTransaction {
                 arguments += [accountID]
             }
             if !query.includesSpamAndTrash {
+                // Read once as a set. Gmail deletes what Spam and Trash hold
+                // after 30 days, so the set stays small, and a broad search
+                // checks tens of thousands of messages against it.
                 sql += """
-                     AND NOT EXISTS (
-                        SELECT 1 FROM messageLabel x
-                        WHERE x.accountID = m.accountID AND x.messageID = m.id AND x.labelID IN (?, ?))
+                     AND m.id NOT IN (
+                        SELECT messageID FROM messageLabel WHERE accountID = ? AND labelID IN (?, ?))
                     """
-                compiler.arguments += [SystemLabel.spam, SystemLabel.trash]
+                compiler.arguments += [accountID, SystemLabel.spam, SystemLabel.trash]
             }
             conditions.append(sql + ")")
             arguments += compiler.arguments
@@ -116,12 +121,17 @@ struct SearchCompiler {
     let labelIDs: [String: [String]]
     let timeZone: TimeZone
     let now: Date
+    /// The account whose messages with a label a label term reads once, as
+    /// a set. That pays off when every message of the account is checked.
+    /// Nil looks each message's labels up, which is cheaper for a few.
+    let labelSetAccountID: String?
     var arguments: StatementArguments = []
 
-    init(labelIDs: [String: [String]], timeZone: TimeZone, now: Date) {
+    init(labelIDs: [String: [String]], timeZone: TimeZone, now: Date, labelSetAccountID: String? = nil) {
         self.labelIDs = labelIDs
         self.timeZone = timeZone
         self.now = now
+        self.labelSetAccountID = labelSetAccountID
     }
 
     /// With `matched`, the rows are matches of `requiredMatch(node)`
@@ -207,10 +217,16 @@ struct SearchCompiler {
 
     private mutating func hasLabel(_ ids: [String]) -> String {
         guard !ids.isEmpty else { return "0" }
+        let marks = databaseQuestionMarks(count: ids.count)
+        if let labelSetAccountID {
+            arguments += [labelSetAccountID]
+            arguments += StatementArguments(ids)
+            return "m.id IN (SELECT messageID FROM messageLabel WHERE accountID = ? AND labelID IN (\(marks)))"
+        }
         arguments += StatementArguments(ids)
         return """
             EXISTS (SELECT 1 FROM messageLabel ml WHERE ml.accountID = m.accountID AND ml.messageID = m.id \
-            AND ml.labelID IN (\(databaseQuestionMarks(count: ids.count))))
+            AND ml.labelID IN (\(marks)))
             """
     }
 

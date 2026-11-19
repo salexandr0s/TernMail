@@ -62,6 +62,7 @@ struct GoogleTasksSidebar: View {
             .scrollBounceBehavior(.basedOnSize)
             footer
         }
+        .tracksKeyboardNavigation()
         .background(Tokens.Surface.muted)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("google-tasks-sidebar")

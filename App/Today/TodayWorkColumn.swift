@@ -186,9 +186,7 @@ private struct TodayPresentedRow: View {
             onBringBack: { Task { await followUps.deferAttention(entry, until: nil) } },
             onOpenSource: { followUps.openSource(entry) },
             onDraft: {
-                Task {
-                    if let id = await followUps.draftFollowUp(entry) { openWindow(id: ComposeWindow.sceneID, value: id) }
-                }
+                ComposeWindow.open(with: openWindow) { await followUps.draftFollowUp(entry) }
             })
             .modifier(TodayVisibilityReport(visibility: visibility, id: row.id))
     }

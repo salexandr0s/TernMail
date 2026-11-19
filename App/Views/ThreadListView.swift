@@ -6,6 +6,8 @@ import SwiftUI
 struct ThreadListView: View {
     let mailbox: MailboxModel
     @Environment(\.openWindow) private var openWindow
+    /// Read only as a key comes, so a switch of section doesn't build the list again.
+    @Environment(AppModel.self) private var app
     @FocusState private var listFocused: Bool
     @Namespace private var dragNamespace
     @State private var previewURL: URL?
@@ -78,6 +80,37 @@ struct ThreadListView: View {
     private func openConversations(_ ids: Set<MailListRowID>) {
         for row in mailbox.listItems where ids.contains(row.id) {
             openWindow(id: ConversationWindow.sceneID, value: mailbox.conversationLink(for: row.id))
+        }
+    }
+
+    /// Mail is the section in front: neither the attachment library nor
+    /// another section covers it.
+    private var isInFront: Bool { Self.mailIsInFront(app, mailbox) }
+
+    private static func mailIsInFront(_ app: AppModel, _ mailbox: MailboxModel) -> Bool {
+        app.destination == .mail && !mailbox.showsAttachmentLibrary
+    }
+
+    /// Takes the keyboard from the list while another section covers Mail,
+    /// so arrow keys can't change the hidden selection, and gives it back
+    /// when Mail returns if the list had it. Only this view updates on a switch.
+    private struct CoveredListFocus: View {
+        @Environment(AppModel.self) private var app
+        let mailbox: MailboxModel
+        let isFocused: FocusState<Bool>.Binding
+        @State private var refocusesOnReturn = false
+
+        var body: some View {
+            Color.clear
+                .onChange(of: ThreadListView.mailIsInFront(app, mailbox)) { _, inFront in
+                    if !inFront {
+                        refocusesOnReturn = isFocused.wrappedValue
+                        isFocused.wrappedValue = false
+                    } else if refocusesOnReturn {
+                        refocusesOnReturn = false
+                        isFocused.wrappedValue = true
+                    }
+                }
         }
     }
 
@@ -209,16 +242,19 @@ struct ThreadListView: View {
         } primaryAction: { ids in
             openConversations(ids)
         }
-        .onDeleteCommand { mailbox.performDeleteKeyAction() }
+        // Mail stays mounted behind the attachment library and the other
+        // sections, so these keys act only while it is in front.
+        .onDeleteCommand { if isInFront { mailbox.performDeleteKeyAction() } }
         .onKeyPress(.return) {
-            guard !mailbox.selectedListRowIDs.isEmpty else { return .ignored }
+            guard isInFront, !mailbox.selectedListRowIDs.isEmpty else { return .ignored }
             openConversations(mailbox.selectedListRowIDs)
             return .handled
         }
-        .onKeyPress(.space) { previewAttachment() }
+        .onKeyPress(.space) { isInFront ? previewAttachment() : .ignored }
         .quickLookPreview($previewURL)
         .protectAttachmentPreview(previewURL)
         .focused($listFocused)
+        .background { CoveredListFocus(mailbox: mailbox, isFocused: $listFocused) }
         .tracksKeyboardNavigation()
     }
 

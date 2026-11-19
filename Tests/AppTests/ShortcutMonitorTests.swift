@@ -29,6 +29,15 @@ import Testing
         #expect(view.monitoredEventHandler(try event("g", window: window)) == nil)
         #expect(view.monitoredEventHandler(try event("i", window: window)) == nil)
         #expect(actions == [.archive, .go(.inbox)])
+
+        // Keys typed while a compose window opens are for it, so they don't
+        // archive anything here.
+        let opening = ComposeTypeAhead.catchKeys(from: window)
+        let typed = try event("e", window: window)
+        #expect(view.monitoredEventHandler(typed) === typed)
+        opening.drop()
+        #expect(view.monitoredEventHandler(typed) == nil)
+        #expect(actions == [.archive, .go(.inbox), .archive])
     }
 
     @Test func registeredCallbackPreservesTypingWindowAndModifierBoundaries() throws {

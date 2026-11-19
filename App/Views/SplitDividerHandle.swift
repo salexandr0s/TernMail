@@ -98,7 +98,7 @@ class ResizeHandleView: NSView {
     }
 
     private func updateHover(at point: NSPoint) {
-        isHovered = isResizeAvailable && NSApp.isActive && visibleRect.contains(convert(point, from: nil))
+        isHovered = isResizeAvailable && NSApp.isActive && visibleBounds.contains(convert(point, from: nil))
     }
 
     @objc private func interactionWasInterrupted(_ notification: Notification) { cancelInteraction() }

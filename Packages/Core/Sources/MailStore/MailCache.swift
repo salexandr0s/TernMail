@@ -184,33 +184,33 @@ public struct CacheTransaction {
             let labelIDs = Set(update.labelIDs)
             var storedLabels = Set<String>()
             var addressesChanged = true
-            if let stored = try MessageRecord.fetchOne(db, key: ["accountID": record.accountID, "id": record.id]) {
+            // An update or an insert, since the lookup tells which: GRDB
+            // builds an upsert's SQL again on every call.
+            if let stored = try message(id: record.id, accountID: record.accountID) {
                 guard stored.historyID <= record.historyID else { continue }
                 if record.bcc == nil { record.bcc = stored.bcc }
                 storedLabels = try messageLabelIDs(messageID: record.id, accountID: record.accountID)
                 if record.databaseEquals(stored), storedLabels == labelIDs { continue }
                 threads.insert(stored.threadID)
                 addressesChanged = (stored.sender, stored.recipients, stored.cc) != (record.sender, record.recipients, record.cc)
+                try record.update(db)
+            } else {
+                try record.insert(db)
             }
-            try record.upsert(db)
             if addressesChanged {
-                // Not part of the record, so the upsert leaves it alone.
+                // Not part of the record, so the write leaves it alone.
                 let text = SearchFolding.addresses(sender: record.sender, recipients: record.recipients, cc: record.cc)
                 try db.cachedStatement(sql: "UPDATE message SET addressSearch = ? WHERE accountID = ? AND id = ?")
                     .execute(arguments: [text, record.accountID, record.id])
             }
             try updateLibraryMetadata(record, labelIDs: update.labelIDs)
             for labelID in storedLabels.subtracting(labelIDs) {
-                try db.execute(
-                    sql: "DELETE FROM messageLabel WHERE accountID = ? AND messageID = ? AND labelID = ?",
-                    arguments: [record.accountID, record.id, labelID]
-                )
+                try db.cachedStatement(sql: "DELETE FROM messageLabel WHERE accountID = ? AND messageID = ? AND labelID = ?")
+                    .execute(arguments: [record.accountID, record.id, labelID])
             }
             for labelID in labelIDs.subtracting(storedLabels) {
-                try db.execute(
-                    sql: "INSERT INTO messageLabel (accountID, messageID, labelID) VALUES (?, ?, ?)",
-                    arguments: [record.accountID, record.id, labelID]
-                )
+                try db.cachedStatement(sql: "INSERT INTO messageLabel (accountID, messageID, labelID) VALUES (?, ?, ?)")
+                    .execute(arguments: [record.accountID, record.id, labelID])
             }
             threads.insert(record.threadID)
         }
@@ -219,7 +219,8 @@ public struct CacheTransaction {
 
     func messageLabelIDs(messageID: String, accountID: String) throws -> Set<String> {
         try String.fetchSet(
-            db, sql: "SELECT labelID FROM messageLabel WHERE accountID = ? AND messageID = ?", arguments: [accountID, messageID]
+            db.cachedStatement(sql: "SELECT labelID FROM messageLabel WHERE accountID = ? AND messageID = ?"),
+            arguments: [accountID, messageID]
         )
     }
 
@@ -281,7 +282,7 @@ public struct CacheTransaction {
     ) throws -> String? {
         try applyLibraryLabelChange(messageID: messageID, added: added, removed: removed, historyID: historyID, accountID: accountID)
         try applyAnalyticsLabelChange(messageID: messageID, added: added, removed: removed, historyID: historyID, accountID: accountID)
-        guard var message = try MessageRecord.fetchOne(db, key: ["accountID": accountID, "id": messageID]) else {
+        guard var message = try self.message(id: messageID, accountID: accountID) else {
             return nil
         }
         guard historyID >= message.historyID else { return nil }
@@ -290,16 +291,12 @@ public struct CacheTransaction {
             try message.update(db)
         }
         for labelID in added {
-            try db.execute(
-                sql: "INSERT OR IGNORE INTO messageLabel (accountID, messageID, labelID) VALUES (?, ?, ?)",
-                arguments: [accountID, messageID, labelID]
-            )
+            try db.cachedStatement(sql: "INSERT OR IGNORE INTO messageLabel (accountID, messageID, labelID) VALUES (?, ?, ?)")
+                .execute(arguments: [accountID, messageID, labelID])
         }
         for labelID in removed {
-            try db.execute(
-                sql: "DELETE FROM messageLabel WHERE accountID = ? AND messageID = ? AND labelID = ?",
-                arguments: [accountID, messageID, labelID]
-            )
+            try db.cachedStatement(sql: "DELETE FROM messageLabel WHERE accountID = ? AND messageID = ? AND labelID = ?")
+                .execute(arguments: [accountID, messageID, labelID])
         }
         return message.threadID
     }
@@ -309,7 +306,7 @@ public struct CacheTransaction {
     public func deleteMessages(ids: some Collection<String>, accountID: String) throws -> Set<String> {
         var threads = Set<String>()
         for id in ids {
-            if let message = try MessageRecord.fetchOne(db, key: ["accountID": accountID, "id": id]) {
+            if let message = try self.message(id: id, accountID: accountID) {
                 threads.insert(message.threadID)
                 try message.delete(db)
             }
@@ -356,7 +353,13 @@ public struct CacheTransaction {
     }
 
     public func message(id: String, accountID: String) throws -> MessageRecord? {
-        try MessageRecord.fetchOne(db, key: ["accountID": accountID, "id": id])
+        // A cached statement, like the other lookups sync makes for every
+        // message and conversation it stores: the query interface builds its
+        // SQL again on each call, which takes several times as long as the
+        // lookup itself.
+        try MessageRecord.fetchOne(
+            db.cachedStatement(sql: "SELECT * FROM message WHERE accountID = ? AND id = ?"), arguments: [accountID, id]
+        )
     }
 
     public func body(messageID: String, accountID: String) throws -> MessageBodyRecord? {
@@ -364,10 +367,10 @@ public struct CacheTransaction {
     }
 
     public func messages(threadID: String, accountID: String) throws -> [MessageRecord] {
-        try MessageRecord
-            .filter(Column("accountID") == accountID && Column("threadID") == threadID)
-            .order(Column("date"), Column("id"))
-            .fetchAll(db)
+        try MessageRecord.fetchAll(
+            db.cachedStatement(sql: "SELECT * FROM message WHERE accountID = ? AND threadID = ? ORDER BY date, id"),
+            arguments: [accountID, threadID]
+        )
     }
 
     /// Messages in a thread whose body has not been fetched yet.
@@ -796,7 +799,9 @@ public struct CacheTransaction {
                 isUnread: allLabels.contains(SystemLabel.unread),
                 isStarred: allLabels.contains(SystemLabel.starred)
             )
-            if let stored = try ThreadRecord.fetchOne(db, key: ["accountID": accountID, "id": threadID]) {
+            if let stored = try ThreadRecord.fetchOne(
+                db.cachedStatement(sql: "SELECT * FROM thread WHERE accountID = ? AND id = ?"), arguments: [accountID, threadID]
+            ) {
                 if !thread.databaseEquals(stored) { try thread.update(db) }
             } else {
                 try thread.insert(db)
@@ -812,8 +817,10 @@ public struct CacheTransaction {
             }
             let listDate = max(last.date, wokeAt ?? last.date)
             let storedRows = Dictionary(
-                try ThreadLabelRecord.filter(Column("accountID") == accountID && Column("threadID") == threadID).fetchAll(db)
-                    .map { ($0.labelID, $0) },
+                try ThreadLabelRecord.fetchAll(
+                    db.cachedStatement(sql: "SELECT * FROM threadLabel WHERE accountID = ? AND threadID = ?"),
+                    arguments: [accountID, threadID]
+                ).map { ($0.labelID, $0) },
                 uniquingKeysWith: { first, _ in first }
             )
             for (labelID, row) in storedRows where !threadLabels.contains(labelID) {
@@ -857,12 +864,12 @@ public struct CacheTransaction {
     /// any maps to an empty set.
     private func labelsByMessage(from table: LabelTable, threadID: String, accountID: String) throws -> [String: Set<String>] {
         let name = table.rawValue
-        let rows = try Row.fetchAll(db, sql: """
+        let rows = try Row.fetchAll(db.cachedStatement(sql: """
             SELECT message.id AS messageID, \(name).labelID AS labelID
             FROM message
             LEFT JOIN \(name) ON \(name).accountID = message.accountID AND \(name).messageID = message.id
             WHERE message.accountID = ? AND message.threadID = ?
-            """, arguments: [accountID, threadID])
+            """), arguments: [accountID, threadID])
         var labels: [String: Set<String>] = [:]
         for row in rows {
             let messageID: String = row["messageID"]
@@ -879,16 +886,12 @@ public struct CacheTransaction {
         for (messageID, current) in labels {
             let previous = stored[messageID] ?? []
             for labelID in previous.subtracting(current) {
-                try db.execute(
-                    sql: "DELETE FROM effectiveLabel WHERE accountID = ? AND messageID = ? AND labelID = ?",
-                    arguments: [accountID, messageID, labelID]
-                )
+                try db.cachedStatement(sql: "DELETE FROM effectiveLabel WHERE accountID = ? AND messageID = ? AND labelID = ?")
+                    .execute(arguments: [accountID, messageID, labelID])
             }
             for labelID in current.subtracting(previous) {
-                try db.execute(
-                    sql: "INSERT INTO effectiveLabel (accountID, messageID, labelID) VALUES (?, ?, ?)",
-                    arguments: [accountID, messageID, labelID]
-                )
+                try db.cachedStatement(sql: "INSERT INTO effectiveLabel (accountID, messageID, labelID) VALUES (?, ?, ?)")
+                    .execute(arguments: [accountID, messageID, labelID])
             }
         }
     }

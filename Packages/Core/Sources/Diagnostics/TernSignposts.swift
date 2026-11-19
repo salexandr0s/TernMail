@@ -32,6 +32,9 @@ public enum TernSpan: String, Sendable, CaseIterable, Codable {
     case readerResources
     case calendarPreparation
     case mailListProjection
+    /// The cache read an opening mailbox waits for before the window shows
+    /// it: each account's sync state and labels.
+    case mailboxRestore
 }
 
 /// An open interval. End it with `TernSignposts.end(_:)`.

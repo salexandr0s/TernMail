@@ -36,11 +36,21 @@ struct MainView: View {
     /// Kept with the window, so it follows the system setting for reopening
     /// windows after a quit.
     @SceneStorage("selectedMailbox") private var storedMailbox = ""
+    @SceneStorage("showsAttachmentLibrary") private var storedLibrary = false
     @State private var previousColumnVisibility: NavigationSplitViewVisibility?
     @State private var paneSizing = AssistantMailPaneSizing()
     @State private var toolbarInset = ClippedSplitToolbarInset()
     @State private var libraryToolbar = AttachmentLibraryToolbarState()
     @FocusState private var outboxFocused: Bool
+    /// The section whose items the toolbar shows. It takes a new `section`
+    /// `Tokens.Motion.toolbarFollowDelay` after the content does. Hiding one
+    /// section's items and showing another's costs AppKit about twice the
+    /// main-thread time of the content change, and done in the same pass it
+    /// held the new section off the screen that long. The section picker does
+    /// not wait: it reads `section`.
+    @State private var toolbarSection = WorkspaceSection.mail
+    /// The toolbar shows Mail or the attachment library, whose panels this view owns.
+    private var toolbarShowsMail: Bool { toolbarSection == .mail || toolbarSection == .attachments }
     let mailbox: MailboxModel
     var isActive = true
     /// The window's content width. While another section shows, the retained
@@ -57,17 +67,19 @@ struct MainView: View {
 
     private var showsSidebar: Bool { columnVisibility == .all || (hidesReader && columnVisibility == .doubleColumn) }
 
-    private var showsLibrary: Bool { mailbox.selectedLabelID == AttachmentLibraryModel.mailboxID }
+    private var showsLibrary: Bool { mailbox.showsAttachmentLibrary }
     /// Mail menu items act on this window while it shows mail, not the attachment library.
     private var focusedMailbox: MailboxModel? { isActive && !showsLibrary ? mailbox : nil }
     private var focusedLibraryToolbar: AttachmentLibraryToolbarState? { isActive && showsLibrary ? libraryToolbar : nil }
 
-    /// View ▸ Show or Hide Sidebar acts on whichever split view is in front.
+    /// View ▸ Show or Hide Sidebar acts on the split view of the section the toolbar shows.
     private var sidebarToggle: SidebarToggle? {
-        guard app.destination != .followUps, app.destination != .today else { return nil }
-        guard isActive else { return isCalendarUtilityCompact ? nil : calendarSidebarState?.sidebarToggle }
-        if showsLibrary { return libraryToolbar.sidebarToggle }
-        return SidebarToggle(isVisible: showsSidebar, toggle: toggleSidebar)
+        switch toolbarSection {
+        case .followUps, .today: nil
+        case .calendar: isCalendarUtilityCompact ? nil : calendarSidebarState?.sidebarToggle
+        case .attachments: libraryToolbar.sidebarToggle
+        case .mail: SidebarToggle(isVisible: showsSidebar, toggle: toggleSidebar)
+        }
     }
 
     private func toggleSidebar() {
@@ -114,7 +126,7 @@ struct MainView: View {
 
     private var toolbarLayout: WorkspaceToolbarLayout {
         let calendar = isCalendarUtilityCompact ? nil : calendarSidebarState
-        return WorkspaceToolbarLayout(section: section, width: workspaceWidth, sidebars: .init(
+        return WorkspaceToolbarLayout(section: toolbarSection, width: workspaceWidth, sidebars: .init(
             mail: showsSidebar ? sidebarColumnWidth : 0,
             calendar: calendar?.showsSidebar == true ? calendar?.width ?? 0 : 0,
             attachments: libraryToolbar.showsSidebar ? libraryToolbar.sidebarWidth : 0),
@@ -140,6 +152,7 @@ struct MainView: View {
         showsPanel && !hidesReader && !isWideningWindow ? AssistantSidebarLayout.windowMinimum : Tokens.Layout.windowMinWidth
     }
 
+    /// The section whose content shows.
     private var section: WorkspaceSection {
         if app.destination == .today { return .today }
         if app.destination == .followUps { return .followUps }
@@ -151,12 +164,12 @@ struct MainView: View {
         switch section {
         case .mail:
             app.destination = .mail
-            if showsLibrary { mailbox.go(to: SystemLabel.inbox) }
+            mailbox.leaveAttachmentLibrary()
         case .calendar:
             app.destination = .calendar
         case .attachments:
             app.destination = .mail
-            mailbox.selectedMailbox = .combined(AttachmentLibraryModel.mailboxID)
+            mailbox.showAttachmentLibrary()
         case .followUps:
             app.destination = .followUps
         case .today:
@@ -245,8 +258,7 @@ struct MainView: View {
     private var workspaceScene: some View {
         workspaceLayout
         .background {
-            MailShortcutContext(isEnabled: isActive && usesSingleKeys && mailbox.selectedLabelID != AttachmentLibraryModel.mailboxID,
-                perform: perform)
+            MailShortcutContext(isEnabled: isActive && usesSingleKeys && !showsLibrary, perform: perform)
         }
         .background {
             WindowReader { window in
@@ -275,9 +287,10 @@ struct MainView: View {
             }
             // The first layout may have run before the stored choice came back.
             fitColumns(to: mailWidth)
-            if let stored = MailboxID(restorationValue: storedMailbox) { mailbox.restoreMailbox(stored) }
+            mailbox.restoreMailbox(MailboxID(restorationValue: storedMailbox), showingAttachmentLibrary: storedLibrary)
         }
         .onChange(of: mailbox.selectedMailbox) { _, box in storedMailbox = box?.restorationValue ?? "" }
+        .onChange(of: showsLibrary) { _, shows in storedLibrary = shows }
         .onChange(of: columnVisibility) { _, visibility in
             // The assistant and a narrow window hide columns for a while; keep the user's own choice.
             if !showsPanel && !sidebarHiddenForWidth { storedColumnVisibility = visibility.storageValue }
@@ -312,31 +325,57 @@ struct MainView: View {
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { measuredWidth = $0 }
         .onChange(of: workspaceWidth, initial: true) { _, width in fitSidebars(to: width) }
         .onChange(of: profileNameWidth == nil) { _, _ in fitColumns(to: mailWidth) }
+        // A window opens with its section's toolbar; later changes follow the content.
+        .onAppear { toolbarSection = section }
+        // Mail's own column widths go back before its first frame.
+        .onChange(of: toolbarSidebarWidth == nil) { _, isMail in
+            if isMail { paneSizing.restoreToolbarPositionsEarly() }
+        }
+        .task(id: section) {
+            guard toolbarSection != section else { return }
+            do { try await Task.sleep(for: Tokens.Motion.toolbarFollowDelay) } catch { return }
+            toolbarSection = section
+        }
+        #if TERN_TEST_SUPPORT || TERN_PERFORMANCE
+        .onChange(of: [section, toolbarSection], initial: true) { _, sections in
+            PerformanceToolbar.content = sections[0]
+            PerformanceToolbar.toolbar = sections[1]
+        }
+        #endif
         .toolbar(id: toolbarIdentifier) {
+            // The buttons act on the content in front, so their actions read `isActive`
+            // while what they show follows the toolbar's section.
             WorkspaceToolbar(mailbox: mailbox, calendar: app.calendar, library: libraryToolbar,
                 followUps: app.followUps, today: app.today,
-                accounts: app.accountPreferences, section: section, layout: layout, sidebar: sidebarToggle,
+                accounts: app.accountPreferences, section: toolbarSection, frontSection: section,
+                layout: layout, sidebar: sidebarToggle,
                 onSelect: show, onNewMessage: newMessage, onReply: reply,
-                isAssistantPresented: section == .attachments ? false : (isActive ? utilityPanel : calendarPanel) == .assistant,
-                isAssistantAvailable: section != .attachments && (isActive || onCalendarPanelToggle != nil),
+                isAssistantPresented: toolbarSection == .attachments ? false
+                    : (toolbarShowsMail ? utilityPanel : calendarPanel) == .assistant,
+                isAssistantAvailable: toolbarSection != .attachments && (toolbarShowsMail || onCalendarPanelToggle != nil),
                 onToggleAssistant: { if isActive { togglePanel(.assistant) } else { onCalendarPanelToggle?(.assistant) } },
-                isTasksPresented: (isActive ? utilityPanel : calendarPanel) == .tasks,
+                isTasksPresented: (toolbarShowsMail ? utilityPanel : calendarPanel) == .tasks,
                 onToggleTasks: { if isActive { togglePanel(.tasks) } else { onCalendarPanelToggle?(.tasks) } },
-                isCalendarUtilityCompact: !isActive && isCalendarUtilityCompact)
+                isCalendarUtilityCompact: !toolbarShowsMail && isCalendarUtilityCompact)
         }
         .toolbar(removing: .sidebarToggle)
         .toolbar(removing: layout.showsTitle ? nil : .title)
-        .navigationTitle(section == .mail ? mailbox.selectedLabelTitle : section.title)
-        .navigationSubtitle(section == .mail ? mailbox.selectedMailboxSubtitle : "")
+        .navigationTitle(toolbarSection == .mail ? mailbox.selectedLabelTitle : toolbarSection.title)
+        .navigationSubtitle(toolbarSection == .mail ? mailbox.selectedMailboxSubtitle : "")
     }
 
     /// The retained Mail split owns the shared toolbar. Each visible destination
     /// supplies its sidebar geometry without changing Mail's saved layout.
     private var toolbarSidebarWidth: CGFloat? {
-        if app.destination == .followUps || app.destination == .today { return 0 }
-        if !isActive { return isCalendarUtilityCompact ? 0 : calendarSidebarState.map { $0.showsSidebar ? $0.width : 0 } }
-        if showsLibrary { return libraryToolbar.showsSidebar ? libraryToolbar.sidebarWidth : 0 }
-        return nil
+        // Mail's columns take their own widths back with Mail, ahead of the toolbar.
+        if section == .mail { return nil }
+        switch toolbarSection {
+        // Mail's columns, now hidden, keep their widths until the toolbar follows.
+        case .mail: return nil
+        case .followUps, .today: return 0
+        case .calendar: return isCalendarUtilityCompact ? 0 : calendarSidebarState.map { $0.showsSidebar ? $0.width : 0 }
+        case .attachments: return libraryToolbar.showsSidebar ? libraryToolbar.sidebarWidth : 0
+        }
     }
 
     private var toolbarColumnVisibility: Binding<NavigationSplitViewVisibility> {
@@ -434,10 +473,7 @@ struct MainView: View {
     }
 
     private func newMessage() {
-        Task {
-            guard let id = await mailbox.startCompose(.newMessage) else { return }
-            openWindow(id: ComposeWindow.sceneID, value: id)
-        }
+        ComposeWindow.open(with: openWindow) { [mailbox] in await mailbox.startCompose(.newMessage) }
     }
 
     /// A single-key shortcut does what its menu command does, when that is
@@ -486,10 +522,7 @@ struct MainView: View {
     }
 
     private func reply(_ kind: ReplyKind, quote selectedQuote: SelectedMailQuote?) {
-        Task {
-            guard let id = await mailbox.startReply(kind, quote: selectedQuote) else { return }
-            openWindow(id: ComposeWindow.sceneID, value: id)
-        }
+        ComposeWindow.open(with: openWindow) { [mailbox] in await mailbox.startReply(kind, quote: selectedQuote) }
     }
 
     private static func labelID(of destination: SingleKeyShortcuts.Destination) -> String {

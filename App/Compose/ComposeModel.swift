@@ -173,14 +173,17 @@ final class ComposeModel {
     /// Changed in this window, so closing it keeps the draft. The stored
     /// revision can trail a store that just finished, so it can't tell.
     private var isTouched = false
-    /// Default sender insertion raises the stored revision without making the draft a user edit.
-    @ObservationIgnored private var uneditedRevision = 0
     /// Changed since the last save to Gmail was asked for.
     private var changedSinceSave = false
     /// Files still being copied into the draft, which `attachments` doesn't list yet.
     private var copying: [CopyingFile] = []
     /// Files that failed to attach or to be removed, listed with the attachments.
     private(set) var failedAttachments: [FailedAttachment] = []
+    /// Brings a reply's quote, a forward's quote and files, or a forwarded
+    /// message's file while the window takes edits.
+    @ObservationIgnored private var originalImport: Task<Void, Never>?
+    /// Gmail couldn't give the original, so the draft waits for Retry or Leave Out.
+    private(set) var originalImportFailed = false
     /// Storing the draft before the window closes, so nothing changes meanwhile.
     private(set) var isClosing = false
     /// A send or discard being queued. Nothing may change the draft meanwhile.
@@ -200,6 +203,8 @@ final class ComposeModel {
     @ObservationIgnored private var storeTask: Task<Void, Never>?
     @ObservationIgnored private var autosaveTask: Task<Void, Never>?
     @ObservationIgnored private var lastWrite: Task<Void, Never>?
+    /// Writes asked of `serially` that haven't finished.
+    @ObservationIgnored private var queuedWrites = 0
     @ObservationIgnored private var observation: Task<Void, Never>?
     @ObservationIgnored private var integrationRefresh: Task<Void, Never>?
     @ObservationIgnored private var featureObservation: Task<Void, Never>?
@@ -232,6 +237,11 @@ final class ComposeModel {
 
     var attachments: [OutgoingAttachment] { activity?.attachments ?? [] }
 
+    /// The window opened before the original's quote and a forward's files,
+    /// or the file of a message forwarded as an attachment, came from Gmail
+    /// (`LocalDraft.importPending`).
+    var awaitsOriginal: Bool { draft?.importPending == true }
+
     var showsFrom: Bool { draft != nil }
 
     var accountChoices: [AccountRecord] { mailbox.accounts.map(\.account) }
@@ -250,14 +260,23 @@ final class ComposeModel {
     /// Open, and not taken by a send or discard.
     private var takesEdits: Bool { phase == .open && draft?.state == .editing }
 
-    /// Closing the window now loses nothing. Otherwise `requestClose()`
-    /// stores the draft first, and the window waits for it.
+    /// Closing the window now loses nothing. A draft that needs no save is
+    /// kept or discarded by `windowClosed()` after the window goes. Otherwise
+    /// `requestClose()` stores the draft first, and the window waits for it.
     var closesAtOnce: Bool {
         switch phase {
-        case .open: !takesEdits
+        case .open: !takesEdits || closesWithoutSaving
         case .moving: false
         case .loading, .closed, .moved: true
         }
+    }
+
+    /// Closing would keep the draft as it is or discard a blank or untouched
+    /// message, and nothing could still keep the window open: no contact
+    /// group is loading, no file holds the draft and no write is queued.
+    private var closesWithoutSaving: Bool {
+        guard isEditable, expandingGroups == 0, attachmentHold == nil, queuedWrites == 0, let draft else { return false }
+        return closingAction(for: draft) != .save
     }
 
     /// Gmail doesn't have the latest changes, so closing the window saves
@@ -430,6 +449,10 @@ final class ComposeModel {
             alert = Problem(title: failedAttachments.isEmpty ? "Can't Send Yet" : "Can't Send Message", message: hold)
             return false
         }
+        if let hold = originalHold {
+            alert = Problem(title: originalImportFailed ? "Can't Send Message" : "Can't Send Yet", message: hold)
+            return false
+        }
         let recipients = content.to + content.cc + content.bcc
         if recipients.isEmpty {
             alert = Problem(title: "Can't Send Message", message: "Add at least one recipient.")
@@ -454,6 +477,9 @@ final class ComposeModel {
             }
             do {
                 return try await engine.sendDraft(id, content: content, delay: delay)
+            } catch let error as ComposeError {
+                alert = Problem(title: "Can't Send Message", message: error.errorDescription ?? "")
+                return false
             } catch {
                 storeError = "Tern couldn't send this message."
                 return false
@@ -518,8 +544,9 @@ final class ComposeModel {
         serially { [self] in
             // A move that fails or doesn't happen opens the window again.
             defer { if phase == .moving { phase = .open } }
-            // The copy would lose a file that failed to attach or to be removed.
-            if let hold = attachmentHold {
+            // The copy would lose a file that failed to attach or to be
+            // removed, and the other account can't download a message in this one.
+            if let hold = attachmentHold ?? originalHold {
                 if automaticChange == nil { alert = Problem(title: "Can't Change Account", message: hold) }
                 return
             }
@@ -668,6 +695,59 @@ final class ComposeModel {
         return copying.first.map { "Wait for “\($0.name)” to finish attaching." }
     }
 
+    /// What keeps a reply or forward from going out before its original
+    /// loads, or a new message before the message it forwards as an attachment.
+    private var originalHold: String? {
+        guard awaitsOriginal else { return nil }
+        if draft?.kind == .new {
+            let name = SyncEngine.forwardedMessageFilename
+            return originalImportFailed
+                ? "“\(name)” couldn't be attached. Retry, or leave it out."
+                : "Wait for “\(name)” to finish attaching."
+        }
+        return originalImportFailed
+            ? "The original message couldn't be loaded. Retry, or leave it out."
+            : "Wait for the original message to finish loading."
+    }
+
+    /// Asks Gmail for the original again after it failed.
+    func retryOriginal() {
+        guard originalImportFailed, isEditable else { return }
+        originalImportFailed = false
+        importOriginalIfNeeded()
+    }
+
+    /// Lets the reply go out without its quote, the forward without the
+    /// original and its files, or a new message without the message it
+    /// forwards as an attachment, once they failed to load.
+    func leaveOutOriginal() {
+        guard originalImportFailed, isEditable, let engine = owner?.engine else { return }
+        let id = localDraftID
+        serially { [self] in
+            do {
+                _ = try await engine.skipReplyImport(localDraftID: id)
+                originalImportFailed = false
+            } catch {
+                storeError = "Tern couldn't save this draft on this Mac."
+            }
+        }
+    }
+
+    /// Brings the quote and a forward's files, or the file of a message
+    /// forwarded as an attachment, from Gmail while the window takes edits.
+    /// A window that closes first doesn't stop it: the draft gets them
+    /// anyway, and Gmail's copy too when it has one.
+    private func importOriginalIfNeeded() {
+        guard awaitsOriginal, originalImport == nil, !originalImportFailed, let engine = owner?.engine else { return }
+        let id = localDraftID
+        originalImport = Task { [weak self] in
+            let completed = try? await engine.completeReplyImport(localDraftID: id)
+            guard let self else { return }
+            originalImport = nil
+            if completed == nil, phase != .closed { originalImportFailed = true }
+        }
+    }
+
     /// A copy of the file under its own name, for Quick Look, dragging out and
     /// Finder. Nil when the file can't be read.
     func attachmentFileURL(_ attachment: OutgoingAttachment) async -> URL? {
@@ -717,9 +797,10 @@ final class ComposeModel {
         if let problem { alert = problem } else { close() }
     }
 
-    /// The window went away. Its close button stored the draft already. Any
-    /// other way, such as signing out, keeps or discards the draft as closing
-    /// would, without waiting.
+    /// The window went away. After `requestClose()` the draft is stored
+    /// already. A window that closed at once, or went another way such as
+    /// signing out, keeps or discards its draft here as closing would,
+    /// without waiting.
     func windowClosed() {
         observation?.cancel()
         integrationRefresh?.cancel()
@@ -799,7 +880,9 @@ final class ComposeModel {
             let isBlank = content.to.isEmpty && content.cc.isEmpty && content.bcc.isEmpty
                 && content.subject.trimmingCharacters(in: .whitespaces).isEmpty && content.body.isEmpty
                 && attachments.isEmpty && copying.isEmpty && failedAttachments.isEmpty
-            let untouched = draft.revision == uneditedRevision && !isTouched
+            // Edits raise the revision. Setting up the draft and importing its
+            // original don't while Gmail has no copy.
+            let untouched = draft.revision == 0 && !isTouched
             if untouched || isBlank { return .discard }
         }
         return changedSinceSave || hasPendingEdits || draft.hasUnsavedChanges ? .save : .keep
@@ -846,6 +929,7 @@ final class ComposeModel {
             return
         }
         self.activity = activity
+        importOriginalIfNeeded()
         let draft = activity.draft
         if phase == .loading {
             // A restored or moved draft already has a chosen sender snapshot.
@@ -941,28 +1025,16 @@ final class ComposeModel {
         return try? await mailbox.cache.read { try $0.message(id: sourceID, accountID: draft.accountID) }
     }
 
+    /// A draft that wasn't set up before its window opened, such as a reply
+    /// from the menu bar, is set up here the same way (`setUpNewDraft`).
     private func initializeSender(for draft: LocalDraft, original: MessageRecord?) async {
-        guard needsDefaultSender(draft), !Task.isCancelled,
-              let sender = ComposeSender.preferred(
-                in: senderChoices.filter { $0.account.id == draft.accountID }, original: original, kind: draft.kind
-              ) else { return }
-        var initialized = content
-        initialized.fromAddress = sender.address
-        initialized.signatureHTML = sender.signature(for: draft.kind)
-        initialized.composeFont = ComposePreferences.font
-        if let store = mailbox.accountStore,
-           let signature = try? await store.composeSignature(accountID: draft.accountID, address: sender.address, kind: draft.kind) {
-            initialized.signatureHTML = signature.html
-            initialized.signatureAboveQuote = signature.aboveQuote
-            initialized.signatureSeparator = signature.separator
-        }
-        guard let engine = owner?.engine else { return }
+        guard needsDefaultSender(draft), !Task.isCancelled else { return }
         do {
-            guard let stored = try await engine.updateDraft(localDraftID, content: initialized), !Task.isCancelled else { return }
+            guard let stored = try await mailbox.setUpNewDraft(draft, senders: senderChoices, original: original),
+                  !Task.isCancelled else { return }
             activity?.draft = stored
             knownUpdate = max(knownUpdate, stored.updatedAt)
-            uneditedRevision = stored.revision
-            replaceContent(with: initialized)
+            replaceContent(with: stored.content)
         } catch {
             storeError = "Tern couldn't save this draft's sender on this Mac."
         }
@@ -1145,8 +1217,10 @@ final class ComposeModel {
     @discardableResult
     private func serially<T: Sendable>(_ work: @escaping @MainActor () async -> T) -> Task<T, Never> {
         let previous = lastWrite
+        queuedWrites += 1
         let task = Task { @MainActor in
             await previous?.value
+            defer { queuedWrites -= 1 }
             return await work()
         }
         lastWrite = Task { _ = await task.value }

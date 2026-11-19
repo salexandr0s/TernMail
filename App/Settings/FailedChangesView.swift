@@ -114,7 +114,7 @@ struct FailedChangesView: View {
 
     @ViewBuilder private func sourceActions(_ failure: FailedChangePresentation) -> some View {
         if let draftID = failure.draftID {
-            Button("Open Draft") { Task { await openDraft(draftID, accountID: failure.action.accountID) } }
+            Button("Open Draft") { openDraft(draftID, accountID: failure.action.accountID) }
         } else if failure.sources.count == 1, let source = failure.sources.first {
             Button("Show Affected Mail") { app.mailURLs.openConversation(source.link) }
         } else if !failure.sources.isEmpty {
@@ -127,17 +127,22 @@ struct FailedChangesView: View {
         }
     }
 
-    private func openDraft(_ id: String, accountID: String) async {
-        guard let mailbox = app.mailbox, mailbox.account(id: accountID) != nil else { return }
-        do {
-            let draft = try await mailbox.cache.read { try $0.localDraft(id: id) }
-            guard app.mailbox === mailbox, mailbox.account(id: accountID) != nil,
-                  draft?.accountID == accountID else {
-                error = "This draft is no longer available."
-                return
+    private func openDraft(_ id: String, accountID: String) {
+        ComposeWindow.open(with: openWindow) {
+            guard let mailbox = app.mailbox, mailbox.account(id: accountID) != nil else { return nil }
+            do {
+                let draft = try await mailbox.cache.read { try $0.localDraft(id: id) }
+                guard app.mailbox === mailbox, mailbox.account(id: accountID) != nil,
+                      draft?.accountID == accountID else {
+                    error = "This draft is no longer available."
+                    return nil
+                }
+                return id
+            } catch {
+                self.error = "Couldn't open this draft. Try again."
+                return nil
             }
-            openWindow(id: ComposeWindow.sceneID, value: id)
-        } catch { self.error = "Couldn't open this draft. Try again." }
+        }
     }
 
     private func retry(_ row: PendingAction) async {
