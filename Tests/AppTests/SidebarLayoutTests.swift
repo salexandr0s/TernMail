@@ -52,7 +52,7 @@ import Testing
                 try #require(split.arrangedSubviews.count == 2)
                 let sidebar = try #require(split.arrangedSubviews.first)
                 let frame = sidebar.convert(sidebar.bounds, to: nil)
-                for identifier in ["workspace.sidebar", "workspace.refresh", "workspace.destination", "mail.compose"] {
+                for identifier in ["workspace.refresh", "workspace.destination", "mail.compose"] {
                     let item = try #require(window.toolbar?.visibleItems?.first { $0.itemIdentifier.rawValue == identifier })
                     let view = try #require(item.view)
                     #expect(view.convert(view.bounds, to: nil).minX >= frame.maxX - 1,
@@ -125,7 +125,7 @@ import Testing
             let firstPane = try #require(split.arrangedSubviews.first)
             let frame = firstPane.convert(firstPane.bounds, to: nil)
             let sidebarEdge = showsSidebar ? frame.maxX : 0
-            for identifier in ["workspace.sidebar", "workspace.refresh", "workspace.destination", "mail.compose"] {
+            for identifier in ["workspace.refresh", "workspace.destination", "mail.compose"] {
                 let item = try #require(window.toolbar?.visibleItems?.first { $0.itemIdentifier.rawValue == identifier })
                 let view = try #require(item.view)
                 let control = view.convert(view.bounds, to: nil)
@@ -148,9 +148,9 @@ import Testing
             #expect(abs(try #require(split.arrangedSubviews.first).frame.width - width) <= 1,
                 "The Attachments sidebar must remain resizable")
         }
-        try await pressToolbarButton(in: window, identifier: "workspace.sidebar")
+        try await pressToolbarButton(in: window, identifier: "workspace.refresh", button: "workspace.sidebarButton")
         try await expectBoundary(split, showsSidebar: false)
-        try await pressToolbarButton(in: window, identifier: "workspace.sidebar")
+        try await pressToolbarButton(in: window, identifier: "workspace.refresh", button: "workspace.sidebarButton")
         try await expectBoundary(split)
         let sidebarRestorationDeadline = ContinuousClock.now.advanced(by: .seconds(3))
         while abs(try #require(split.arrangedSubviews.first).frame.width - Tokens.Layout.sidebarMaxWidth) > 1,
@@ -192,7 +192,7 @@ import Testing
             try await expectBoundary(split, showsSidebar: !compact)
             if compact {
                 let visibleWindows = Set(NSApp.windows.filter(\.isVisible).map(ObjectIdentifier.init))
-                try await pressToolbarButton(in: window, identifier: "workspace.sidebar")
+                try await pressToolbarButton(in: window, identifier: "workspace.refresh", button: "workspace.sidebarButton")
                 var popover: NSWindow?
                 let deadline = ContinuousClock.now.advanced(by: .seconds(3))
                 repeat {
@@ -205,7 +205,7 @@ import Testing
                 let sidebarPopover = try #require(popover, "The compact Attachments sidebar button must open its sidebar")
                 let table = try #require(sidebarPopover.contentView.flatMap { tables(in: $0).first })
                 #expect(table.numberOfRows > 0, "Mailbox navigation must remain available in the compact sidebar")
-                try await pressToolbarButton(in: window, identifier: "workspace.sidebar")
+                try await pressToolbarButton(in: window, identifier: "workspace.refresh", button: "workspace.sidebarButton")
                 let closeDeadline = ContinuousClock.now.advanced(by: .seconds(3))
                 repeat { try await settle() } while sidebarPopover.isVisible && ContinuousClock.now < closeDeadline
                 #expect(!sidebarPopover.isVisible)
@@ -508,7 +508,9 @@ import Testing
         #expect(try isOpen() == opens, "The assistant didn't \(opens ? "open" : "close"): \(state)")
     }
 
-    private func pressToolbarButton(in window: NSWindow, identifier: String) async throws {
+    /// Presses a toolbar item's button, or the one with the `button`
+    /// accessibility identifier when the item holds more than one.
+    private func pressToolbarButton(in window: NSWindow, identifier: String, button: String? = nil) async throws {
         // Hosted tests cannot require foreground activation. Press the rendered
         // button through AppKit accessibility after checking it can be hit.
         var target: NSView?
@@ -536,6 +538,7 @@ import Testing
             }
             let selector = NSSelectorFromString("accessibilityPerformPress")
             if property("accessibilityRole") as? String == NSAccessibility.Role.button.rawValue,
+               button == nil || property("accessibilityIdentifier") as? String == button,
                object.responds(to: selector), let implementation = object.method(for: selector) {
                 // SwiftUI AX nodes expose this public BOOL selector without
                 // declaring formal NSAccessibility protocol conformance.
@@ -545,7 +548,8 @@ import Testing
             let children = property("accessibilityChildren") as? [Any] ?? []
             return (children + NSAccessibility.unignoredChildren(from: children)).contains(where: press)
         }
-        try #require(descendants(in: view).contains(where: press), "The rendered \(identifier) button must support accessibility Press")
+        try #require(descendants(in: view).contains(where: press),
+            "The rendered \(button ?? identifier) button must support accessibility Press")
     }
 
     private func descendants(in view: NSView) -> [NSView] {
@@ -758,7 +762,7 @@ import Testing
             try await settle()
             #expect(window.toolbar?.identifier == toolbarIdentifier, "Hosted toolbar state must stay separate from other windows")
             let width = Int(window.frame.width)
-            let identifiers = ["workspace.sidebar", "workspace.refresh", "workspace.destination", "mail.compose", "workspace.search", "workspace.tasks", "workspace.assistant"]
+            let identifiers = ["workspace.refresh", "workspace.destination", "mail.compose", "workspace.search", "workspace.tasks", "workspace.assistant"]
             var frames: [String: NSRect] = [:]
             for identifier in identifiers {
                 let item = try #require(window.toolbar?.visibleItems?.first { $0.itemIdentifier.rawValue == identifier },
@@ -766,10 +770,10 @@ import Testing
                 let view = try #require(item.view)
                 let frame = view.convert(view.bounds, to: nil)
                 frames[identifier] = frame
-                let followsSidebar = ["workspace.sidebar", "workspace.refresh", "workspace.destination", "mail.compose"].contains(identifier)
+                let followsSidebar = ["workspace.refresh", "workspace.destination", "mail.compose"].contains(identifier)
                 if let baseline = sharedFrames[width], let expected = baseline[identifier] {
-                    let origin = followsSidebar ? try #require(frames["workspace.sidebar"]).minX : 0
-                    let expectedOrigin = followsSidebar ? try #require(baseline["workspace.sidebar"]).minX : 0
+                    let origin = followsSidebar ? try #require(frames["workspace.refresh"]).minX : 0
+                    let expectedOrigin = followsSidebar ? try #require(baseline["workspace.refresh"]).minX : 0
                     #expect(abs((frame.minX - origin) - (expected.minX - expectedOrigin)) <= 1
                         && abs((frame.maxX - origin) - (expected.maxX - expectedOrigin)) <= 1,
                         "\(identifier) moved from \(expected) to \(frame) when switching views at \(width) points")
@@ -778,10 +782,8 @@ import Testing
             let split = try mailSplit(in: controller.view)
             let sidebar = try #require(split.arrangedSubviews.first)
             let sidebarEdge = split.isSubviewCollapsed(sidebar) ? 0 : sidebar.convert(sidebar.bounds, to: nil).maxX
-            #expect(try #require(frames["workspace.sidebar"]).minX >= sidebarEdge - 1,
+            #expect(try #require(frames["workspace.refresh"]).minX >= sidebarEdge - 1,
                 "The leading toolbar controls must clear the current native sidebar")
-            #expect(try #require(frames["workspace.refresh"]).minX >= #require(frames["workspace.sidebar"]).maxX,
-                "Refresh must follow the sidebar button")
             #expect(try #require(frames["workspace.refresh"]).maxX <= #require(frames["workspace.destination"]).minX,
                 "Refresh must precede the section switcher")
             if sharedFrames[width] == nil { sharedFrames[width] = frames }
@@ -814,7 +816,7 @@ import Testing
         withObservationTracking { _ = app.calendar.isLoading } onChange: {
             calendarRefreshes.withLock { $0 += 1 }
         }
-        try await pressToolbarButton(in: window, identifier: "workspace.refresh")
+        try await pressToolbarButton(in: window, identifier: "workspace.refresh", button: "workspace.refreshButton")
         let refreshDeadline = ContinuousClock.now.advanced(by: .seconds(3))
         while calendarRefreshes.withLock({ $0 }) == 0, ContinuousClock.now < refreshDeadline {
             try await settle()

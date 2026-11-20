@@ -136,6 +136,10 @@ struct WorkspaceToolbarLayout: Equatable {
 
         /// Sidebar, Refresh, the section switcher and New, or Refresh and the
         /// switcher alone where a section has no sidebar or New button.
+        /// AppKit draws the Sidebar and Refresh item 80 points wide, and this
+        /// counts it as 85. Without those 5 points, Mail's expanded actions
+        /// would fill a default-size window beside the sidebar with no room
+        /// to spare, and the window would lose its title.
         static func navigation(_ section: WorkspaceSection) -> CGFloat {
             let switcher = CGFloat(WorkspaceSection.allCases.count) * 40
             switch section {

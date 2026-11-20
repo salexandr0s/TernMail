@@ -65,9 +65,13 @@ import Testing
             #expect(defaults.double(forKey: AssistantSidebarLayout.widthKey) == 480)
             let back = element(id: "calendar-utility-back", in: controller.view)
             #expect((back != nil) == layout.isCompact)
+            let refresh = window.toolbar?.visibleItems?.first { $0.itemIdentifier.rawValue == "workspace.refresh" }?.view
+            let sidebarButton = refresh.flatMap { element(id: "workspace.sidebarButton", in: $0) }
+            #expect((sidebarButton == nil) == layout.isCompact,
+                "The sidebar button must hide only while Calendar's utility fills the workspace")
             if layout.isCompact {
                 let visible = Set(window.toolbar?.visibleItems?.map { $0.itemIdentifier.rawValue } ?? [])
-                for identifier in ["workspace.sidebar", "workspace.search", "mail.compose",
+                for identifier in ["workspace.search", "mail.compose",
                                    "calendar.navigation", "calendar.today", "calendar.mode"] {
                     #expect(!visible.contains(identifier), "Calendar command \(identifier) must hide while its utility fills the workspace")
                 }

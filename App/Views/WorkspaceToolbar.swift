@@ -80,28 +80,35 @@ struct WorkspaceToolbar: CustomizableToolbarContent {
     }
 
     private var navigation: some CustomizableToolbarContent {
-        Group {
-            ToolbarItem(id: "workspace.sidebar", placement: .navigation) {
-                Button(sidebar?.isVisible == true ? "Hide Sidebar" : "Show Sidebar", systemImage: "sidebar.left") {
-                    sidebar?.toggle()
+        // Sidebar and Refresh are one item. AppKit draws neighboring items in one
+        // glass platter, and after a section switch it could leave that platter
+        // between points while the items stayed on them. Their sizes then changed
+        // on every layout pass until AppKit stopped the app.
+        ToolbarItem(id: "workspace.refresh", placement: .navigation) {
+            HStack(spacing: 0) {
+                if !isCalendarUtilityCompact && section != .followUps && section != .today {
+                    sidebarButton
                 }
-                .help(sidebar?.isVisible == true ? "Hide Sidebar" : "Show Sidebar")
-                .disabled(sidebar == nil)
-                .popover(isPresented: Binding(
-                    get: { section == .attachments && library.isCompact && library.isPopoverPresented },
-                    set: { library.isPopoverPresented = $0 }
-                ), arrowEdge: .top) {
-                    SidebarView(mailbox: mailbox)
-                        .frame(width: Tokens.Layout.sidebarWidth, height: Tokens.Layout.windowMinHeight)
-                }
-            }
-            .customizationBehavior(.disabled)
-            .mailToolbarVisible(!isCalendarUtilityCompact && section != .followUps && section != .today)
-            ToolbarItem(id: "workspace.refresh", placement: .navigation) {
                 WorkspaceRefreshButton(mailbox: mailbox, calendar: calendar, library: library,
                     followUps: followUps, today: today, section: section)
             }
-            .customizationBehavior(.disabled)
+        }
+        .customizationBehavior(.disabled)
+    }
+
+    private var sidebarButton: some View {
+        Button(sidebar?.isVisible == true ? "Hide Sidebar" : "Show Sidebar", systemImage: "sidebar.left") {
+            sidebar?.toggle()
+        }
+        .help(sidebar?.isVisible == true ? "Hide Sidebar" : "Show Sidebar")
+        .disabled(sidebar == nil)
+        .accessibilityIdentifier("workspace.sidebarButton")
+        .popover(isPresented: Binding(
+            get: { section == .attachments && library.isCompact && library.isPopoverPresented },
+            set: { library.isPopoverPresented = $0 }
+        ), arrowEdge: .top) {
+            SidebarView(mailbox: mailbox)
+                .frame(width: Tokens.Layout.sidebarWidth, height: Tokens.Layout.windowMinHeight)
         }
     }
 }
@@ -144,5 +151,6 @@ private struct WorkspaceRefreshButton: View {
         .help(help)
         .disabled(isRefreshing || (section == .attachments && library.isWorking))
         .accessibilityValue(isRefreshing ? "Refreshing" : "")
+        .accessibilityIdentifier("workspace.refreshButton")
     }
 }
