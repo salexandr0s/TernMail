@@ -11,9 +11,9 @@ import Testing
 
     @Test func controlsFoldInOrderAsTheWindowNarrows() {
         func layout(_ section: WorkspaceSection, _ width: CGFloat, sidebars: WorkspaceToolbarLayout.Sidebars? = nil,
-                    profileNameWidth: CGFloat? = nil) -> WorkspaceToolbarLayout {
+                    profileNameWidth: CGFloat? = nil, labels: Bool = false) -> WorkspaceToolbarLayout {
             WorkspaceToolbarLayout(section: section, width: width, sidebars: sidebars ?? self.sidebars,
-                profileNameWidth: profileNameWidth)
+                profileNameWidth: profileNameWidth, labels: labels)
         }
         // The default window names the mailbox and keeps the search field, with mail's actions in menus.
         let standard = layout(.mail, Tokens.Layout.windowWidth)
@@ -45,21 +45,31 @@ import Testing
         #expect(layout(.mail, 1_440, profileNameWidth: 40).compactProfile == false)
         #expect(layout(.mail, 1_440, profileNameWidth: 200).compactProfile)
         #expect(layout(.today, 1_280, profileNameWidth: 40).compactProfile)
+        // Labels widen the items. The default window folds the search field, and Mail's sidebar steps aside
+        // before the replies fold.
+        let window = Tokens.Layout.windowWidth
+        #expect(layout(.mail, window, labels: true).foldsSearch)
+        #expect(WorkspaceToolbarLayout.sidebarRoom(for: .mail, width: window, labels: true) < sidebars.mail)
+        #expect(!layout(.mail, window, sidebars: none, labels: true).foldsReplies)
     }
 
     /// AppKit moves the items that don't fit a toolbar into its overflow menu,
-    /// Assistant and Tasks first. This lays the real toolbar out at each width
-    /// and fails when the layout's measured widths no longer match AppKit's.
-    @Test(.timeLimit(.minutes(3))) func everyControlStaysInTheToolbarAtEveryWidth() async throws {
+    /// Assistant and Tasks first. This lays the real toolbar out at each width,
+    /// in Icon Only and in Icon and Text mode, and fails when the layout's
+    /// measured widths no longer match AppKit's.
+    @Test(.timeLimit(.minutes(3)), arguments: [false, true])
+    func everyControlStaysInTheToolbarAtEveryWidth(labels: Bool) async throws {
         let toolbar = try await ToolbarWindow(width: 1_280, height: 760)
         defer { toolbar.close() }
         let window = toolbar.window
+        try await toolbar.showLabels(labels)
 
         // Narrowing and then widening covers each sidebar stepping aside and coming back.
         for width in [CGFloat(1_440), 1_280, 1_200, 1_100, 1_000, 900, 800, 720, 1_000, 1_280] {
             window.setContentSize(NSSize(width: width, height: 760))
             for section in WorkspaceSection.allCases {
                 toolbar.show(section)
+                guard !labels || width >= narrowestWidthWithLabels(for: section) else { continue }
                 try await expectControls(for: section, in: window, width: width)
             }
         }
@@ -73,30 +83,85 @@ import Testing
             window.setContentSize(NSSize(width: width, height: 760))
             for section in [WorkspaceSection.mail, .today] {
                 toolbar.show(section)
-                let folds = WorkspaceToolbarLayout(section: section, width: width, profileNameWidth: 0).foldsProfile
+                guard !labels || width >= narrowestWidthWithLabels(for: section, profile: true) else { continue }
+                let folds = WorkspaceToolbarLayout(section: section, width: width, profileNameWidth: 0,
+                    labels: labels).foldsProfile
                 try await expectControls(for: section, in: window, width: width, profile: !folds)
             }
         }
         await toolbar.app.signOut()
     }
 
+    /// The narrowest window that holds every control of `section` with labels
+    /// once the layout has folded all it can and no sidebar shows, by the
+    /// layout's widths. In a narrower one the overflow menu takes the trailing
+    /// controls. Without labels every section fits the narrowest window.
+    private func narrowestWidthWithLabels(for section: WorkspaceSection, profile: Bool = false) -> CGFloat {
+        let picker: CGFloat = profile ? 99 : 0
+        return switch section {
+        // Mail's picker joins its menu.
+        case .mail: 1_050
+        case .attachments: 921
+        case .calendar: 822
+        case .followUps: 690 + picker
+        case .today: 666 + picker
+        }
+    }
+
+    /// AppKit gives a toolbar's new display mode to every toolbar with the
+    /// same identifier but reports it only for the toolbar that changed, so
+    /// the other windows have to notice it too.
+    @Test func everyWindowFollowsADisplayModeChange() async throws {
+        let identifier = "\(MailWindowPreferences.toolbarID).\(UUID().uuidString)"
+        let windows = (0..<2).map { _ in
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 300), styleMask: [.titled],
+                backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false
+            window.toolbar = NSToolbar(identifier: identifier)
+            window.orderBack(nil)
+            return window
+        }
+        defer {
+            for window in windows {
+                window.close()
+                window.toolbar = nil
+            }
+        }
+        let modes = windows.map { window in
+            let mode = ToolbarDisplayMode()
+            mode.follow(window)
+            return mode
+        }
+        for (changed, labels) in [(0, true), (1, false)] {
+            windows[changed].toolbar?.displayMode = labels ? .iconAndLabel : .iconOnly
+            let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+            while modes.contains(where: { $0.showsLabels != labels }) && ContinuousClock.now < deadline {
+                try await Task.sleep(for: .milliseconds(20))
+            }
+            #expect(modes.map(\.showsLabels) == [labels, labels])
+        }
+    }
+
     /// Switching to Calendar stopped the app in a layout pass of the toolbar,
     /// most often when the click on the section picker also made the window
     /// key. This switches to Calendar from the other sections while the window
     /// becomes key, at the size of the first report and at the eight widest
-    /// widths where a toolbar folds a control. With Sidebar and Refresh as two
-    /// items, it stopped the app in two runs, at the 7th and the 11th switch.
-    @Test(.timeLimit(.minutes(3))) func switchingToCalendarWhileTheWindowBecomesKeyLaysOut() async throws {
+    /// widths where a toolbar folds a control, in both display modes. With
+    /// Sidebar and Refresh as two items, it stopped the app in two runs, at
+    /// the 7th and the 11th switch.
+    @Test(.timeLimit(.minutes(3)), arguments: [false, true])
+    func switchingToCalendarWhileTheWindowBecomesKeyLaysOut(labels: Bool) async throws {
         let height: CGFloat = 1_073
         let toolbar = try await ToolbarWindow(width: 1_162, height: height)
         defer { toolbar.close() }
+        try await toolbar.showLabels(labels)
         let other = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 300), styleMask: [.titled],
             backing: .buffered, defer: false)
         other.isReleasedWhenClosed = false
         defer { other.close() }
         NSApp.activate()
         let settle = Duration.milliseconds(200)
-        for width in [1_162] + foldingWidths().prefix(8) {
+        for width in [1_162] + foldingWidths(labels: labels).prefix(8) {
             for source in [WorkspaceSection.mail, .followUps, .today, .attachments] {
                 toolbar.window.setContentSize(NSSize(width: width, height: height))
                 toolbar.window.makeKeyAndOrderFront(nil)
@@ -124,13 +189,14 @@ import Testing
 
     /// Widths where Mail's or Calendar's toolbar folds or unfolds a control,
     /// with their sidebars and without, each with the width a point narrower.
-    private func foldingWidths() -> [CGFloat] {
+    private func foldingWidths(labels: Bool) -> [CGFloat] {
         var widths: Set<CGFloat> = []
         for shown in [sidebars, WorkspaceToolbarLayout.Sidebars()] {
             for section in [WorkspaceSection.mail, .calendar] {
                 var previous: WorkspaceToolbarLayout?
                 for width in stride(from: Tokens.Layout.windowMinWidth, through: 1_600, by: 1) {
-                    let layout = WorkspaceToolbarLayout(section: section, width: width, sidebars: shown)
+                    let layout = WorkspaceToolbarLayout(section: section, width: width, sidebars: shown,
+                        labels: labels)
                     if let previous, previous != layout { widths.formUnion([width - 1, width]) }
                     previous = layout
                 }
@@ -230,6 +296,17 @@ import Testing
     /// The identifiers of the items the toolbar shows, in order.
     var itemIdentifiers: [String] {
         window.toolbar?.visibleItems?.map(\.itemIdentifier.rawValue) ?? []
+    }
+
+    /// Shows or hides the labels under the toolbar's items once SwiftUI has
+    /// given the window its toolbar.
+    func showLabels(_ labels: Bool) async throws {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+        while window.toolbar == nil && ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        let toolbar = try #require(window.toolbar)
+        toolbar.displayMode = labels ? .iconAndLabel : .iconOnly
     }
 
     func show(_ section: WorkspaceSection) {

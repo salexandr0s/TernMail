@@ -22,6 +22,7 @@ struct MainView: View {
     @State private var utilityPanel: WorkspacePanel?
     private var showsPanel: Bool { utilityPanel != nil }
     @State private var hostWindow: NSWindow?
+    @State private var toolbarDisplayMode = ToolbarDisplayMode()
     /// `Double`, because `@AppStorage` cannot store `CGFloat`.
     @AppStorage(AssistantSidebarLayout.widthKey) private var preferredAssistantWidth = Double(Tokens.Assistant.sidebarWidth)
     /// The panel's width while its divider is dragged. Saving a width writes
@@ -121,7 +122,8 @@ struct MainView: View {
     private var profileNameWidth: CGFloat? { app.accountPreferences.flatMap(ProfilePicker.nameWidth) }
 
     private var toolbarSidebarRoom: CGFloat {
-        WorkspaceToolbarLayout.sidebarRoom(for: .mail, width: workspaceWidth, hasProfiles: profileNameWidth != nil)
+        WorkspaceToolbarLayout.sidebarRoom(for: .mail, width: workspaceWidth, hasProfiles: profileNameWidth != nil,
+            labels: toolbarDisplayMode.showsLabels)
     }
 
     private var toolbarLayout: WorkspaceToolbarLayout {
@@ -130,13 +132,16 @@ struct MainView: View {
             mail: showsSidebar ? sidebarColumnWidth : 0,
             calendar: calendar?.showsSidebar == true ? calendar?.width ?? 0 : 0,
             attachments: libraryToolbar.showsSidebar ? libraryToolbar.sidebarWidth : 0),
-            profileNameWidth: profileNameWidth)
+            profileNameWidth: profileNameWidth, labels: toolbarDisplayMode.showsLabels)
     }
 
     /// Every section's sidebar gives way to the toolbar at the same point in its folding.
     private func fitSidebars(to width: CGFloat) {
-        calendarSidebarState?.updateToolbarRoom(WorkspaceToolbarLayout.sidebarRoom(for: .calendar, width: width))
-        libraryToolbar.updateToolbarRoom(WorkspaceToolbarLayout.sidebarRoom(for: .attachments, width: width))
+        let labels = toolbarDisplayMode.showsLabels
+        calendarSidebarState?.updateToolbarRoom(
+            WorkspaceToolbarLayout.sidebarRoom(for: .calendar, width: width, labels: labels))
+        libraryToolbar.updateToolbarRoom(
+            WorkspaceToolbarLayout.sidebarRoom(for: .attachments, width: width, labels: labels))
         fitColumns(to: mailWidth)
     }
 
@@ -264,6 +269,7 @@ struct MainView: View {
             WindowReader { window in
                 window.titlebarSeparatorStyle = .line
                 hostWindow = window
+                toolbarDisplayMode.follow(window)
             }
         }
         .frame(minWidth: minimumWidth, minHeight: Tokens.Layout.windowMinHeight)
@@ -324,6 +330,7 @@ struct MainView: View {
         return workspaceLifecycle
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { measuredWidth = $0 }
         .onChange(of: workspaceWidth, initial: true) { _, width in fitSidebars(to: width) }
+        .onChange(of: toolbarDisplayMode.showsLabels) { _, _ in fitSidebars(to: workspaceWidth) }
         .onChange(of: profileNameWidth == nil) { _, _ in fitColumns(to: mailWidth) }
         // A window opens with its section's toolbar; later changes follow the content.
         .onAppear { toolbarSection = section }
