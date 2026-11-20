@@ -10,12 +10,10 @@ final class AssistantProviderUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["--ui-audit", "--ui-audit-light", "--ui-audit-live-claude",
                                "-ApplePersistenceIgnoreState", "YES"]
-        var didConnect = false
         app.launch()
-        defer {
-            if didConnect { disconnectLiveClaude(in: app) }
-            app.terminate()
-        }
+        // A failed check stops the test without running a `defer`. XCTest runs
+        // teardown blocks either way, the last one added first.
+        addTeardownBlock { app.terminate() }
         app.activate()
         let mainWindow = app.windows.matching(identifier: "main").firstMatch
         if !mainWindow.exists { app.typeKey("0", modifierFlags: .command) }
@@ -25,9 +23,10 @@ final class AssistantProviderUITests: XCTestCase {
         select("Claude (CLI)", picker: provider, app: app)
         let connect = settings.buttons["assistant.claude-cli.connect"]
         XCTAssertTrue(connect.waitForExistence(timeout: 10))
+        // From the click on, the CLI may be connected, so the test disconnects it.
+        addTeardownBlock { self.disconnectLiveClaude(in: app) }
         connect.click()
         XCTAssertTrue(settings.staticTexts["Connected"].waitForExistence(timeout: 30))
-        didConnect = true
         XCTAssertFalse(settings.secureTextFields["assistant.claude-cli.sign-in-code"].exists)
 
         let modelPicker = settings.popUpButtons.matching(NSPredicate(
