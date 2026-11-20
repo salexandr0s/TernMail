@@ -159,6 +159,23 @@ extension AccountStore {
         }
     }
 
+    /// Deletes the follow-up Tern made for a thread, with its reminders and
+    /// draft records, as if it had never been made. One the user tracks or
+    /// has taken over stays. Returns the notifications to withdraw.
+    public func removeAutomaticFollowUp(accountID: String, threadID: String) async throws -> Set<String> {
+        try Task.checkCancellation()
+        return try await writer.write { db in
+            try Task.checkCancellation()
+            try Self.requireCommitmentAccount(db, accountID: accountID)
+            guard let automatic = try AutomaticFollowUpRecord.filter(Column("accountID") == accountID && Column("threadID") == threadID)
+                .fetchOne(db), automatic.managed else { return [] }
+            let entry = try Self.requireCommitmentEntry(db, accountID: accountID, id: automatic.commitmentID)
+            // The reminders, the automatic record and its draft records go with it.
+            try db.execute(sql: "DELETE FROM commitment WHERE accountID = ? AND id = ?", arguments: [accountID, automatic.commitmentID])
+            return Set(entry.reminders.compactMap(\.notificationID))
+        }
+    }
+
     public func disableAutomaticFollowUps(accountIDs: Set<String>, now: Date = Date()) async throws -> Set<String> {
         try Task.checkCancellation()
         return try await writer.write { db in

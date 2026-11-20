@@ -214,7 +214,17 @@ final class AutomaticFollowUpCoordinator {
                 let probe = CommitmentRecord(accountID: key.accountID, threadID: key.threadID, sourceMessageID: "",
                     sourceMessageDate: now(), sourceSubject: "", title: "", direction: .waitingFor)
                 reads[FollowUpsModel.threadKey(probe)] = snapshot
-                guard let candidate = Self.candidate(in: snapshot) else { continue }
+                let candidate: AutomaticFollowUpCandidate
+                switch Self.evaluate(snapshot) {
+                case .candidate(let found): candidate = found
+                case .automatedRecipients:
+                    // Removes a follow-up Tern made before it skipped this kind of mail.
+                    for id in try await store.removeAutomaticFollowUp(accountID: key.accountID, threadID: key.threadID) {
+                        await followUps.scheduler.remove(id: id)
+                    }
+                    continue
+                case .noFollowUp: continue
+                }
                 let due = candidate.outgoingDate + TimeInterval(preferences.delayDays) * 86_400
                 let mutation = try await store.reconcileAutomaticFollowUp(candidate, delayDays: preferences.delayDays,
                     eligibleForAlerts: due > preferences.enabledSince, now: now())
@@ -274,7 +284,24 @@ final class AutomaticFollowUpCoordinator {
         !stopped && !Task.isCancelled && generation == epoch && preferences.revision == preferencesRevision
     }
 
+    /// What a sent conversation asks of automatic follow-up.
+    enum Evaluation: Equatable {
+        /// Wait for a reply to the latest sent message.
+        case candidate(AutomaticFollowUpCandidate)
+        /// The latest sent message asked a mailing list to unsubscribe, or
+        /// went only to mailboxes nobody answers from, such as a no-reply
+        /// address, so there is nothing to wait for.
+        case automatedRecipients
+        /// Nothing to track: no verified sent message, no outside recipient, or a reply came.
+        case noFollowUp
+    }
+
     static func candidate(in snapshot: FollowUpThreadSnapshot) -> AutomaticFollowUpCandidate? {
+        if case .candidate(let candidate) = evaluate(snapshot) { return candidate }
+        return nil
+    }
+
+    static func evaluate(_ snapshot: FollowUpThreadSnapshot) -> Evaluation {
         let own = Set(snapshot.ownAddresses.map { $0.lowercased() })
         let outgoing = snapshot.messages.filter { message in
             let labels = snapshot.labels[message.id] ?? []
@@ -283,10 +310,11 @@ final class AutomaticFollowUpCoordinator {
                   let sender = EmailAddress.parseList(message.sender).first?.normalized, own.contains(sender) else { return false }
             return true
         }.max { ($0.date, $0.id) < ($1.date, $1.id) }
-        guard let outgoing else { return nil }
-        let recipients = (EmailAddress.parseList(outgoing.recipients) + EmailAddress.parseList(outgoing.cc ?? ""))
+        guard let outgoing else { return .noFollowUp }
+        let outside = (EmailAddress.parseList(outgoing.recipients) + EmailAddress.parseList(outgoing.cc ?? ""))
             .filter { $0.isValid && !own.contains($0.normalized) }
-        guard !recipients.isEmpty else { return nil }
+        let recipients = asksToUnsubscribe(outgoing.subject) ? [] : outside.filter { !$0.isAutomatedMailbox }
+        guard !recipients.isEmpty else { return outside.isEmpty ? .noFollowUp : .automatedRecipients }
         let participants = Set(recipients.map(\.normalized))
         let replied = snapshot.messages.contains { message in
             let labels = snapshot.labels[message.id] ?? []
@@ -295,12 +323,19 @@ final class AutomaticFollowUpCoordinator {
                   let sender = EmailAddress.parseList(message.sender).first?.normalized, !own.contains(sender) else { return false }
             return participants.contains(sender)
         }
-        guard !replied else { return nil }
+        guard !replied else { return .noFollowUp }
         let title = outgoing.subject.trimmingCharacters(in: .whitespacesAndNewlines)
-        return AutomaticFollowUpCandidate(accountID: snapshot.accountID, threadID: snapshot.threadID,
+        return .candidate(AutomaticFollowUpCandidate(accountID: snapshot.accountID, threadID: snapshot.threadID,
             outgoingMessageID: outgoing.id, outgoingDate: outgoing.date, sourceSubject: outgoing.subject,
             title: title.isEmpty ? "Follow up on sent email" : String(title.prefix(2_000)),
             ownerName: recipients.count == 1 ? recipients.first?.name : "Recipients",
-            ownerEmail: recipients.count == 1 ? recipients.first?.address : nil, baselineHistoryID: outgoing.historyID)
+            ownerEmail: recipients.count == 1 ? recipients.first?.address : nil, baselineHistoryID: outgoing.historyID))
+    }
+
+    /// A subject that starts with "unsubscribe", as a list's unsubscribe link
+    /// fills it in. The list may read these requests at any address.
+    /// "Re: unsubscribe" is a conversation.
+    private static func asksToUnsubscribe(_ subject: String) -> Bool {
+        subject.lowercased().split { !$0.isLetter }.first == "unsubscribe"
     }
 }

@@ -36,6 +36,20 @@ public struct EmailAddress: Sendable, Hashable, Codable {
         return !address.contains { $0.isWhitespace || $0.isNewline || "<>(),;:\"[]\\".contains($0) }
     }
 
+    /// A mailbox that software reads and nobody answers from: a mailing
+    /// list's unsubscribe address, as in `list+unsubscribe@` or
+    /// `@unsubscribe.example.com`, or a no-reply address. Mail sent there
+    /// needs no follow-up.
+    public var isAutomatedMailbox: Bool {
+        let pieces = normalized.split(separator: "@", omittingEmptySubsequences: false)
+        guard pieces.count == 2 else { return false }
+        let words = pieces.map { $0.split { !$0.isLetter } }
+        if words.joined().contains(where: { $0 == "unsub" || $0.contains("unsubscribe") }) { return true }
+        // Whole words, so a person's mailbox such as "bruno.reply" doesn't match.
+        let name = " " + words[0].joined(separator: " ") + " "
+        return [" noreply ", " no reply ", " donotreply ", " do not reply "].contains { name.contains($0) }
+    }
+
     /// "Name <address>", or the address alone, for showing in the interface.
     public var displayString: String {
         name.map { "\($0) <\(address)>" } ?? address

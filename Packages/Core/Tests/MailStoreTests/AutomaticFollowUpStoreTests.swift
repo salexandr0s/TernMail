@@ -255,6 +255,32 @@ private let automaticDay: TimeInterval = 86_400
         #expect(receiptAccounts == ["b"])
     }
 
+    @Test func removalDeletesOnlyTheFollowUpsTernManagesWithTheirRecords() async throws {
+        let store = try await automaticStore()
+        let made = try #require(try await store.reconcileAutomaticFollowUp(automaticCandidate(), delayDays: 1,
+            eligibleForAlerts: true, now: automaticClock).entry)
+        _ = try #require(try await store.claimAutomaticFollowUpDraft(accountID: "a", commitmentID: made.record.id,
+            expectedReminderRevision: made.reminders[0].revision, now: automaticClock))
+        #expect(try await store.markCommitmentReminderDelivered(accountID: "a", commitmentID: made.record.id, kind: .noReply,
+            expectedReminderRevision: made.reminders[0].revision, notificationID: "alert", at: automaticClock))
+        let manual = try await store.createCommitment(automaticManual(thread: "manual"))
+        _ = try await store.reconcileAutomaticFollowUp(automaticCandidate(thread: "manual"), delayDays: 1,
+            eligibleForAlerts: true, now: automaticClock)
+
+        #expect(try await store.removeAutomaticFollowUp(accountID: "a", threadID: "thread") == ["alert"])
+        #expect(try await store.removeAutomaticFollowUp(accountID: "a", threadID: "thread").isEmpty)
+        #expect(try await store.removeAutomaticFollowUp(accountID: "a", threadID: "manual").isEmpty)
+        #expect(try await store.commitmentEntries(accountIDs: ["a"]).map(\.record.id) == [manual.record.id])
+        #expect(try await store.automaticFollowUps(accountIDs: ["a"]).map(\.threadID) == ["manual"])
+        let leftovers = try await store.writer.read { db in
+            try Int.fetchOne(db, sql: """
+                SELECT (SELECT COUNT(*) FROM commitmentReminder WHERE commitmentID = ?)
+                    + (SELECT COUNT(*) FROM automaticFollowUpDraft WHERE commitmentID = ?)
+                """, arguments: [made.record.id, made.record.id])
+        }
+        #expect(leftovers == 0)
+    }
+
     @Test func cachedCandidateScanReturnsOneRecentSentPerThreadAndStaysBounded() async throws {
         let cache = try MailCache.inMemory()
         try await cache.write { tx in

@@ -48,6 +48,20 @@ import Testing
         snapshot.messages[0].recipients = "me@example.com"
         snapshot.messages[0].cc = "Anna <anna@example.com>, Bob <bob@example.com>"
         #expect(AutomaticFollowUpCoordinator.candidate(in: snapshot)?.ownerEmail == nil)
+        // Unsubscribe and no-reply mailboxes never answer, so only the people are waited on.
+        snapshot.messages[0].cc = "Anna <anna@example.com>, news+unsubscribe@lists.example.com"
+        #expect(AutomaticFollowUpCoordinator.candidate(in: snapshot)?.ownerEmail == "anna@example.com")
+        snapshot.messages[0].cc = "news+unsubscribe@lists.example.com, No Reply <no-reply@example.com>"
+        #expect(AutomaticFollowUpCoordinator.evaluate(snapshot) == .automatedRecipients)
+        // An unsubscribe link names the request in its subject, whatever address the list reads it at.
+        let subject = snapshot.messages[0].subject
+        snapshot.messages[0].cc = "x7f3k@em.example.com"
+        snapshot.messages[0].subject = "Unsubscribe"
+        #expect(AutomaticFollowUpCoordinator.evaluate(snapshot) == .automatedRecipients)
+        snapshot.messages[0].subject = "Re: unsubscribe"
+        #expect(AutomaticFollowUpCoordinator.candidate(in: snapshot)?.ownerEmail == "x7f3k@em.example.com")
+        snapshot.messages[0].subject = subject
+        snapshot.messages[0].cc = "Anna <anna@example.com>, Bob <bob@example.com>"
         snapshot.messages.append(fixture.message("reply", date: fixture.time - 1, sender: "bob@example.com"))
         #expect(AutomaticFollowUpCoordinator.candidate(in: snapshot) == nil)
         snapshot.labels["reply"] = [SystemLabel.draft]
@@ -148,6 +162,20 @@ import Testing
         fixture.failRead = false
         await coordinator.start(); await coordinator.waitForCurrentPass()
         #expect(try await fixture.store.commitmentEntries(accountIDs: ["a"]).count == 1)
+    }
+
+    @Test func followUpOnAnUnsubscribeRequestIsRemovedWithItsAlert() async throws {
+        let fixture = try await AutomaticFixture(enabledBefore: 10 * 86_400)
+        let coordinator = fixture.coordinator()
+        defer { coordinator.stop(); fixture.followUps.stop() }
+        await coordinator.start(); await coordinator.waitForCurrentPass()
+        let delivered = try #require(await fixture.scheduler.deliveries.first?.id)
+        // As if the follow-up had been made before Tern skipped these mailboxes.
+        fixture.snapshot.messages[0].recipients = "news+unsubscribe@lists.example.com"
+        await coordinator.process(fixture.sync(fixture.snapshot.messages[0])); await coordinator.waitForCurrentPass()
+        #expect(try await fixture.store.commitmentEntries(accountIDs: ["a"]).isEmpty)
+        #expect(try await fixture.store.automaticFollowUps(accountIDs: ["a"]).isEmpty)
+        #expect(await fixture.scheduler.removals.contains(delivered))
     }
 
     @Test func concurrentPreferenceApplicationsFinishWithLatestPolicy() async throws {

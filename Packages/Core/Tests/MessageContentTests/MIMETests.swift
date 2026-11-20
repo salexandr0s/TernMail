@@ -250,6 +250,17 @@ import Testing
         #expect(EmailAddress(address: address).recipientTitle(full: true) == address)
     }
 
+    @Test func unsubscribeAndNoReplyMailboxesCountAsAutomated() {
+        for address in ["unsubscribe@lists.example.com", "news+unsubscribe@groups.example.com", "unsub-4f2a@mailer.example.com",
+                        "u.1234@unsubscribe.example.net", "No-Reply@example.com", "do_not_reply@shop.example", "alerts-noreply@example.org",
+                        "noreply2@example.com"] {
+            #expect(EmailAddress(address: address).isAutomatedMailbox, "\(address)")
+        }
+        for address in ["anna@example.com", "reply@example.com", "unsubtle@example.com", "bruno.reply@example.com", "not-an-address"] {
+            #expect(!EmailAddress(address: address).isAutomatedMailbox, "\(address)")
+        }
+    }
+
     @Test func encodedWordsSplitInsideACharacterDecodeTogether() {
         #expect(MIMEReader.decodeEncodedWords("=?UTF-8?B?ww==?= =?UTF-8?B?qQ==?=") == "é")
         #expect(MIMEReader.decodeEncodedWords("Re: =?ISO-8859-1?Q?caf=E9_ok?= thanks") == "Re: café ok thanks")
