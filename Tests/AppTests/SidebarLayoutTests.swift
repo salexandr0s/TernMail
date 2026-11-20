@@ -187,8 +187,18 @@ import Testing
 
         split = try await openAttachments()
         for width in [1_280, 960, 720, 1_280] {
+            let shownWidth = split.arrangedSubviews.count == 2 ? split.arrangedSubviews.first?.frame.width : nil
             window.setContentSize(NSSize(width: width, height: 760))
             let compact = CGFloat(width) < Tokens.Layout.sidebarCompactWidth
+            if let shownWidth, !compact {
+                // The detail column takes the change in width. This is checked
+                // before the probe's next turn, since its restore would hide a
+                // split that resized the sidebar.
+                window.layoutIfNeeded()
+                let resizedWidth = try #require(split.arrangedSubviews.first).frame.width
+                #expect(abs(resizedWidth - shownWidth) <= 1,
+                    "The Attachments sidebar must keep its width while the window resizes, found \(resizedWidth) at \(width)")
+            }
             try await expectBoundary(split, showsSidebar: !compact)
             if compact {
                 let visibleWindows = Set(NSApp.windows.filter(\.isVisible).map(ObjectIdentifier.init))

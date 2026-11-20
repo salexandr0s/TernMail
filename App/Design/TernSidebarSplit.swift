@@ -56,6 +56,13 @@ struct TernSidebarSplit<Sidebar: View, Detail: View>: View {
                         .accessibilityHidden(!isPresented)
                 }
                 detail()
+                    // SwiftUI gives this column the lower holding priority, so
+                    // the detail takes a change in the window's width and the
+                    // sidebar keeps its own, as AppKit's sidebars do. With equal
+                    // priorities NSSplitView resized both columns in proportion
+                    // a pass after the window, and the probe could save that
+                    // width as a drag.
+                    .layoutPriority(1)
             }
             .frame(width: geometry.size.width + hiddenWidth, height: geometry.size.height)
             .offset(x: -hiddenWidth)
