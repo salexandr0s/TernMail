@@ -165,12 +165,24 @@ import TernAI
         #expect(envelope["conversation_history"]?.arrayValue?.first?["content"] == .string(mail))
     }
 
-    @Test(arguments: [false, true])
-    func actualProcessAcceptsOnlyDisabledCustomizationRegistry(unsafe: Bool) async throws {
+    /// Claude Code lists the plugins built into it even in safe mode. A tool or
+    /// a plugin loaded from disk means the isolation flags didn't apply.
+    @Test(arguments: ["none", "built-in plugin", "tool", "plugin on disk"])
+    func actualProcessAcceptsOnlyDisabledCustomizationRegistry(registry: String) async throws {
         let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
+        let unsafe = registry == "tool" || registry == "plugin on disk"
+        let plugins: [AIJSON] = switch registry {
+        case "built-in plugin":
+            [.object(["name": .string("cc-plugin-privacy"), "path": .string("builtin"), "source": .string("cc-plugin-privacy@builtin")])]
+        // The source names the builtin marketplace, but the plugin was loaded from disk.
+        case "plugin on disk":
+            [.object(["name": .string("example-plugin"), "path": .string("/tmp/example-plugin"), "source": .string("example-plugin@builtin")])]
+        default: []
+        }
         let initialization: AIJSON = .object(["type": .string("system"), "subtype": .string("init"),
-            "tools": .array(unsafe ? [.string("Bash")] : []), "mcp_servers": .array([]), "plugins": .array([]), "skills": .array([])])
+            "tools": .array(registry == "tool" ? [.string("Bash")] : []), "mcp_servers": .array([]),
+            "plugins": .array(plugins), "skills": .array([])])
         let result: AIJSON = .object(["type": .string("result"), "subtype": .string("success"), "is_error": .bool(false), "result": .string("OK")])
         let text = try initialization.jsonString() + "\n" + result.jsonString() + "\n"
         let invocation = ClaudeCLIInvocation(executable: URL(fileURLWithPath: "/usr/bin/printf"), arguments: ["%s", text], input: nil,

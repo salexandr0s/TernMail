@@ -48,7 +48,7 @@ import Testing
         let start = try #require(initialization.value.withLock { $0 })
         #expect(start["tools"]?.arrayValue?.isEmpty == true)
         #expect(start["mcp_servers"]?.arrayValue?.isEmpty == true)
-        #expect(start["plugins"]?.arrayValue?.isEmpty == true)
+        #expect(start["plugins"].map(ClaudeCLIProvider.listsOnlyBuiltInPlugins) == true)
         #expect(start["skills"]?.arrayValue?.isEmpty == true)
     }
 

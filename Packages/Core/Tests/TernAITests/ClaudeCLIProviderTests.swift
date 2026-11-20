@@ -172,8 +172,13 @@ import Testing
         switch failure {
         case "tool":
             unsafe = .object(["type": .string("system"), "subtype": .string("init"), "tools": .array([.string("Bash")])])
-        case "mcp_servers", "plugins", "skills":
+        case "mcp_servers", "skills":
             unsafe = .object(["type": .string("system"), "subtype": .string("init"), failure: .array([.string("unexpected")])])
+        case "plugins":
+            // The source names the builtin marketplace, but the plugin was loaded from disk.
+            unsafe = .object(["type": .string("system"), "subtype": .string("init"), "plugins": .array([.object([
+                "name": .string("example-plugin"), "path": .string("/tmp/example-plugin"), "source": .string("example-plugin@builtin"),
+            ])])])
         case "native_stream_tool":
             unsafe = .object(["type": .string("stream_event"), "event": .object(["type": .string("content_block_start"),
                 "content_block": .object(["type": .string("tool_use"), "name": .string("Bash")])])])
@@ -285,10 +290,13 @@ import Testing
         ])])])
     }
 
+    /// Claude Code lists the plugins built into it even in safe mode.
     private static func initialization(structured: Bool = false) -> AIJSON {
         .object(["type": .string("system"), "subtype": .string("init"),
-            "tools": .array(structured ? [.string("StructuredOutput")] : []),
-            "mcp_servers": .array([]), "plugins": .array([]), "skills": .array([])])
+            "tools": .array(structured ? [.string("StructuredOutput")] : []), "mcp_servers": .array([]),
+            "plugins": .array([.object(["name": .string("cc-plugin-privacy"), "path": .string("builtin"),
+                "source": .string("cc-plugin-privacy@builtin")])]),
+            "skills": .array([])])
     }
 
     private static func success(text: String = "", output: AIJSON? = nil, usage: AIJSON? = nil) -> AIJSON {

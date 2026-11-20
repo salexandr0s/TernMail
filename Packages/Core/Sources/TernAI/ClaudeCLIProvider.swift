@@ -146,8 +146,21 @@ public struct ClaudeCLIProvider: AIProvider {
                 throw AIProviderError.invalidResponse
             }
         }
-        for key in ["mcp_servers", "plugins", "skills"] {
+        for key in ["mcp_servers", "skills"] {
             if let entries = value[key], entries.arrayValue?.isEmpty != true { throw AIProviderError.invalidResponse }
+        }
+        if let plugins = value["plugins"], !Self.listsOnlyBuiltInPlugins(plugins) { throw AIProviderError.invalidResponse }
+    }
+
+    /// Claude Code lists the plugins built into its binary even in safe mode
+    /// with every plugin setting off. ClaudeHelper runs only a CLI that carries
+    /// Anthropic's signature, so those plugins have the CLI's own trust. A
+    /// plugin loaded from disk means the isolation flags didn't apply.
+    public static func listsOnlyBuiltInPlugins(_ value: AIJSON) -> Bool {
+        guard let entries = value.arrayValue, entries.count <= 64 else { return false }
+        return entries.allSatisfy { entry in
+            guard let name = entry["name"]?.stringValue, !name.isEmpty, name.utf8.count <= 128 else { return false }
+            return entry["path"] == .string("builtin") && entry["source"] == .string(name + "@builtin")
         }
     }
 

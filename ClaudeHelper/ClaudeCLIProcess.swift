@@ -237,8 +237,9 @@ final class ClaudeCLIProcess: ClaudeCLIProcessRunning, @unchecked Sendable {
 
     private func validInitialization(_ value: AIJSON) -> Bool {
         guard case .inference(let schema) = mode, let tools = value["tools"]?.arrayValue,
-              tools.allSatisfy({ schema && $0 == .string("StructuredOutput") }), tools.count <= 1 else { return false }
-        return ["mcp_servers", "plugins", "skills"].allSatisfy { value[$0]?.arrayValue?.isEmpty == true }
+              tools.allSatisfy({ schema && $0 == .string("StructuredOutput") }), tools.count <= 1,
+              let plugins = value["plugins"], ClaudeCLIProvider.listsOnlyBuiltInPlugins(plugins) else { return false }
+        return ["mcp_servers", "skills"].allSatisfy { value[$0]?.arrayValue?.isEmpty == true }
     }
 
     private func loginOutput(_ data: Data) {
