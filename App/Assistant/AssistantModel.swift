@@ -271,7 +271,7 @@ final class AssistantModel {
         if let requirement = requirement(for: suggestion) { errorMessage = requirement; return }
         if suggestion.requiresSelection { selectedScope = .selectedThreads }
         let activeSelection: AssistantScope = observedScope?.threadIDs == nil ? .allEnabledAccounts : .selectedThreads
-        send(suggestion.prompt(for: activeSelection))
+        send(suggestion.prompt(for: activeSelection), shownAs: suggestion.title)
     }
 
     private func suggestionScope(_ suggestion: AssistantSuggestion) -> AssistantScope {
@@ -402,7 +402,9 @@ final class AssistantModel {
         }
     }
 
-    func send(_ text: String) {
+    /// Sends `text` to the assistant. The chat shows `title` in its place
+    /// when one is given, as a ready prompt shows the title of its button.
+    func send(_ text: String, shownAs title: String? = nil) {
         guard !isRunning else { return }
         refreshAccess()
         guard !hasPendingScopeChange else {
@@ -419,7 +421,7 @@ final class AssistantModel {
             try checkHistory(input)
             let tools = try tools(for: snapshot)
             let messageID = UUID()
-            messages.append(AssistantMessage(isUser: true, text: prompt))
+            messages.append(AssistantMessage(isUser: true, text: title ?? prompt))
             messages.append(AssistantMessage(id: messageID, isUser: false, text: "", state: .streaming))
             retryContext = RetryContext(messageID: messageID, scope: snapshot, epoch: conversationEpoch)
             history = input

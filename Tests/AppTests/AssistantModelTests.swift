@@ -386,6 +386,10 @@ import TernAI
         #expect(first.instructions.contains("a@example.invalid"))
         #expect(first.instructions.contains("b@example.invalid"))
         #expect(first.instructions.contains("\"selected_threads\":null"))
+        // The chat shows the button's title while the request carries the whole prompt.
+        #expect(fixture.model.messages.first?.text == AssistantSuggestion.awaitingReplies.title)
+        #expect(first.input.contains(.object(["role": .string("user"),
+            "content": .string(AssistantSuggestion.awaitingReplies.prompt(for: .allEnabledAccounts))])))
 
         fixture.model.setAccountEnabled("b", enabled: false)
         fixture.context.currentAccounts = ["b"]
