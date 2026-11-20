@@ -32,6 +32,8 @@ public struct ClaudeCLIRequest: Codable, Sendable {
 }
 
 /// Each element is one stdout JSON line. Success ends only after the process exits successfully.
+/// The provider's caller gets a transport's error as it is, so its description must make sense to
+/// the user.
 public struct ClaudeCLITransport: Sendable {
     public let run: @Sendable (ClaudeCLIRequest) -> AsyncThrowingStream<Data, any Error>
     public init(run: @escaping @Sendable (ClaudeCLIRequest) -> AsyncThrowingStream<Data, any Error>) { self.run = run }
@@ -60,8 +62,10 @@ public struct ClaudeCLIProvider: AIProvider {
                     try await consume(request, continuation: continuation)
                     continuation.finish()
                 } catch {
-                    if error is CancellationError || Task.isCancelled { continuation.finish(throwing: CancellationError()) }
-                    else { continuation.finish(throwing: (error as? AIProviderError) ?? AIProviderError.unavailable) }
+                    // A transport's error says what failed, such as the helper
+                    // or a changed account, so it reaches the caller as it is.
+                    let cancelled = error is CancellationError || Task.isCancelled
+                    continuation.finish(throwing: cancelled ? CancellationError() : error)
                 }
             }
             continuation.onTermination = { _ in task.cancel() }

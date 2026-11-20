@@ -1068,7 +1068,8 @@ final class AssistantModel {
     }
     private static func userInput(_ text: String) -> AIJSON { .object(["role": .string("user"), "content": .string(text)]) }
     private static func message(for error: any Error) -> String {
-        if error is AssistantError || error is AIProviderError || error is ChatGPTAuthError || error is ChatGPTConnectionError {
+        if error is AssistantError || error is AIProviderError || error is ChatGPTAuthError || error is ChatGPTConnectionError
+            || error is ClaudeCLIConnectionError {
             return error.localizedDescription
         }
         return "Tern couldn't complete this request. Please try again."

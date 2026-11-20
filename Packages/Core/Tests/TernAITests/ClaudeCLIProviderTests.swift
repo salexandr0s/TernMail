@@ -145,6 +145,14 @@ import Testing
         #expect(!committed)
     }
 
+    /// The transport's error says what failed, such as the helper or a changed
+    /// account, so the caller gets it in place of a general one.
+    @Test func aTransportFailureReachesTheCallerAsItIs() async throws {
+        struct HelperFailure: Error, Equatable {}
+        let provider = Self.provider([], failure: HelperFailure())
+        await #expect(throws: HelperFailure()) { try await Self.collect(provider.respond(Self.request())) }
+    }
+
     @Test func boundedInputAndUnsupportedSchemasDoNotLaunchAProcess() async throws {
         let provider = ClaudeCLIProvider(transport: ClaudeCLITransport { _ in
             Issue.record("Invalid request reached the process transport")
@@ -315,7 +323,7 @@ import Testing
             "content": .array([.object(["type": .string("output_text"), "text": .string(text)])])])
     }
 
-    private static func provider(_ lines: [AIJSON], failure: AIProviderError? = nil) -> ClaudeCLIProvider {
+    private static func provider(_ lines: [AIJSON], failure: (any Error & Sendable)? = nil) -> ClaudeCLIProvider {
         ClaudeCLIProvider(transport: ClaudeCLITransport { _ in
             AsyncThrowingStream { continuation in
                 do {

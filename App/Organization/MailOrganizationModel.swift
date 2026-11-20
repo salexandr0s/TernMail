@@ -262,6 +262,7 @@ final class MailOrganizationModel {
                     samplingProgress = nil; analysisStartedAt = nil; analysisProgress = nil; checkpoint = nil
                     errorMessage = (error as? MailOrganizationError)?.localizedDescription
                         ?? (error as? AIProviderError)?.localizedDescription
+                        ?? (error as? ClaudeCLIConnectionError)?.localizedDescription
                         ?? "Couldn't analyze these messages. Check the Google and assistant connections, then try again."
                 }
             }

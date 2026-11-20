@@ -354,6 +354,19 @@ import TernAI
         #expect(!fixture.model.isRunning)
     }
 
+    /// A Claude helper error names what failed, such as a changed account, so
+    /// the failed message shows it in place of a general one.
+    @Test func aClaudeHelperFailureShowsItsOwnMessage() async throws {
+        let failure = ClaudeCLIConnectionError.accountChanged
+        let fixture = try Fixture(provider: AssistantProviderFixture(replies: [.failed(failure)]))
+        defer { fixture.clean() }
+        await fixture.model.refreshConnection()
+        fixture.model.send("Question")
+        await fixture.model.waitForCurrentTurn()
+        #expect(fixture.model.messages.last?.state == .failed)
+        #expect(fixture.model.messages.last?.errorMessage == failure.localizedDescription)
+    }
+
     @Test func interruptedStreamNeverCompletesTheMessage() async throws {
         let provider = AssistantProviderFixture(replies: [.interrupted("Partial answer")])
         let fixture = try Fixture(provider: provider)
@@ -1151,6 +1164,7 @@ import TernAI
 private actor AssistantProviderFixture: AIProvider {
     enum Reply: Sendable {
         case complete(AIResponse), interrupted(String), streamed([String], AIResponse?), streamedSuspended([String]), suspended
+        case failed(any Error & Sendable)
     }
     private var replies: [Reply]
     private(set) var requests: [AIRequest] = []
@@ -1194,6 +1208,7 @@ private actor AssistantProviderFixture: AIProvider {
             suspended = continuation
             for fragment in fragments { continuation.yield(.textDelta(fragment)) }
         case .suspended: suspended = continuation
+        case .failed(let error): continuation.finish(throwing: error)
         }
     }
 }
