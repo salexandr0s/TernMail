@@ -94,23 +94,23 @@ final class MailInteractionUITests: XCTestCase {
         let trash = mailbox("ui-audit.TRASH", in: app)
 
         // Removing the shortcut exposes the single-account Mailboxes row.
-        trash.rightClick()
+        rightClickInSidebar(trash, in: app)
         assertMenu(["Mark All as Read", "Empty Trash…", "Remove from Favorites"], in: app)
         contextItem("Remove from Favorites", in: app).click()
         waitForAbsence(contextItem("Remove from Favorites", in: app))
         XCTAssertTrue(trash.waitForExistence(timeout: 10))
-        trash.rightClick()
+        rightClickInSidebar(trash, in: app)
         assertMenu(["Mark All as Read", "Empty Trash…", "Add to Favorites"], in: app)
         dismissMenu(in: app)
 
         let hiking = mailbox("ui-audit.Label_1", in: app)
-        hiking.rightClick()
+        rightClickInSidebar(hiking, in: app)
         assertMenu(["Mark All as Read", "Add to Favorites", "New Nested Label…", "Edit Label…", "Delete Label…"], in: app)
         contextItem("Add to Favorites", in: app).click()
         waitForAbsence(contextItem("Add to Favorites", in: app))
         // Favorites precede the account's label rows, so firstMatch now selects the shortcut.
         let favorite = mailbox("ui-audit.Label_1", in: app)
-        favorite.rightClick()
+        rightClickInSidebar(favorite, in: app)
         assertMenu(["Mark All as Read", "Remove from Favorites", "New Nested Label…", "Edit Label…", "Delete Label…"], in: app)
         contextItem("New Nested Label…", in: app).click()
         let name = app.sheets.textFields["Label name"].firstMatch
@@ -143,6 +143,22 @@ final class MailInteractionUITests: XCTestCase {
         let row = app.descendants(matching: .any).matching(identifier: "sidebar.mailbox." + id).firstMatch
         XCTAssertTrue(row.waitForExistence(timeout: 10), "Missing sidebar mailbox: \(id)")
         return row
+    }
+
+    /// Scrolls the sidebar to a row, then right-clicks it. In a short window a
+    /// row can sit outside the visible part of the sidebar, and XCUITest
+    /// doesn't scroll it into view, so the click would land on whatever the
+    /// window shows at the row's center.
+    private func rightClickInSidebar(_ row: XCUIElement, in app: XCUIApplication) {
+        // The outline's frame covers only its visible part. isHittable can't
+        // stand in for this check: it stays true for a row scrolled out of view.
+        let sidebar = app.outlines["Sidebar"].firstMatch
+        for _ in 0..<5 where !sidebar.frame.contains(row.frame) {
+            // A negative delta scrolls toward the end of the sidebar.
+            sidebar.scroll(byDeltaX: 0, deltaY: row.frame.midY > sidebar.frame.midY ? -120 : 120)
+        }
+        XCTAssertTrue(sidebar.frame.contains(row.frame), "The sidebar row is out of view.")
+        row.rightClick()
     }
 
     private func message(_ subject: String, in app: XCUIApplication) -> XCUIElement {
