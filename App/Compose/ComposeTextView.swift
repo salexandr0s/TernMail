@@ -38,6 +38,13 @@ final class ComposeTextView: NSTextView {
         super.acceptableDragTypes + [.fileURL, .png, .tiff] + ComposeDroppedFile.pasteboardTypes
     }
 
+    /// NSTextView registers its drag types only when a setting such as
+    /// isEditable changes, so a message that opened editable took no drops.
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        updateDragTypeRegistration()
+    }
+
     override func paste(_ sender: Any?) {
         let pasteboard = NSPasteboard.general
         if let items = Self.attachables(on: pasteboard) { onAttach?(items); return }
@@ -120,6 +127,15 @@ final class ComposeTextView: NSTextView {
     override func draggingUpdated(_ sender: any NSDraggingInfo) -> NSDragOperation {
         updateFileDropTarget(sender.draggingPasteboard)
         return attachmentDragOperation(on: sender.draggingPasteboard) ?? super.draggingUpdated(sender)
+    }
+
+    /// NSTextView turns down a file it can't insert as text before
+    /// performDragOperation runs, so a file drop is accepted here.
+    override func prepareForDragOperation(_ sender: any NSDraggingInfo) -> Bool {
+        guard let operation = attachmentDragOperation(on: sender.draggingPasteboard) else {
+            return super.prepareForDragOperation(sender)
+        }
+        return !operation.isEmpty
     }
 
     override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {

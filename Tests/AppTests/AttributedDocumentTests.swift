@@ -38,6 +38,33 @@ import Testing
         #expect(textView.string == "Keep this message")
     }
 
+    @Test func aFinderFileDropPassesAppKitsWholeDragSequence() throws {
+        // A file URL written as Finder writes it. NSTextView's own
+        // prepareForDragOperation turned it down before the file route ran.
+        let pasteboard = NSPasteboard.withUniqueName()
+        defer { pasteboard.releaseGlobally() }
+        let url = FileManager.default.temporaryDirectory.appending(path: "compose-finder-drop.pdf")
+        #expect(pasteboard.writeObjects([url as NSURL]))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 200),
+                              styleMask: [.titled], backing: .buffered, defer: true)
+        let textView = ComposeTextView(usingTextLayoutManager: false)
+        textView.isRichText = true
+        textView.importsGraphics = false
+        textView.isEditable = true
+        var droppedNames: [String] = []
+        textView.onDropFiles = { droppedNames += $0.map(\.filename) }
+        window.contentView = textView
+        #expect(textView.registeredDraggedTypes.contains(.fileURL))
+
+        let drag = TestFileDrag(pasteboard: pasteboard, window: window)
+        #expect(textView.draggingEntered(drag) == .copy)
+        #expect(textView.prepareForDragOperation(drag))
+        #expect(textView.performDragOperation(drag))
+        textView.concludeDragOperation(drag)
+        #expect(droppedNames == ["compose-finder-drop.pdf"])
+        #expect(textView.string.isEmpty)
+    }
+
     @Test func bodyTextAndWebURLDropsKeepTheNativeTextRoute() throws {
         let pasteboard = NSPasteboard.withUniqueName()
         defer { pasteboard.releaseGlobally() }
@@ -413,6 +440,35 @@ import Testing
         #expect(document == ComposeDocument(blocks: [.init(runs: [.init("bold", bold: true)])]))
         #expect(markdownView.selectedRange() == NSRange(location: 4, length: 0))
     }
+}
+
+/// A drag over one window, enough for a text view's drop callbacks, which
+/// AppKit and these tests make on the main actor.
+@MainActor
+private final class TestFileDrag: NSObject, @MainActor NSDraggingInfo {
+    let draggingPasteboard: NSPasteboard
+    let draggingDestinationWindow: NSWindow?
+    var draggingFormation: NSDraggingFormation = .default
+    var animatesToDestination = false
+    var numberOfValidItemsForDrop = 1
+
+    init(pasteboard: NSPasteboard, window: NSWindow) {
+        draggingPasteboard = pasteboard
+        draggingDestinationWindow = window
+    }
+
+    var draggingSourceOperationMask: NSDragOperation { [.copy, .link, .generic] }
+    var draggingLocation: NSPoint { NSPoint(x: 20, y: 20) }
+    var draggedImageLocation: NSPoint { NSPoint(x: 20, y: 20) }
+    var draggedImage: NSImage? { nil }
+    var draggingSource: Any? { nil }
+    var draggingSequenceNumber: Int { 1 }
+    var springLoadingHighlight: NSSpringLoadingHighlight { .none }
+    func slideDraggedImage(to screenPoint: NSPoint) {}
+    func resetSpringLoading() {}
+    func enumerateDraggingItems(options enumOpts: NSDraggingItemEnumerationOptions = [], for view: NSView?,
+                                classes classArray: [AnyClass], searchOptions: [NSPasteboard.ReadingOptionKey: Any] = [:],
+                                using block: (NSDraggingItem, Int, UnsafeMutablePointer<ObjCBool>) -> Void) {}
 }
 
 @MainActor
