@@ -203,6 +203,11 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.tern.mail.uitests
         GENERATE_INFOPLIST_FILE: YES
+        # Without a signing team, Xcode signs the test runner ad hoc. With the
+        # hardened runtime on, the runner then won't load the ad hoc test
+        # bundle, because library validation wants both signed by one team.
+        # The runner never ships, so it goes without the hardened runtime.
+        ENABLE_HARDENED_RUNTIME: NO
     dependencies:
       - target: Tern
 schemes:
