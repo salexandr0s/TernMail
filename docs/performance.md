@@ -2296,10 +2296,15 @@ the window's gestures had held reaching the table after the test, and the
 table waiting in drag detection for a mouse-up. That version sent each click's
 down and up with one timestamp. With them queued 30 ms apart, a click on the
 subject did not select the row, and the test window was not key. The version
-on the branch gives the test a window that reports itself key. The screen
-locked before it ran. The other 32 tests in the list's suite passed with the
-change; the rest of the hosted suite did not run on it, and nobody has clicked
-a star or an avatar in the list by hand.
+on the branch gives the test a window that reports itself key. It ran on 20
+November, with the change on `3a9e6027`, and a click on the subject still left
+the table with no selected row while the window reported itself key. No click
+posted in the test host has selected a row, so this test can't tell a click on
+the star from one on the row. A UI test could, but it needs Automation Mode,
+which is off and asks for a password to turn on. The other 32 tests in the
+list's suite passed with the change both times; the rest of the hosted suite
+did not run on it, and nobody has clicked a star or an avatar in the list by
+hand.
 
 ### Opening, compose and mode switches
 
